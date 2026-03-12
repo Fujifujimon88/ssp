@@ -1,6 +1,6 @@
 """SQLAlchemy ORMモデル（PostgreSQLテーブル定義）"""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -24,7 +24,7 @@ class PublisherDB(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     api_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     monthly_revenue_usd: Mapped[float] = mapped_column(Float, default=0.0)
 
     slots: Mapped[list["AdSlotDB"]] = relationship("AdSlotDB", back_populates="publisher")
@@ -43,7 +43,7 @@ class AdSlotDB(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=True)
     tag_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     publisher: Mapped["PublisherDB"] = relationship("PublisherDB", back_populates="slots")
     impressions: Mapped[list["ImpressionDB"]] = relationship("ImpressionDB", back_populates="slot")

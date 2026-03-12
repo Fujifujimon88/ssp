@@ -14,7 +14,33 @@ WIN_TOKEN_TTL = 60
 REPORT_CACHE_TTL = 300
 
 # インメモリフォールバック（Redis未起動時）
-_memory_store: dict[str, str] = {}
+_memory_store: dict[str, tuple[str, float | None]] = {}  # {key: (value, expires_monotonic)}
+
+
+def _mem_set(key: str, value: str, ttl: int | None = None) -> None:
+    import time
+    exp = time.monotonic() + ttl if ttl is not None else None
+    _memory_store[key] = (value, exp)
+
+
+def _mem_get(key: str) -> str | None:
+    import time
+    entry = _memory_store.get(key)
+    if entry is None:
+        return None
+    val, exp = entry
+    if exp is not None and time.monotonic() > exp:
+        _mem_delete(key)
+        return None
+    return val
+
+
+def _mem_delete(key: str) -> None:
+    _memory_store.pop(key, None)
+
+
+def is_redis_connected() -> bool:
+    return not _use_memory and _redis is not None
 _use_memory = False
 _redis = None
 
@@ -51,7 +77,7 @@ async def set_win_token(token: str, data: dict) -> None:
     if r:
         await r.setex(f"win:{token}", WIN_TOKEN_TTL, json.dumps(data))
     else:
-        _memory_store[f"win:{token}"] = json.dumps(data)
+        _mem_set(f"win:{token}", json.dumps(data), WIN_TOKEN_TTL)
 
 
 async def get_win_token(token: str) -> Optional[dict]:
@@ -60,7 +86,7 @@ async def get_win_token(token: str) -> Optional[dict]:
     if r:
         val = await r.get(key)
     else:
-        val = _memory_store.get(key)
+        val = _mem_get(key)
     return json.loads(val) if val else None
 
 
@@ -70,7 +96,7 @@ async def delete_win_token(token: str) -> None:
     if r:
         await r.delete(key)
     else:
-        _memory_store.pop(key, None)
+        _mem_delete(key)
 
 
 # ── レポートキャッシュ ──────────────────────────────────────────
@@ -80,7 +106,7 @@ async def cache_report(key: str, data: dict) -> None:
     if r:
         await r.setex(f"report:{key}", REPORT_CACHE_TTL, json.dumps(data))
     else:
-        _memory_store[f"report:{key}"] = json.dumps(data)
+        _mem_set(f"report:{key}", json.dumps(data), REPORT_CACHE_TTL)
 
 
 async def get_cached_report(key: str) -> Optional[dict]:
@@ -89,7 +115,7 @@ async def get_cached_report(key: str) -> Optional[dict]:
     if r:
         val = await r.get(cache_key)
     else:
-        val = _memory_store.get(cache_key)
+        val = _mem_get(cache_key)
     return json.loads(val) if val else None
 
 
@@ -103,6 +129,6 @@ async def incr_impression_counter(publisher_id: str, date_str: str) -> int:
         await r.expire(key, 86400 * 2)
         return count
     else:
-        current = int(_memory_store.get(key, "0"))
-        _memory_store[key] = str(current + 1)
+        current = int(_mem_get(key) or "0")
+        _mem_set(key, str(current + 1), 86400 * 2)
         return current + 1

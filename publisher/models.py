@@ -3,7 +3,7 @@
 DB永続化はSQLAlchemy/asyncpgで別途実装可能
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field, HttpUrl
@@ -35,7 +35,7 @@ class Publisher(PublisherCreate):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: PublisherStatus = PublisherStatus.PENDING
     api_key: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     monthly_revenue_usd: float = 0.0
 
 
@@ -55,7 +55,7 @@ class AdSlot(AdSlotCreate):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tag_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:16])
     active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     impressions_today: int = 0
     revenue_today_usd: float = 0.0
 

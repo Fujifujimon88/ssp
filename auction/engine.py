@@ -42,12 +42,13 @@ class AuctionEngine:
         self._dsps[dsp_id] = dsp_instance
         logger.info(f"DSP registered: {dsp_id}")
 
+    def registered_dsp_ids(self) -> list[str]:
+        return list(self._dsps.keys())
+
     async def run_auction(self, bid_request: BidRequest) -> list[AuctionResult]:
-        results = []
-        for imp in bid_request.imp:
-            result = await self._run_single_auction(bid_request, imp)
-            results.append(result)
-        return results
+        return list(await asyncio.gather(
+            *[self._run_single_auction(bid_request, imp) for imp in bid_request.imp]
+        ))
 
     async def _run_single_auction(self, bid_request: BidRequest, imp) -> AuctionResult:
         start = time.monotonic()

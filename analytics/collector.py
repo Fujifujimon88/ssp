@@ -1,7 +1,7 @@
 """インプレッション・落札イベントの記録（DB永続化対応）"""
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func, case, select
@@ -12,6 +12,10 @@ from cache import incr_impression_counter
 from db_models import ImpressionDB
 
 logger = logging.getLogger(__name__)
+
+
+def _day_bounds(d: date) -> tuple[datetime, datetime]:
+    return datetime.combine(d, datetime.min.time()), datetime.combine(d, datetime.max.time())
 
 
 async def record_auction(
@@ -31,7 +35,7 @@ async def record_auction(
         bid_count=len(result.all_bids),
         duration_ms=result.duration_ms,
         filled=result.winner is not None,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
     db.add(imp)
     await db.commit()
@@ -47,8 +51,7 @@ async def record_auction(
 
 async def get_daily_stats(publisher_id: str, for_date: date, db: AsyncSession) -> dict:
     """日次集計をSQLで取得（SQLite/PostgreSQL 両対応）"""
-    start = datetime.combine(for_date, datetime.min.time())
-    end = datetime.combine(for_date, datetime.max.time())
+    start, end = _day_bounds(for_date)
 
     result = await db.execute(
         select(
@@ -81,8 +84,7 @@ async def get_daily_stats(publisher_id: str, for_date: date, db: AsyncSession) -
 
 
 async def get_top_dsp(publisher_id: str, for_date: date, db: AsyncSession) -> Optional[str]:
-    start = datetime.combine(for_date, datetime.min.time())
-    end = datetime.combine(for_date, datetime.max.time())
+    start, end = _day_bounds(for_date)
 
     result = await db.execute(
         select(ImpressionDB.winning_dsp, func.count(ImpressionDB.id).label("cnt"))

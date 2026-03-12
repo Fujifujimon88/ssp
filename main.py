@@ -34,7 +34,7 @@ from auction.openrtb import (
     Publisher as OrtbPublisher, Site,
 )
 from auth import get_current_publisher_id
-from cache import close_redis, delete_win_token, get_win_token, set_win_token
+from cache import close_redis, delete_win_token, get_win_token, is_redis_connected, set_win_token
 from config import settings
 from database import Base, engine, get_db
 from db_models import AdSlotDB, PublisherDB
@@ -46,6 +46,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+APP_VERSION = "0.2.0"
 
 auction_engine = AuctionEngine()
 
@@ -60,9 +62,12 @@ async def lifespan(app: FastAPI):
     for dsp in create_mock_dsps():
         auction_engine.register_dsp(dsp.dsp_id, dsp)
 
-    logger.info(f"SSP Platform started | env={settings.app_env} | dsps={list(auction_engine._dsps.keys())}")
+    logger.info(f"SSP Platform started | env={settings.app_env} | dsps={auction_engine.registered_dsp_ids()}")
     yield
 
+    for dsp in auction_engine._dsps.values():
+        if hasattr(dsp, "close"):
+            await dsp.close()
     await close_redis()
     logger.info("SSP Platform shutdown")
 
@@ -70,7 +75,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SSP Platform",
     description="日本ニッチメディア向けSupply-Side Platform",
-    version="0.2.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -208,19 +213,10 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    from cache import get_redis
-    redis_ok = False
-    try:
-        r = await get_redis()
-        await r.ping()
-        redis_ok = True
-    except Exception:
-        pass
-
     return {
         "status": "ok",
-        "version": "0.2.0",
-        "dsps": list(auction_engine._dsps.keys()),
-        "redis": redis_ok,
+        "version": APP_VERSION,
+        "dsps": auction_engine.registered_dsp_ids(),
+        "redis": is_redis_connected(),
         "env": settings.app_env,
     }

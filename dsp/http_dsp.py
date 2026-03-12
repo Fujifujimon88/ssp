@@ -33,7 +33,10 @@ class HttpDSP(BaseDSP):
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
+        if self._client is not None and self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+        if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(TIMEOUT_SEC),
                 headers={

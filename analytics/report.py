@@ -4,6 +4,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import asyncio
 from analytics.collector import get_daily_stats, get_top_dsp
 from cache import cache_report, get_cached_report
 from publisher.models import DailyReport
@@ -22,8 +23,10 @@ async def generate_daily_report(
     if cached:
         return DailyReport(**cached)
 
-    stats = await get_daily_stats(publisher_id, target_date, db)
-    top_dsp = await get_top_dsp(publisher_id, target_date, db)
+    stats, top_dsp = await asyncio.gather(
+        get_daily_stats(publisher_id, target_date, db),
+        get_top_dsp(publisher_id, target_date, db),
+    )
 
     report = DailyReport(
         publisher_id=publisher_id,
