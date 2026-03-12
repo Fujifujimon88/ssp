@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  # ── SSP アプリ ──────────────────────────────────────────────
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ssp:ssp@db:5432/ssp_db
+      REDIS_URL: redis://redis:6379
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      APP_ENV: ${APP_ENV:-development}
+      SSP_ENDPOINT: ${SSP_ENDPOINT:-http://localhost:8000}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app  # 開発時のホットリロード用
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ssp
+      POSTGRES_PASSWORD: ssp
+      POSTGRES_DB: ssp_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ssp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Locust 負荷テスト（開発時のみ） ────────────────────────
+  locust:
+    image: locustio/locust:latest
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./tests:/mnt/locust
+    command: -f /mnt/locust/locustfile.py --host http://app:8000
+    depends_on:
+      - app
+    profiles:
+      - loadtest  # docker compose --profile loadtest up で起動
+
+volumes:
+  postgres_data:
+  redis_data:
