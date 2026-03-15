@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     auction_timeout_ms: int = 80
     floor_price_default: float = 0.5
 
+    # 管理者認証（.env で上書き必須）
+    admin_api_key: str = "change-me-admin-key"
+
     # アプリ
     app_env: str = "development"
     ssp_endpoint: str = "http://localhost:8000"

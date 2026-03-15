@@ -3,14 +3,12 @@
  * 管理機能（パブリッシャーステータス変更・レポート）のE2Eテスト
  */
 const { test, expect } = require("@playwright/test");
-const { loadAuth, apiGet } = require("./helpers/auth");
+const { loadAuth, apiGet, adminGet, adminPut } = require("./helpers/auth");
 
 test.describe("パブリッシャーステータス管理API", () => {
   test("pending → active に変更できる", async ({ request }) => {
     const { publisherId } = loadAuth();
-    const res = await request.put(
-      `/api/admin/publishers/${publisherId}/status?status=active`
-    );
+    const res = await adminPut(request, `/api/admin/publishers/${publisherId}/status?status=active`);
     expect(res.ok()).toBeTruthy();
     const data = await res.json();
     expect(data.status).toBe("active");
@@ -18,9 +16,7 @@ test.describe("パブリッシャーステータス管理API", () => {
 
   test("active → suspended に変更できる", async ({ request }) => {
     const { publisherId } = loadAuth();
-    const res = await request.put(
-      `/api/admin/publishers/${publisherId}/status?status=suspended`
-    );
+    const res = await adminPut(request, `/api/admin/publishers/${publisherId}/status?status=suspended`);
     expect(res.ok()).toBeTruthy();
     const data = await res.json();
     expect(data.status).toBe("suspended");
@@ -28,9 +24,7 @@ test.describe("パブリッシャーステータス管理API", () => {
 
   test("suspended → active に戻せる", async ({ request }) => {
     const { publisherId } = loadAuth();
-    const res = await request.put(
-      `/api/admin/publishers/${publisherId}/status?status=active`
-    );
+    const res = await adminPut(request, `/api/admin/publishers/${publisherId}/status?status=active`);
     expect(res.ok()).toBeTruthy();
     const data = await res.json();
     expect(data.status).toBe("active");
@@ -38,16 +32,12 @@ test.describe("パブリッシャーステータス管理API", () => {
 
   test("不正なステータスは 400 が返る", async ({ request }) => {
     const { publisherId } = loadAuth();
-    const res = await request.put(
-      `/api/admin/publishers/${publisherId}/status?status=invalid`
-    );
+    const res = await adminPut(request, `/api/admin/publishers/${publisherId}/status?status=invalid`);
     expect(res.status()).toBe(400);
   });
 
   test("存在しないパブリッシャーは 404 が返る", async ({ request }) => {
-    const res = await request.put(
-      `/api/admin/publishers/nonexistent-id/status?status=active`
-    );
+    const res = await adminPut(request, `/api/admin/publishers/nonexistent-id/status?status=active`);
     expect(res.status()).toBe(404);
   });
 });

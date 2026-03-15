@@ -21,7 +21,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -279,6 +279,51 @@ async def reports_range(
     ]
     reports = await _asyncio.gather(*tasks)
     return [r.model_dump() for r in reports]
+
+
+# ── Ads.txt / sellers.json ─────────────────────────────────────
+
+@app.get("/sellers.json", summary="sellers.json（IAB Tech Lab標準）")
+async def sellers_json(db: AsyncSession = Depends(get_db)):
+    """DSPが本SSPのインベントリ正当性を確認するための sellers.json"""
+    result = await db.execute(
+        select(PublisherDB).where(PublisherDB.status == "active")
+    )
+    publishers = result.scalars().all()
+    sellers = [
+        {
+            "seller_id": pub.id,
+            "name": pub.name,
+            "domain": pub.domain,
+            "seller_type": "PUBLISHER",
+            "is_confidential": 0,
+        }
+        for pub in publishers
+    ]
+    return {
+        "contact_email": "adops@ssp-platform.example.com",
+        "version": "1.0",
+        "sellers": sellers,
+    }
+
+
+@app.get("/api/publishers/me/ads-txt", response_class=PlainTextResponse, summary="自分のads.txtライン取得")
+async def get_my_ads_txt(
+    publisher_id: str = Depends(get_current_publisher_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """パブリッシャーがサイトに設置する ads.txt の1行を返す"""
+    pub = await db.get(PublisherDB, publisher_id)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publisher not found")
+    host = settings.ssp_endpoint.replace("https://", "").replace("http://", "").rstrip("/")
+    line = f"{host}, {pub.id}, DIRECT, ssp-platform"
+    comment = (
+        f"# {pub.domain} の ads.txt に以下の1行を追加してください\n"
+        f"# ファイルパス: https://{pub.domain}/ads.txt\n\n"
+        f"{line}\n"
+    )
+    return PlainTextResponse(comment)
 
 
 # ── ヘルスチェック ─────────────────────────────────────────────

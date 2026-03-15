@@ -157,6 +157,7 @@
     <a onclick="showSection('dsp')"       id="nav-dsp">🔗 DSP連携</a>
     <a onclick="showSection('report')"    id="nav-report">📈 レポート</a>
     <a onclick="showSection('profile')"   id="nav-profile">👤 プロフィール</a>
+    <a onclick="showSection('adstxt')"    id="nav-adstxt">📄 Ads.txt</a>
 
     <div class="section-label" style="margin-top:16px">リンク</div>
     <a href="/admin" style="font-size:12px">🛠 管理画面</a>
@@ -341,6 +342,31 @@
       </div>
     </div>
 
+    <!-- ── Ads.txt セクション ── -->
+    <div id="section-adstxt" class="section">
+      <div class="card" style="margin-bottom:16px">
+        <div class="section-header">
+          <h2>Ads.txt 設定</h2>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+          Ads.txt はDSPが不正在庫を排除するための業界標準ファイルです。
+          下記の1行をあなたのサイトの <code style="color:var(--accent)">https://yourdomain.com/ads.txt</code> に追加してください。
+        </p>
+        <div id="adstxt-line" class="code-block" style="font-size:13px">読み込み中...</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="copyAdsTxt()">コピー</button>
+      </div>
+      <div class="card">
+        <div class="section-header"><h2>設置手順</h2></div>
+        <ol style="font-size:13px;color:var(--muted);line-height:2.2;padding-left:20px">
+          <li>上記のads.txtラインをコピーする</li>
+          <li>サイトのルートに <code style="color:var(--accent)">ads.txt</code> ファイルを作成（または既存ファイルを開く）</li>
+          <li>コピーした1行を追記して保存する</li>
+          <li><code style="color:var(--accent)">https://yourdomain.com/ads.txt</code> にアクセスして確認する</li>
+          <li>設置後24〜48時間でDSPが認識します</li>
+        </ol>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -434,6 +460,7 @@ function showSection(name) {
   if (name === 'slots') loadSlots();
   if (name === 'profile') loadProfile();
   if (name === 'report') loadReport();
+  if (name === 'adstxt') loadAdsTxt();
 }
 
 // ── パブリッシャー情報 ────────────────────────────────────────────
@@ -741,6 +768,23 @@ async function loadProfile() {
 
 function copyApiKey() {
   navigator.clipboard.writeText(document.getElementById('api-key').textContent);
+}
+
+// ── Ads.txt ──────────────────────────────────────────────────────
+async function loadAdsTxt() {
+  const el = document.getElementById('adstxt-line');
+  if (!el || el.textContent !== '読み込み中...') return;
+  try {
+    const res = await apiFetch('/api/publishers/me/ads-txt');
+    if (!res) return;
+    el.textContent = await res.text();
+  } catch(e) {
+    el.textContent = 'エラー: ' + e.message;
+  }
+}
+
+function copyAdsTxt() {
+  navigator.clipboard.writeText(document.getElementById('adstxt-line').textContent);
 }
 
 // ── モーダル ─────────────────────────────────────────────────────

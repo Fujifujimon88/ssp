@@ -43,4 +43,20 @@ async function apiPost(request, endpoint, data, options = {}) {
   });
 }
 
-module.exports = { loadAuth, apiGet, apiPost };
+const ADMIN_KEY = process.env.ADMIN_API_KEY || "change-me-admin-key";
+
+async function adminGet(request, endpoint, options = {}) {
+  return request.get(endpoint, {
+    ...options,
+    headers: { "X-Admin-Key": ADMIN_KEY, ...(options.headers || {}) },
+  });
+}
+
+async function adminPut(request, endpoint, options = {}) {
+  return request.put(endpoint, {
+    ...options,
+    headers: { "X-Admin-Key": ADMIN_KEY, ...(options.headers || {}) },
+  });
+}
+
+module.exports = { loadAuth, apiGet, apiPost, adminGet, adminPut };

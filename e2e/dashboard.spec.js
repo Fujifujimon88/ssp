@@ -3,6 +3,7 @@
  * （旧: /dashboard は /admin に移動）
  */
 const { test, expect } = require("@playwright/test");
+const { adminGet } = require("./helpers/auth");
 
 test.describe("管理画面 /admin", () => {
   test("ページが表示される", async ({ page }) => {
@@ -60,7 +61,7 @@ test.describe("管理画面 /admin", () => {
 
 test.describe("/api/admin/stats", () => {
   test("必要なフィールドが返る", async ({ request }) => {
-    const res = await request.get("/api/admin/stats");
+    const res = await adminGet(request, "/api/admin/stats");
     expect(res.ok()).toBeTruthy();
     const d = await res.json();
     expect(d).toHaveProperty("impressions");
@@ -72,15 +73,22 @@ test.describe("/api/admin/stats", () => {
   });
 
   test("hourly は長さ24の配列", async ({ request }) => {
-    const res = await request.get("/api/admin/stats");
+    const res = await adminGet(request, "/api/admin/stats");
     const d = await res.json();
     expect(Array.isArray(d.hourly)).toBeTruthy();
     expect(d.hourly).toHaveLength(24);
   });
 
+  test("キーなしで /api/admin/stats は 401 が返る", async ({ request }) => {
+    const res = await request.get("/api/admin/stats");
+    expect(res.status()).toBe(401);
+  });
+
   test("KPIが管理画面に表示される", async ({ page }) => {
     await page.goto("/admin");
-    await expect(page.locator("#kpi-imp")).not.toHaveText("-", { timeout: 5000 });
-    await expect(page.locator("#kpi-rev-val")).not.toHaveText("-", { timeout: 5000 });
+    await page.evaluate(() => localStorage.setItem("ssp_admin_key", "change-me-admin-key"));
+    await page.reload();
+    await expect(page.locator("#kpi-imp")).not.toHaveText("-", { timeout: 8000 });
+    await expect(page.locator("#kpi-rev-val")).not.toHaveText("-", { timeout: 8000 });
   });
 });

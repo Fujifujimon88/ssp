@@ -9,7 +9,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import case, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import create_access_token, get_current_publisher_id, hash_password, verify_password
+from auth import create_access_token, get_current_publisher_id, hash_password, verify_admin_key, verify_password
 from database import get_db
 from db_models import AdSlotDB, ImpressionDB, PublisherDB
 from publisher.models import AdSlot, AdSlotCreate, Publisher, PublisherCreate
@@ -137,8 +137,8 @@ async def get_tag(
     }
 
 
-@router.get("/api/admin/stats", summary="管理画面用集計統計（認証不要）")
-async def admin_stats(db: AsyncSession = Depends(get_db)):
+@router.get("/api/admin/stats", summary="管理画面用集計統計")
+async def admin_stats(_: None = Depends(verify_admin_key), db: AsyncSession = Depends(get_db)):
     today = date.today()
     start = datetime.combine(today, datetime.min.time())
     end = datetime.combine(today, datetime.max.time())
@@ -197,8 +197,8 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("/api/admin/publishers/{pub_id}/tags", summary="管理用タグ取得（認証不要）")
-async def admin_get_tags(pub_id: str, db: AsyncSession = Depends(get_db)):
+@router.get("/api/admin/publishers/{pub_id}/tags", summary="管理用タグ取得")
+async def admin_get_tags(pub_id: str, _: None = Depends(verify_admin_key), db: AsyncSession = Depends(get_db)):
     pub = await db.get(PublisherDB, pub_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Publisher not found")
@@ -218,6 +218,7 @@ async def admin_get_tags(pub_id: str, db: AsyncSession = Depends(get_db)):
 async def update_publisher_status(
     pub_id: str,
     status: str,
+    _: None = Depends(verify_admin_key),
     db: AsyncSession = Depends(get_db),
 ):
     from publisher.models import PublisherStatus

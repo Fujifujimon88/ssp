@@ -112,9 +112,15 @@
     <span class="status-dot"></span>
     <span class="status-label" id="dsp-count">DSP接続中...</span>
     <a href="/login" class="btn btn-ghost" style="text-decoration:none">パブリッシャーログイン</a>
+    <button class="btn btn-ghost" onclick="showKeyModal()" id="admin-key-btn" title="管理者キー設定">🔑 管理者キー</button>
     <button class="btn btn-primary" onclick="showRegisterModal()">+ パブリッシャー登録</button>
   </div>
 </header>
+
+<!-- 管理者キー未設定バナー -->
+<div id="key-banner" style="display:none;background:#7c3aed;color:#fff;text-align:center;padding:8px;font-size:13px">
+  ⚠️ 管理者キーが未設定です。右上の「🔑 管理者キー」ボタンから設定してください。
+</div>
 
 <div class="layout">
   <nav>
@@ -278,6 +284,41 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
 </div>
 
 <script>
+// ── 管理者キー管理 ─────────────────────────────────────────
+const ADMIN_KEY_STORAGE = 'ssp_admin_key';
+
+function getAdminKey() {
+  return localStorage.getItem(ADMIN_KEY_STORAGE) || '';
+}
+
+function adminHeaders(extra) {
+  const key = getAdminKey();
+  return { 'X-Admin-Key': key, ...extra };
+}
+
+function checkKeyBanner() {
+  const key = getAdminKey();
+  document.getElementById('key-banner').style.display = key ? 'none' : 'block';
+  document.getElementById('admin-key-btn').style.borderColor = key ? 'var(--green)' : 'var(--red)';
+  document.getElementById('admin-key-btn').style.color = key ? 'var(--green)' : 'var(--red)';
+}
+
+function showKeyModal() {
+  const cur = getAdminKey();
+  const val = prompt('管理者APIキーを入力してください (.env の ADMIN_API_KEY):', cur);
+  if (val !== null) {
+    if (val.trim()) {
+      localStorage.setItem(ADMIN_KEY_STORAGE, val.trim());
+      checkKeyBanner();
+      loadAdminStats();
+      alert('キーを保存しました。');
+    } else {
+      localStorage.removeItem(ADMIN_KEY_STORAGE);
+      checkKeyBanner();
+    }
+  }
+}
+
 // ── ヘルスチェック & DSP表示 ──────────────────────────────
 async function loadHealth() {
   try {
@@ -298,7 +339,7 @@ let dspChart = null;
 
 async function loadAdminStats() {
   try {
-    const r = await fetch('/api/admin/stats');
+    const r = await fetch('/api/admin/stats', { headers: adminHeaders() });
     const d = await r.json();
 
     // KPI
@@ -387,8 +428,12 @@ async function showTagModal(pubId, pubName) {
   document.getElementById('tag-modal').classList.add('open');
 
   try {
-    const r = await fetch(`/api/admin/publishers/${pubId}/tags`);
-    if (!r.ok) { document.getElementById('tag-content').textContent = 'エラー: ' + r.status; return; }
+    const r = await fetch(`/api/admin/publishers/${pubId}/tags`, { headers: adminHeaders() });
+    if (!r.ok) {
+      document.getElementById('tag-content').textContent =
+        r.status === 401 ? '認証エラー: 管理者キーを設定してください' : 'エラー: ' + r.status;
+      return;
+    }
     const d = await r.json();
     document.getElementById('tag-content').textContent = JSON.stringify(d, null, 2);
   } catch(e) {
@@ -430,6 +475,7 @@ async function updateStatus(pubId, newStatus) {
   if (!confirm(`${label[newStatus]}しますか？`)) return;
   const res = await fetch(`/api/admin/publishers/${pubId}/status?status=${newStatus}`, {
     method: 'PUT',
+    headers: adminHeaders(),
   });
   if (res.ok) {
     location.reload();
@@ -439,6 +485,7 @@ async function updateStatus(pubId, newStatus) {
 }
 
 // 初期化
+checkKeyBanner();
 loadHealth();
 loadAdminStats();
 setInterval(loadAdminStats, 30000);
