@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理画面 – SSP Platform</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f172a; --surface: #1e293b; --border: #334155;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #6366f1;
+      --green: #22c55e; --yellow: #f59e0b; --red: #ef4444;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh; }
+    a { color: var(--accent); text-decoration: none; }
+
+    /* ヘッダー */
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 24px; height: 56px; display: flex; align-items: center; gap: 16px;
+      position: sticky; top: 0; z-index: 10;
+    }
+    header h1 { font-size: 18px; font-weight: 700; }
+    .badge { background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 99px; font-size: 11px; }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .status-label { font-size: 12px; color: var(--muted); }
+
+    /* レイアウト */
+    .layout { display: flex; min-height: calc(100vh - 56px); }
+    nav { width: 220px; background: var(--surface); border-right: 1px solid var(--border);
+          padding: 16px 0; flex-shrink: 0; }
+    nav a { display: flex; align-items: center; gap: 10px; padding: 10px 20px;
+            font-size: 14px; color: var(--muted); transition: all .15s; }
+    nav a:hover, nav a.active { color: var(--text); background: rgba(99,102,241,.15); }
+    nav .section-label { padding: 16px 20px 6px; font-size: 11px; color: var(--muted);
+                          text-transform: uppercase; letter-spacing: .05em; }
+    main { flex: 1; padding: 24px; overflow-x: hidden; }
+
+    /* カード */
+    .card { background: var(--surface); border: 1px solid var(--border);
+             border-radius: 10px; padding: 20px; }
+    .card-title { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+
+    /* KPIグリッド */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .kpi-value { font-size: 32px; font-weight: 700; }
+    .kpi-unit { font-size: 13px; color: var(--muted); margin-left: 4px; }
+    .kpi-change { font-size: 12px; margin-top: 6px; }
+    .up { color: var(--green); } .down { color: var(--red); }
+
+    /* グラフ行 */
+    .chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .chart-wrap { position: relative; height: 220px; }
+
+    /* テーブル */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { padding: 10px 14px; text-align: left; background: rgba(255,255,255,.03);
+         color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
+    td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.04); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    .status-active   { color: var(--green); font-weight: 600; }
+    .status-pending  { color: var(--yellow); font-weight: 600; }
+    .status-suspended{ color: var(--red); font-weight: 600; }
+
+    /* ボタン */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px;
+           border-radius: 6px; font-size: 13px; cursor: pointer; border: none;
+           transition: opacity .15s; }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost   { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+
+    /* APIコードブロック */
+    .code-block { background: #0a0f1e; border: 1px solid var(--border); border-radius: 8px;
+                  padding: 16px 20px; font-family: 'Fira Code', monospace; font-size: 13px;
+                  color: #cdd6f4; line-height: 1.7; overflow-x: auto; white-space: pre; }
+    .code-comment { color: #6272a4; }
+    .code-key { color: #8be9fd; }
+    .code-val { color: #50fa7b; }
+
+    /* モーダル */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7);
+                     z-index: 100; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+             padding: 24px; width: 90%; max-width: 640px; max-height: 80vh; overflow-y: auto; }
+    .modal h2 { font-size: 16px; margin-bottom: 16px; }
+    .modal-close { float: right; cursor: pointer; color: var(--muted); font-size: 20px; }
+
+    /* レスポンシブ */
+    @media(max-width:900px) {
+      nav { display: none; }
+      .kpi-grid { grid-template-columns: repeat(2,1fr); }
+      .chart-row { grid-template-columns: 1fr; }
+    }
+
+    /* ローダー */
+    .loading { color: var(--muted); font-size: 13px; padding: 20px 0; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>SSP Platform</h1>
+  <span class="badge">v0.2</span>
+  <div class="header-right">
+    <span class="status-dot"></span>
+    <span class="status-label" id="dsp-count">DSP接続中...</span>
+    <a href="/login" class="btn btn-ghost" style="text-decoration:none">パブリッシャーログイン</a>
+    <button class="btn btn-primary" onclick="showRegisterModal()">+ パブリッシャー登録</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav>
+    <div class="section-label">管理メニュー</div>
+    <a href="#overview" class="active">📊 概要</a>
+    <a href="#publishers">📰 パブリッシャー一覧</a>
+    <a href="#api-guide">🔌 API連携</a>
+    <a href="/login">🔑 パブリッシャーログイン</a>
+
+    <div class="section-label" style="margin-top:16px">DSP状況</div>
+    <div id="dsp-list" style="padding:0 20px;font-size:12px;color:var(--muted);line-height:2">
+      読み込み中...
+    </div>
+  </nav>
+
+  <main>
+    <!-- KPI -->
+    <section id="overview" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">本日のパフォーマンス</h2>
+        <span style="font-size:12px;color:var(--muted)" id="last-updated"></span>
+      </div>
+      <div class="kpi-grid">
+        <div class="card">
+          <div class="card-title">総インプレッション</div>
+          <div class="kpi-value" id="kpi-imp">-</div>
+        </div>
+        <div class="card">
+          <div class="card-title">フィルレート</div>
+          <div class="kpi-value" id="kpi-fill">-<span class="kpi-unit">%</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">本日収益</div>
+          <div class="kpi-value" id="kpi-rev">$<span id="kpi-rev-val">-</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">平均 eCPM</div>
+          <div class="kpi-value" id="kpi-ecpm">$<span id="kpi-ecpm-val">-</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- グラフ -->
+    <div class="chart-row">
+      <div class="card">
+        <div class="card-title">時間帯別インプレッション（直近24h）</div>
+        <div class="chart-wrap"><canvas id="chart-imp"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">DSP別落札シェア</div>
+        <div class="chart-wrap"><canvas id="chart-dsp"></canvas></div>
+      </div>
+    </div>
+
+    <!-- パブリッシャー一覧 -->
+    <section id="publishers" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">パブリッシャー一覧</h2>
+        <button class="btn btn-primary" onclick="showRegisterModal()">+ 新規登録</button>
+      </div>
+      <div class="table-wrap">
+        {% if publishers %}
+        <table>
+          <thead>
+            <tr>
+              <th>サイト名</th><th>ドメイン</th><th>ステータス</th>
+              <th>フロアCPM</th><th>登録日</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for pub in publishers %}
+            <tr>
+              <td>{{ pub.name }}</td>
+              <td style="font-family:monospace;color:var(--muted)">{{ pub.domain }}</td>
+              <td><span class="status-{{ pub.status }}">{{ pub.status }}</span></td>
+              <td>${{ pub.floor_price }}</td>
+              <td style="color:var(--muted);font-size:12px">{{ pub.created_at.strftime('%Y-%m-%d') }}</td>
+              <td style="display:flex;gap:6px;flex-wrap:wrap">
+                {% if pub.status == 'pending' %}
+                <button class="btn btn-ghost" style="font-size:12px;color:var(--green);border-color:var(--green)"
+                  onclick="updateStatus('{{ pub.id }}', 'active')">承認</button>
+                {% elif pub.status == 'active' %}
+                <button class="btn btn-ghost" style="font-size:12px;color:var(--red);border-color:var(--red)"
+                  onclick="updateStatus('{{ pub.id }}', 'suspended')">停止</button>
+                {% elif pub.status == 'suspended' %}
+                <button class="btn btn-ghost" style="font-size:12px;color:var(--green);border-color:var(--green)"
+                  onclick="updateStatus('{{ pub.id }}', 'active')">再開</button>
+                {% endif %}
+                <button class="btn btn-ghost" style="font-size:12px"
+                  onclick="showTagModal('{{ pub.id }}', '{{ pub.name }}')">タグ取得</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div style="text-align:center;padding:40px;color:var(--muted);font-size:14px">
+          まだ登録されていません。「+ 新規登録」から追加してください。
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- API連携ガイド -->
+    <section id="api-guide" class="card">
+      <h2 style="font-size:15px;margin-bottom:16px">API連携クイックスタート</h2>
+      <div class="code-block"><span class="code-comment"># 1. パブリッシャー登録</span>
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    <span class="code-key">"name"</span>: <span class="code-val">"まとめブログ"</span>,
+    <span class="code-key">"domain"</span>: <span class="code-val">"example.com"</span>,
+    <span class="code-key">"contact_email"</span>: <span class="code-val">"admin@example.com"</span>,
+    <span class="code-key">"floor_price"</span>: <span class="code-val">0.5</span>
+  }?password=yourpassword'
+
+<span class="code-comment"># 2. JWTトークン取得</span>
+curl -X POST http://localhost:8000/auth/token \
+  -d "username=example.com&password=yourpassword"
+
+<span class="code-comment"># 3. 広告スロット作成</span>
+curl -X POST http://localhost:8000/api/slots \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"publisher_id":"PUB_ID","name":"トップバナー","width":300,"height":250}'
+
+<span class="code-comment"># 4. Prebid.jsタグ取得</span>
+curl http://localhost:8000/api/slots/SLOT_ID/tag \
+  -H "Authorization: Bearer YOUR_TOKEN"</div>
+    </section>
+  </main>
+</div>
+
+<!-- 登録モーダル -->
+<div class="modal-overlay" id="register-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('register-modal')">&times;</span>
+    <h2>パブリッシャー新規登録</h2>
+    <form id="register-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="サイト名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="domain" placeholder="ドメイン (例: example.com)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="email" type="email" placeholder="連絡先メール" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="floor" type="number" step="0.1" value="0.5" placeholder="フロアCPM (USD)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <input name="password" type="password" placeholder="パスワード" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="register-result" style="font-size:13px;color:var(--green)"></div>
+    </form>
+  </div>
+</div>
+
+<!-- タグモーダル -->
+<div class="modal-overlay" id="tag-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('tag-modal')">&times;</span>
+    <h2 id="tag-modal-title">Prebid.jsタグ</h2>
+    <div id="tag-content" class="code-block" style="margin-top:16px;font-size:12px;max-height:400px;overflow-y:auto">
+      読み込み中...
+    </div>
+    <button class="btn btn-ghost" style="margin-top:12px" onclick="copyTag()">コピー</button>
+  </div>
+</div>
+
+<script>
+// ── ヘルスチェック & DSP表示 ──────────────────────────────
+async function loadHealth() {
+  try {
+    const r = await fetch('/health');
+    const d = await r.json();
+    document.getElementById('dsp-count').textContent = `DSP ${d.dsps.length}社接続中`;
+    document.getElementById('dsp-list').innerHTML = d.dsps.map(id =>
+      `<div>✓ ${id}</div>`
+    ).join('');
+  } catch(e) {
+    document.getElementById('dsp-count').textContent = 'エラー';
+  }
+}
+
+// ── KPI + チャート（/api/admin/stats から取得） ──────────────
+let impChart = null;
+let dspChart = null;
+
+async function loadAdminStats() {
+  try {
+    const r = await fetch('/api/admin/stats');
+    const d = await r.json();
+
+    // KPI
+    document.getElementById('kpi-imp').textContent = d.impressions.toLocaleString();
+    document.getElementById('kpi-fill').innerHTML = `${d.fill_rate}<span class="kpi-unit">%</span>`;
+    document.getElementById('kpi-rev-val').textContent = d.revenue_usd.toFixed(4);
+    document.getElementById('kpi-ecpm-val').textContent = d.ecpm.toFixed(4);
+    const now = new Date();
+    document.getElementById('last-updated').textContent = `最終更新: ${now.toLocaleTimeString('ja-JP')}`;
+
+    drawCharts(d.hourly, d.dsp_breakdown);
+  } catch(e) {
+    console.error('stats fetch error', e);
+  }
+}
+
+// ── グラフ描画 ─────────────────────────────────────────────
+function drawCharts(hourly, dspBreakdown) {
+  const hours = Array.from({length: 24}, (_, i) => `${i}時`);
+
+  if (impChart) { impChart.destroy(); }
+  impChart = new Chart(document.getElementById('chart-imp'), {
+    type: 'line',
+    data: {
+      labels: hours,
+      datasets: [{
+        label: 'インプレッション',
+        data: hourly,
+        borderColor: '#6366f1',
+        backgroundColor: 'rgba(99,102,241,.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: '#1e293b' } },
+        y: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: '#334155' } },
+      }
+    }
+  });
+
+  const dspColors = ['#6366f1','#22c55e','#f59e0b','#ef4444','#64748b'];
+  const labels = dspBreakdown.length > 0
+    ? dspBreakdown.map(d => d.dsp_id)
+    : ['データなし'];
+  const data = dspBreakdown.length > 0
+    ? dspBreakdown.map(d => d.wins)
+    : [1];
+
+  if (dspChart) { dspChart.destroy(); }
+  dspChart = new Chart(document.getElementById('chart-dsp'), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: dspColors.slice(0, labels.length),
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 }, padding: 12 } }
+      }
+    }
+  });
+}
+
+// ── モーダル ────────────────────────────────────────────────
+function showRegisterModal() {
+  document.getElementById('register-modal').classList.add('open');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+async function showTagModal(pubId, pubName) {
+  document.getElementById('tag-modal-title').textContent = pubName + ' のタグ';
+  document.getElementById('tag-content').textContent = '読み込み中...';
+  document.getElementById('tag-modal').classList.add('open');
+
+  try {
+    const r = await fetch(`/api/admin/publishers/${pubId}/tags`);
+    if (!r.ok) { document.getElementById('tag-content').textContent = 'エラー: ' + r.status; return; }
+    const d = await r.json();
+    document.getElementById('tag-content').textContent = JSON.stringify(d, null, 2);
+  } catch(e) {
+    document.getElementById('tag-content').textContent = 'エラー: ' + e.message;
+  }
+}
+
+function copyTag() {
+  navigator.clipboard.writeText(document.getElementById('tag-content').textContent);
+}
+
+// 登録フォーム
+document.getElementById('register-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    name: f.name.value, domain: f.domain.value,
+    contact_email: f.email.value, floor_price: parseFloat(f.floor.value),
+  };
+  const res = await fetch(`/auth/register?password=${encodeURIComponent(f.password.value)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  if (res.ok) {
+    document.getElementById('register-result').innerHTML =
+      `✓ 登録完了！<br>API Key: <code>${d.api_key}</code><br>Token: <code>${d.access_token?.slice(0,20)}...</code>`;
+    setTimeout(() => location.reload(), 3000);
+  } else {
+    document.getElementById('register-result').style.color = '#ef4444';
+    document.getElementById('register-result').textContent = d.detail || 'エラー';
+  }
+});
+
+// パブリッシャーステータス変更
+async function updateStatus(pubId, newStatus) {
+  const label = { active: '承認', suspended: '停止', pending: '審査中に戻す' };
+  if (!confirm(`${label[newStatus]}しますか？`)) return;
+  const res = await fetch(`/api/admin/publishers/${pubId}/status?status=${newStatus}`, {
+    method: 'PUT',
+  });
+  if (res.ok) {
+    location.reload();
+  } else {
+    alert('変更に失敗しました');
+  }
+}
+
+// 初期化
+loadHealth();
+loadAdminStats();
+setInterval(loadAdminStats, 30000);
+setInterval(loadHealth, 60000);
+</script>
+</body>
+</html>

@@ -23,10 +23,10 @@ from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from analytics.collector import record_auction
+from analytics.collector import record_auction, get_daily_stats
 from analytics.report import generate_daily_report
 from auction.engine import AuctionEngine
 from auction.openrtb import (
@@ -37,7 +37,7 @@ from auth import get_current_publisher_id
 from cache import close_redis, delete_win_token, get_win_token, is_redis_connected, set_win_token
 from config import settings
 from database import Base, engine, get_db
-from db_models import AdSlotDB, PublisherDB
+from db_models import AdSlotDB, ImpressionDB, PublisherDB
 from dsp.mock_dsp import create_mock_dsps
 from publisher.router import router as publisher_router
 
@@ -197,16 +197,88 @@ async def daily_report(
     return await generate_daily_report(publisher_id, db=db, for_date=target_date)
 
 
-# ── ダッシュボード ─────────────────────────────────────────────
+# ── ログインページ ─────────────────────────────────────────────
 
-@app.get("/dashboard", response_class=HTMLResponse, summary="管理ダッシュボード")
-async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
+@app.get("/login", response_class=HTMLResponse, summary="パブリッシャーログイン")
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+# ── パブリッシャーポータル（要JWT）─────────────────────────────
+
+@app.get("/dashboard", response_class=HTMLResponse, summary="パブリッシャーポータル")
+async def dashboard(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+
+# ── 管理画面（全パブリッシャー一覧）──────────────────────────
+
+@app.get("/admin", response_class=HTMLResponse, summary="管理画面")
+async def admin(request: Request, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(PublisherDB).order_by(PublisherDB.created_at.desc()))
     publishers = result.scalars().all()
     return templates.TemplateResponse(
-        "dashboard.html",
+        "admin.html",
         {"request": request, "publishers": publishers}
     )
+
+
+# ── DSP別統計API ───────────────────────────────────────────────
+
+@app.get("/api/dsp/stats", summary="DSP別落札統計（本日）")
+async def dsp_stats(
+    publisher_id: str = Depends(get_current_publisher_id),
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import date, datetime
+    today = date.today()
+    start = datetime.combine(today, datetime.min.time())
+    end   = datetime.combine(today, datetime.max.time())
+
+    rows = await db.execute(
+        select(
+            ImpressionDB.winning_dsp,
+            func.count(ImpressionDB.id).label("wins"),
+            func.avg(ImpressionDB.clearing_price).label("avg_cpm"),
+            func.sum(ImpressionDB.clearing_price).label("total_cpm"),
+        )
+        .where(
+            ImpressionDB.publisher_id == publisher_id,
+            ImpressionDB.filled == True,
+            ImpressionDB.timestamp >= start,
+            ImpressionDB.timestamp <= end,
+        )
+        .group_by(ImpressionDB.winning_dsp)
+        .order_by(func.count(ImpressionDB.id).desc())
+    )
+    return [
+        {
+            "dsp_id":  row.winning_dsp,
+            "wins":    row.wins,
+            "avg_cpm": round(float(row.avg_cpm or 0), 4),
+            "revenue": round(float(row.total_cpm or 0) / 1000, 6),
+        }
+        for row in rows.all()
+    ]
+
+
+# ── レポート履歴API ────────────────────────────────────────────
+
+@app.get("/api/reports/range", summary="期間レポート（複数日）")
+async def reports_range(
+    days: int = Query(default=7, ge=1, le=90),
+    publisher_id: str = Depends(get_current_publisher_id),
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import date as _date, timedelta
+    import asyncio as _asyncio
+    results = []
+    tasks = [
+        generate_daily_report(publisher_id, db=db, for_date=_date.today() - timedelta(days=i))
+        for i in range(days - 1, -1, -1)
+    ]
+    reports = await _asyncio.gather(*tasks)
+    return [r.model_dump() for r in reports]
 
 
 # ── ヘルスチェック ─────────────────────────────────────────────
@@ -220,3 +292,4 @@ async def health():
         "redis": is_redis_connected(),
         "env": settings.app_env,
     }
+

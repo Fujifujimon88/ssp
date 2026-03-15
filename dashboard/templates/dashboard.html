@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SSP Platform ダッシュボード</title>
+  <title>パブリッシャーポータル – SSP Platform</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -14,7 +14,6 @@
     }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
            background: var(--bg); color: var(--text); min-height: 100vh; }
-    a { color: var(--accent); text-decoration: none; }
 
     /* ヘッダー */
     header {
@@ -26,81 +25,115 @@
     .badge { background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 99px; font-size: 11px; }
     .header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
-    .status-label { font-size: 12px; color: var(--muted); }
+    #pub-name { font-size: 13px; color: var(--muted); }
+    .status-badge {
+      padding: 2px 10px; border-radius: 99px; font-size: 11px; font-weight: 600;
+    }
+    .status-badge.active   { background: rgba(34,197,94,.15); color: var(--green); }
+    .status-badge.pending  { background: rgba(245,158,11,.15); color: var(--yellow); }
+    .status-badge.suspended{ background: rgba(239,68,68,.15);  color: var(--red); }
 
     /* レイアウト */
     .layout { display: flex; min-height: calc(100vh - 56px); }
     nav { width: 220px; background: var(--surface); border-right: 1px solid var(--border);
           padding: 16px 0; flex-shrink: 0; }
     nav a { display: flex; align-items: center; gap: 10px; padding: 10px 20px;
-            font-size: 14px; color: var(--muted); transition: all .15s; }
+            font-size: 14px; color: var(--muted); transition: all .15s; cursor: pointer; text-decoration: none; }
     nav a:hover, nav a.active { color: var(--text); background: rgba(99,102,241,.15); }
     nav .section-label { padding: 16px 20px 6px; font-size: 11px; color: var(--muted);
                           text-transform: uppercase; letter-spacing: .05em; }
     main { flex: 1; padding: 24px; overflow-x: hidden; }
 
     /* カード */
-    .card { background: var(--surface); border: 1px solid var(--border);
-             border-radius: 10px; padding: 20px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
     .card-title { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .section-header h2 { font-size: 15px; }
 
-    /* KPIグリッド */
+    /* KPI */
     .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-    .kpi-value { font-size: 32px; font-weight: 700; }
+    .kpi-value { font-size: 28px; font-weight: 700; }
     .kpi-unit { font-size: 13px; color: var(--muted); margin-left: 4px; }
-    .kpi-change { font-size: 12px; margin-top: 6px; }
-    .up { color: var(--green); } .down { color: var(--red); }
+    .kpi-sub  { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
-    /* グラフ行 */
+    /* グラフ */
     .chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
-    .chart-wrap { position: relative; height: 220px; }
+    .chart-wrap { position: relative; height: 200px; }
 
     /* テーブル */
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th { padding: 10px 14px; text-align: left; background: rgba(255,255,255,.03);
          color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
-    td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.04); }
+    td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: rgba(255,255,255,.02); }
-    .status-active   { color: var(--green); font-weight: 600; }
-    .status-pending  { color: var(--yellow); font-weight: 600; }
-    .status-suspended{ color: var(--red); font-weight: 600; }
+    .mono { font-family: monospace; font-size: 12px; color: var(--muted); }
+    .active-dot  { color: var(--green); font-weight: 600; }
+    .inactive-dot{ color: var(--red); }
 
     /* ボタン */
     .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px;
-           border-radius: 6px; font-size: 13px; cursor: pointer; border: none;
-           transition: opacity .15s; }
+           border-radius: 6px; font-size: 13px; cursor: pointer; border: none; transition: opacity .15s; }
     .btn:hover { opacity: .85; }
     .btn-primary { background: var(--accent); color: #fff; }
     .btn-ghost   { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-danger  { background: rgba(239,68,68,.1); color: var(--red); border: 1px solid rgba(239,68,68,.3); }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
 
-    /* APIコードブロック */
-    .code-block { background: #0a0f1e; border: 1px solid var(--border); border-radius: 8px;
-                  padding: 16px 20px; font-family: 'Fira Code', monospace; font-size: 13px;
-                  color: #cdd6f4; line-height: 1.7; overflow-x: auto; white-space: pre; }
-    .code-comment { color: #6272a4; }
-    .code-key { color: #8be9fd; }
-    .code-val { color: #50fa7b; }
+    /* DSPバー */
+    .dsp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .dsp-name { width: 130px; font-size: 13px; flex-shrink: 0; }
+    .dsp-bar-bg { flex: 1; height: 8px; background: var(--border); border-radius: 99px; overflow: hidden; }
+    .dsp-bar-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .5s; }
+    .dsp-val { width: 50px; text-align: right; font-size: 12px; color: var(--muted); flex-shrink: 0; }
 
     /* モーダル */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7);
                      z-index: 100; align-items: center; justify-content: center; }
     .modal-overlay.open { display: flex; }
     .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-             padding: 24px; width: 90%; max-width: 640px; max-height: 80vh; overflow-y: auto; }
+             padding: 24px; width: 90%; max-width: 520px; max-height: 85vh; overflow-y: auto; }
     .modal h2 { font-size: 16px; margin-bottom: 16px; }
-    .modal-close { float: right; cursor: pointer; color: var(--muted); font-size: 20px; }
+    .modal-close { float: right; cursor: pointer; color: var(--muted); font-size: 20px; line-height: 1; }
+    .form-field { margin-bottom: 14px; }
+    .form-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+    .form-field input, .form-field select {
+      width: 100%; padding: 9px 12px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 14px; outline: none;
+    }
+    .form-field input:focus, .form-field select:focus { border-color: var(--accent); }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-    /* レスポンシブ */
+    /* コードブロック */
+    .code-block { background: #0a0f1e; border: 1px solid var(--border); border-radius: 8px;
+                  padding: 14px 16px; font-family: 'Fira Code', monospace; font-size: 12px;
+                  color: #cdd6f4; line-height: 1.7; overflow-x: auto; white-space: pre; max-height: 360px; overflow-y: auto; }
+
+    /* セクション表示切替 */
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* プロフィールカード */
+    .profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    .profile-item { font-size: 13px; }
+    .profile-item .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+
+    /* メッセージ */
+    .msg { font-size: 13px; margin-top: 12px; padding: 8px 12px; border-radius: 6px; }
+    .msg-ok  { background: rgba(34,197,94,.1);  color: var(--green); }
+    .msg-err { background: rgba(239,68,68,.1);  color: var(--red); }
+
+    /* ローダー / 空状態 */
+    .empty { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
+
     @media(max-width:900px) {
       nav { display: none; }
       .kpi-grid { grid-template-columns: repeat(2,1fr); }
       .chart-row { grid-template-columns: 1fr; }
+      .profile-grid { grid-template-columns: 1fr; }
     }
-
-    /* ローダー */
-    .loading { color: var(--muted); font-size: 13px; padding: 20px 0; }
   </style>
 </head>
 <body>
@@ -110,200 +143,536 @@
   <span class="badge">v0.2</span>
   <div class="header-right">
     <span class="status-dot"></span>
-    <span class="status-label" id="dsp-count">DSP接続中...</span>
-    <button class="btn btn-ghost" onclick="showRegisterModal()">+ パブリッシャー登録</button>
+    <span id="pub-name" style="font-size:13px;color:var(--muted)">読み込み中...</span>
+    <span id="pub-status-badge" class="status-badge pending" style="display:none"></span>
+    <button class="btn btn-ghost btn-sm" onclick="logout()">ログアウト</button>
   </div>
 </header>
 
 <div class="layout">
   <nav>
     <div class="section-label">メニュー</div>
-    <a href="#overview" class="active">📊 概要</a>
-    <a href="#publishers">📰 パブリッシャー</a>
-    <a href="#api-guide">🔌 API連携</a>
+    <a onclick="showSection('overview')"  id="nav-overview"  class="active">📊 概要・KPI</a>
+    <a onclick="showSection('slots')"     id="nav-slots">📦 スロット管理</a>
+    <a onclick="showSection('dsp')"       id="nav-dsp">🔗 DSP連携</a>
+    <a onclick="showSection('report')"    id="nav-report">📈 レポート</a>
+    <a onclick="showSection('profile')"   id="nav-profile">👤 プロフィール</a>
 
-    <div class="section-label" style="margin-top:16px">DSP状況</div>
-    <div id="dsp-list" style="padding:0 20px;font-size:12px;color:var(--muted);line-height:2">
-      読み込み中...
-    </div>
+    <div class="section-label" style="margin-top:16px">リンク</div>
+    <a href="/admin" style="font-size:12px">🛠 管理画面</a>
+    <a href="/docs" style="font-size:12px">📖 API Docs</a>
   </nav>
 
   <main>
-    <!-- KPI -->
-    <section id="overview" style="margin-bottom:24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h2 style="font-size:15px">本日のパフォーマンス</h2>
-        <span style="font-size:12px;color:var(--muted)" id="last-updated"></span>
+
+    <!-- ── 概要セクション ── -->
+    <div id="section-overview" class="section active">
+      <div style="margin-bottom:20px">
+        <h2 style="font-size:15px;margin-bottom:4px">本日のパフォーマンス</h2>
+        <span id="last-updated" style="font-size:12px;color:var(--muted)"></span>
       </div>
       <div class="kpi-grid">
         <div class="card">
-          <div class="card-title">総インプレッション</div>
-          <div class="kpi-value" id="kpi-imp">-</div>
+          <div class="card-title">インプレッション</div>
+          <div class="kpi-value" id="kpi-imp">—</div>
         </div>
         <div class="card">
           <div class="card-title">フィルレート</div>
-          <div class="kpi-value" id="kpi-fill">-<span class="kpi-unit">%</span></div>
+          <div class="kpi-value" id="kpi-fill">—<span class="kpi-unit">%</span></div>
         </div>
         <div class="card">
           <div class="card-title">本日収益</div>
-          <div class="kpi-value" id="kpi-rev">$<span id="kpi-rev-val">-</span></div>
+          <div class="kpi-value">$<span id="kpi-rev">—</span></div>
         </div>
         <div class="card">
           <div class="card-title">平均 eCPM</div>
-          <div class="kpi-value" id="kpi-ecpm">$<span id="kpi-ecpm-val">-</span></div>
+          <div class="kpi-value">$<span id="kpi-ecpm">—</span></div>
+          <div class="kpi-sub" id="kpi-top-dsp"></div>
         </div>
       </div>
-    </section>
 
-    <!-- グラフ -->
-    <div class="chart-row">
-      <div class="card">
-        <div class="card-title">時間帯別インプレッション（直近24h）</div>
-        <div class="chart-wrap"><canvas id="chart-imp"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="card-title">DSP別落札シェア</div>
-        <div class="chart-wrap"><canvas id="chart-dsp"></canvas></div>
+      <div class="chart-row">
+        <div class="card">
+          <div class="card-title">DSP別落札シェア（本日）</div>
+          <div class="chart-wrap"><canvas id="chart-dsp"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-title">スロット別インプレッション</div>
+          <div id="slot-imp-list" style="margin-top:8px"><div class="empty">データなし</div></div>
+        </div>
       </div>
     </div>
 
-    <!-- パブリッシャー一覧 -->
-    <section id="publishers" class="card" style="margin-bottom:24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h2 style="font-size:15px">パブリッシャー一覧</h2>
-        <button class="btn btn-primary" onclick="showRegisterModal()">+ 新規登録</button>
-      </div>
-      <div class="table-wrap">
-        {% if publishers %}
-        <table>
-          <thead>
-            <tr>
-              <th>サイト名</th><th>ドメイン</th><th>ステータス</th>
-              <th>フロアCPM</th><th>登録日</th><th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for pub in publishers %}
-            <tr>
-              <td>{{ pub.name }}</td>
-              <td style="font-family:monospace;color:var(--muted)">{{ pub.domain }}</td>
-              <td><span class="status-{{ pub.status }}">{{ pub.status }}</span></td>
-              <td>${{ pub.floor_price }}</td>
-              <td style="color:var(--muted);font-size:12px">{{ pub.created_at.strftime('%Y-%m-%d') }}</td>
-              <td>
-                <button class="btn btn-ghost" style="font-size:12px"
-                  onclick="showTagModal('{{ pub.id }}', '{{ pub.name }}')">タグ取得</button>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <div style="text-align:center;padding:40px;color:var(--muted);font-size:14px">
-          まだ登録されていません。「+ 新規登録」から追加してください。
+    <!-- ── スロット管理セクション ── -->
+    <div id="section-slots" class="section">
+      <div class="card">
+        <div class="section-header">
+          <h2>広告スロット</h2>
+          <button class="btn btn-primary btn-sm" onclick="openCreateSlotModal()">+ 新規スロット</button>
         </div>
-        {% endif %}
+        <div class="table-wrap">
+          <table id="slots-table">
+            <thead>
+              <tr>
+                <th>スロット名</th><th>フォーマット</th><th>サイズ</th>
+                <th>フロアCPM</th><th>状態</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="slots-tbody">
+              <tr><td colspan="6" class="empty">読み込み中...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-    </section>
+    </div>
 
-    <!-- API連携ガイド -->
-    <section id="api-guide" class="card">
-      <h2 style="font-size:15px;margin-bottom:16px">API連携クイックスタート</h2>
-      <div class="code-block"><span class="code-comment"># 1. パブリッシャー登録</span>
-curl -X POST http://localhost:8000/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    <span class="code-key">"name"</span>: <span class="code-val">"まとめブログ"</span>,
-    <span class="code-key">"domain"</span>: <span class="code-val">"example.com"</span>,
-    <span class="code-key">"contact_email"</span>: <span class="code-val">"admin@example.com"</span>,
-    <span class="code-key">"floor_price"</span>: <span class="code-val">0.5</span>
-  }?password=yourpassword'
+    <!-- ── DSP連携セクション ── -->
+    <div id="section-dsp" class="section">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
+        <div class="card">
+          <div class="card-title">接続中のDSP</div>
+          <div id="dsp-connection-list" style="margin-top:12px">
+            <div class="empty">読み込み中...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">DSP別落札数（本日）</div>
+          <div id="dsp-win-list" style="margin-top:12px">
+            <div class="empty">データなし</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">DSP別パフォーマンス詳細（本日）</div>
+        <div class="table-wrap" style="margin-top:12px">
+          <table>
+            <thead>
+              <tr>
+                <th>DSP</th><th>落札数</th><th>平均CPM</th><th>収益貢献</th><th>落札率</th>
+              </tr>
+            </thead>
+            <tbody id="dsp-stats-tbody">
+              <tr><td colspan="5" class="empty">読み込み中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
-<span class="code-comment"># 2. JWTトークン取得</span>
-curl -X POST http://localhost:8000/auth/token \
-  -d "username=example.com&password=yourpassword"
+    <!-- ── レポートセクション ── -->
+    <div id="section-report" class="section">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+        <h2 style="font-size:15px">パフォーマンスレポート</h2>
+        <select id="report-days" onchange="loadReport()" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          <option value="7">過去7日</option>
+          <option value="14">過去14日</option>
+          <option value="30">過去30日</option>
+        </select>
+        <span id="report-loading" style="font-size:12px;color:var(--muted);display:none">読み込み中...</span>
+      </div>
 
-<span class="code-comment"># 3. 広告スロット作成</span>
-curl -X POST http://localhost:8000/api/slots \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"publisher_id":"PUB_ID","name":"トップバナー","width":300,"height":250}'
+      <!-- サマリーカード -->
+      <div class="kpi-grid" style="margin-bottom:20px">
+        <div class="card">
+          <div class="card-title">期間インプレッション</div>
+          <div class="kpi-value" id="r-imp">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">平均フィルレート</div>
+          <div class="kpi-value" id="r-fill">—<span class="kpi-unit">%</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">期間収益</div>
+          <div class="kpi-value">$<span id="r-rev">—</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">平均 eCPM</div>
+          <div class="kpi-value">$<span id="r-ecpm">—</span></div>
+        </div>
+      </div>
 
-<span class="code-comment"># 4. Prebid.jsタグ取得</span>
-curl http://localhost:8000/api/slots/SLOT_ID/tag \
-  -H "Authorization: Bearer YOUR_TOKEN"</div>
-    </section>
+      <!-- 収益・インプレッション推移グラフ -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title">日別インプレッション数</div>
+        <div class="chart-wrap" style="height:180px"><canvas id="chart-imp-history"></canvas></div>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title">日別収益 (USD)</div>
+        <div class="chart-wrap" style="height:160px"><canvas id="chart-rev-history"></canvas></div>
+      </div>
+
+      <!-- 日別テーブル -->
+      <div class="card">
+        <div class="card-title" style="margin-bottom:12px">日別詳細</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>日付</th><th>インプレッション</th><th>フィルレート</th><th>収益 (USD)</th><th>eCPM</th><th>Top DSP</th></tr>
+            </thead>
+            <tbody id="report-tbody">
+              <tr><td colspan="6" class="empty">読み込み中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── プロフィールセクション ── -->
+    <div id="section-profile" class="section">
+      <div class="card" style="margin-bottom:16px">
+        <div class="section-header">
+          <h2>パブリッシャー情報</h2>
+        </div>
+        <div class="profile-grid" id="profile-grid">
+          <div class="empty">読み込み中...</div>
+        </div>
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+          <div class="card-title">API キー</div>
+          <code id="api-key" style="font-family:monospace;font-size:13px;color:var(--accent)">—</code>
+          <button class="btn btn-ghost btn-sm" style="margin-left:12px" onclick="copyApiKey()">コピー</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-header"><h2>クイックスタート</h2></div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:12px">
+          スロットを作成し、タグをサイトに貼り付けるだけで広告配信が開始されます。
+        </p>
+        <div id="quickstart-code" class="code-block">スロットを作成するとタグが表示されます</div>
+      </div>
+    </div>
+
   </main>
 </div>
 
-<!-- 登録モーダル -->
-<div class="modal-overlay" id="register-modal">
+<!-- スロット作成モーダル -->
+<div class="modal-overlay" id="modal-create-slot">
   <div class="modal">
-    <span class="modal-close" onclick="closeModal('register-modal')">&times;</span>
-    <h2>パブリッシャー新規登録</h2>
-    <form id="register-form" style="display:grid;gap:12px;margin-top:8px">
-      <input name="name" placeholder="サイト名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
-      <input name="domain" placeholder="ドメイン (例: example.com)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
-      <input name="email" type="email" placeholder="連絡先メール" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
-      <input name="floor" type="number" step="0.1" value="0.5" placeholder="フロアCPM (USD)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
-      <input name="password" type="password" placeholder="パスワード" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
-      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
-      <div id="register-result" style="font-size:13px;color:var(--green)"></div>
+    <span class="modal-close" onclick="closeModal('modal-create-slot')">&times;</span>
+    <h2>新規広告スロット作成</h2>
+    <form id="form-create-slot" style="margin-top:12px">
+      <div class="form-field">
+        <label>スロット名 *</label>
+        <input name="name" placeholder="例: トップバナー" required>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>フォーマット</label>
+          <select name="format">
+            <option value="banner">banner</option>
+            <option value="video">video</option>
+            <option value="native">native</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>フロアCPM (USD)</label>
+          <input name="floor_price" type="number" step="0.1" min="0" placeholder="0.5">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>幅 (px)</label>
+          <input name="width" type="number" placeholder="300">
+        </div>
+        <div class="form-field">
+          <label>高さ (px)</label>
+          <input name="height" type="number" placeholder="250">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px">
+        作成する
+      </button>
+      <div id="create-slot-msg"></div>
     </form>
   </div>
 </div>
 
-<!-- タグモーダル -->
-<div class="modal-overlay" id="tag-modal">
+<!-- タグ表示モーダル -->
+<div class="modal-overlay" id="modal-tag">
   <div class="modal">
-    <span class="modal-close" onclick="closeModal('tag-modal')">&times;</span>
-    <h2 id="tag-modal-title">Prebid.jsタグ</h2>
-    <div id="tag-content" class="code-block" style="margin-top:16px;font-size:12px;max-height:400px;overflow-y:auto">
-      読み込み中...
+    <span class="modal-close" onclick="closeModal('modal-tag')">&times;</span>
+    <h2 id="modal-tag-title">タグ</h2>
+    <div style="margin-top:12px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">&lt;head&gt; に貼り付け</div>
+      <div id="tag-head" class="code-block"></div>
+      <div style="font-size:12px;color:var(--muted);margin:12px 0 6px">広告表示箇所に貼り付け</div>
+      <div id="tag-body" class="code-block"></div>
     </div>
-    <button class="btn btn-ghost" style="margin-top:12px" onclick="copyTag()">コピー</button>
+    <button class="btn btn-ghost btn-sm" style="margin-top:12px" onclick="copyTag()">全コピー</button>
   </div>
 </div>
 
 <script>
-// ── ヘルスチェック & DSP表示 ──────────────────────────────
-async function loadHealth() {
-  try {
-    const r = await fetch('/health');
-    const d = await r.json();
-    document.getElementById('dsp-count').textContent = `DSP ${d.dsps.length}社接続中`;
-    document.getElementById('dsp-list').innerHTML = d.dsps.map(id =>
-      `<div>✓ ${id}</div>`
-    ).join('');
-  } catch(e) {
-    document.getElementById('dsp-count').textContent = 'エラー';
+// ── 認証 ─────────────────────────────────────────────────────────
+const TOKEN = localStorage.getItem('ssp_token');
+if (!TOKEN) window.location.href = '/login';
+
+function logout() {
+  localStorage.removeItem('ssp_token');
+  window.location.href = '/login';
+}
+
+function authHeader() {
+  return { 'Authorization': 'Bearer ' + TOKEN };
+}
+
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, {
+    ...opts,
+    headers: { ...authHeader(), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { logout(); return null; }
+  return res;
+}
+
+// ── ナビゲーション ───────────────────────────────────────────────
+function showSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('nav a[id^="nav-"]').forEach(a => a.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+  if (name === 'dsp') loadDsp();
+  if (name === 'slots') loadSlots();
+  if (name === 'profile') loadProfile();
+  if (name === 'report') loadReport();
+}
+
+// ── パブリッシャー情報 ────────────────────────────────────────────
+let pubInfo = null;
+
+async function loadPubInfo() {
+  const res = await apiFetch('/api/publishers/me');
+  if (!res) return;
+  pubInfo = await res.json();
+  document.getElementById('pub-name').textContent = pubInfo.name + ' (' + pubInfo.domain + ')';
+  const badge = document.getElementById('pub-status-badge');
+  badge.textContent = pubInfo.status;
+  badge.className = 'status-badge ' + pubInfo.status;
+  badge.style.display = '';
+}
+
+// ── KPI（/api/reports/daily）─────────────────────────────────────
+async function loadKpi() {
+  const res = await apiFetch('/api/reports/daily');
+  if (!res || !res.ok) return;
+  const d = await res.json();
+  document.getElementById('kpi-imp').textContent   = d.impressions.toLocaleString();
+  document.getElementById('kpi-fill').textContent  = (d.fill_rate * 100).toFixed(1);
+  document.getElementById('kpi-rev').textContent   = d.revenue_usd.toFixed(4);
+  document.getElementById('kpi-ecpm').textContent  = d.ecpm.toFixed(3);
+  if (d.top_dsp) {
+    document.getElementById('kpi-top-dsp').textContent = 'Top: ' + d.top_dsp;
+  }
+  document.getElementById('last-updated').textContent =
+    '最終更新: ' + new Date().toLocaleTimeString('ja-JP');
+}
+
+// ── DSP連携 ─────────────────────────────────────────────────────
+let dspChart = null;
+
+async function loadDsp() {
+  // 接続中DSP一覧（/health）
+  const healthRes = await fetch('/health');
+  const health = await healthRes.json();
+  const connEl = document.getElementById('dsp-connection-list');
+  connEl.innerHTML = health.dsps.map(id =>
+    `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+       <span style="color:var(--green)">●</span>
+       <span style="font-size:13px">${id}</span>
+     </div>`
+  ).join('');
+
+  // DSP別統計（/api/dsp/stats）
+  const statsRes = await apiFetch('/api/dsp/stats');
+  if (!statsRes || !statsRes.ok) {
+    document.getElementById('dsp-stats-tbody').innerHTML =
+      '<tr><td colspan="5" class="empty">データなし（入札記録がありません）</td></tr>';
+    return;
+  }
+  const stats = await statsRes.json();
+
+  // 落札数バー
+  const maxWins = Math.max(...stats.map(s => s.wins), 1);
+  document.getElementById('dsp-win-list').innerHTML = stats.length === 0
+    ? '<div class="empty">データなし</div>'
+    : stats.map(s => `
+        <div class="dsp-row">
+          <span class="dsp-name">${s.dsp_id}</span>
+          <div class="dsp-bar-bg">
+            <div class="dsp-bar-fill" style="width:${(s.wins/maxWins*100).toFixed(0)}%"></div>
+          </div>
+          <span class="dsp-val">${s.wins}件</span>
+        </div>`).join('');
+
+  // テーブル
+  const total = stats.reduce((a, s) => a + s.wins, 0);
+  document.getElementById('dsp-stats-tbody').innerHTML = stats.length === 0
+    ? '<tr><td colspan="5" class="empty">データなし</td></tr>'
+    : stats.map(s => `
+        <tr>
+          <td>${s.dsp_id}</td>
+          <td>${s.wins}</td>
+          <td>$${(s.avg_cpm || 0).toFixed(3)}</td>
+          <td>$${(s.revenue || 0).toFixed(4)}</td>
+          <td>${total > 0 ? (s.wins/total*100).toFixed(1) : '0.0'}%</td>
+        </tr>`).join('');
+
+  // ドーナツチャート（概要セクション）
+  if (stats.length > 0) {
+    const ctx = document.getElementById('chart-dsp');
+    if (dspChart) dspChart.destroy();
+    dspChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: stats.map(s => s.dsp_id),
+        datasets: [{
+          data: stats.map(s => s.wins),
+          backgroundColor: ['#6366f1','#22c55e','#f59e0b','#64748b','#ec4899'],
+          borderWidth: 0,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 }, padding: 10 } } }
+      }
+    });
   }
 }
 
-// ── KPI（ダミーデータ。本番はAPIから取得） ──────────────────
-function updateKPIs() {
-  // 実運用時は /api/reports/daily?publisher_id=... を叩く
-  const now = new Date();
-  document.getElementById('last-updated').textContent = `最終更新: ${now.toLocaleTimeString('ja-JP')}`;
+// ── スロット管理 ─────────────────────────────────────────────────
+async function loadSlots() {
+  const res = await apiFetch('/api/slots');
+  if (!res) return;
+  const slots = await res.json();
+  const tbody = document.getElementById('slots-tbody');
+
+  if (slots.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">まだスロットがありません。「+ 新規スロット」から作成してください。</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = slots.map(s => `
+    <tr>
+      <td>${s.name}</td>
+      <td><span class="mono">${s.format}</span></td>
+      <td class="mono">${s.width || '—'} × ${s.height || '—'}</td>
+      <td>$${s.floor_price !== null ? s.floor_price : '—'}</td>
+      <td>${s.active
+        ? '<span class="active-dot">● 配信中</span>'
+        : '<span class="inactive-dot">● 停止</span>'}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="showTag('${s.id}','${s.name}')">タグ取得</button>
+        ${s.active
+          ? `<button class="btn btn-danger btn-sm" onclick="deactivateSlot('${s.id}')">停止</button>`
+          : ''}
+      </td>
+    </tr>`).join('');
+
+  // スロット別インプレッション（概要）
+  const slotImpEl = document.getElementById('slot-imp-list');
+  slotImpEl.innerHTML = slots.map(s =>
+    `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+       <span>${s.name}</span>
+       <span class="mono">${s.active ? '配信中' : '停止'}</span>
+     </div>`
+  ).join('');
 }
 
-// ── グラフ描画 ─────────────────────────────────────────────
-function drawCharts() {
-  const hours = Array.from({length: 24}, (_, i) => `${i}時`);
-  const impData = hours.map(() => Math.floor(Math.random() * 500 + 50));
+async function deactivateSlot(slotId) {
+  if (!confirm('このスロットを停止しますか？')) return;
+  const res = await apiFetch(`/api/slots/${slotId}`, { method: 'DELETE' });
+  if (res && res.ok) loadSlots();
+  else alert('停止に失敗しました');
+}
 
-  new Chart(document.getElementById('chart-imp'), {
-    type: 'line',
+document.getElementById('form-create-slot').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const msgEl = document.getElementById('create-slot-msg');
+  msgEl.innerHTML = '';
+
+  const payload = {
+    publisher_id: pubInfo.id,
+    name: f.name.value,
+    format: f.format.value,
+    width: f.width.value ? parseInt(f.width.value) : null,
+    height: f.height.value ? parseInt(f.height.value) : null,
+    floor_price: f.floor_price.value ? parseFloat(f.floor_price.value) : null,
+  };
+
+  const res = await apiFetch('/api/slots', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (res && res.ok) {
+    msgEl.innerHTML = '<div class="msg msg-ok">✓ スロットを作成しました</div>';
+    setTimeout(() => { closeModal('modal-create-slot'); loadSlots(); }, 1000);
+  } else {
+    const err = res ? await res.json() : { detail: 'エラー' };
+    msgEl.innerHTML = `<div class="msg msg-err">${JSON.stringify(err.detail)}</div>`;
+  }
+});
+
+// ── タグ表示 ─────────────────────────────────────────────────────
+async function showTag(slotId, slotName) {
+  const res = await apiFetch(`/api/slots/${slotId}/tag`);
+  if (!res || !res.ok) { alert('タグ取得に失敗しました'); return; }
+  const d = await res.json();
+  document.getElementById('modal-tag-title').textContent = slotName + ' のタグ';
+  document.getElementById('tag-head').textContent = d.head_tag;
+  document.getElementById('tag-body').textContent = d.body_tag;
+  document.getElementById('modal-tag').classList.add('open');
+
+  // プロフィールのクイックスタートにも反映
+  document.getElementById('quickstart-code').textContent =
+    '// ① <head> に貼り付け\n' + d.head_tag + '\n\n// ② 広告表示箇所に貼り付け\n' + d.body_tag;
+}
+
+function copyTag() {
+  const text = document.getElementById('tag-head').textContent + '\n\n'
+             + document.getElementById('tag-body').textContent;
+  navigator.clipboard.writeText(text);
+}
+
+// ── レポート ─────────────────────────────────────────────────
+let chartImpHistory = null;
+let chartRevHistory = null;
+
+async function loadReport() {
+  const days = document.getElementById('report-days').value;
+  document.getElementById('report-loading').style.display = '';
+
+  const res = await apiFetch(`/api/reports/range?days=${days}`);
+  document.getElementById('report-loading').style.display = 'none';
+  if (!res || !res.ok) return;
+  const data = await res.json();
+
+  // サマリー集計
+  const totalImp  = data.reduce((s, r) => s + r.impressions, 0);
+  const totalRev  = data.reduce((s, r) => s + r.revenue_usd, 0);
+  const avgFill   = data.length ? data.reduce((s, r) => s + r.fill_rate, 0) / data.length : 0;
+  const avgEcpm   = data.filter(r => r.impressions > 0).reduce((s, r) => s + r.ecpm, 0)
+                  / (data.filter(r => r.impressions > 0).length || 1);
+
+  document.getElementById('r-imp').textContent   = totalImp.toLocaleString();
+  document.getElementById('r-fill').textContent  = (avgFill * 100).toFixed(1);
+  document.getElementById('r-rev').textContent   = totalRev.toFixed(4);
+  document.getElementById('r-ecpm').textContent  = avgEcpm.toFixed(3);
+
+  const labels = data.map(r => r.date.slice(5));  // MM-DD
+
+  // インプレッショングラフ
+  if (chartImpHistory) chartImpHistory.destroy();
+  chartImpHistory = new Chart(document.getElementById('chart-imp-history'), {
+    type: 'bar',
     data: {
-      labels: hours,
+      labels,
       datasets: [{
         label: 'インプレッション',
-        data: impData,
-        borderColor: '#6366f1',
-        backgroundColor: 'rgba(99,102,241,.1)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 0,
+        data: data.map(r => r.impressions),
+        backgroundColor: 'rgba(99,102,241,0.7)',
+        borderRadius: 4,
       }]
     },
     options: {
@@ -316,86 +685,82 @@ function drawCharts() {
     }
   });
 
-  new Chart(document.getElementById('chart-dsp'), {
-    type: 'doughnut',
+  // 収益グラフ
+  if (chartRevHistory) chartRevHistory.destroy();
+  chartRevHistory = new Chart(document.getElementById('chart-rev-history'), {
+    type: 'line',
     data: {
-      labels: ['Mock TradeDesk', 'Mock Xandr', 'Mock DV360', 'その他'],
+      labels,
       datasets: [{
-        data: [42, 28, 20, 10],
-        backgroundColor: ['#6366f1','#22c55e','#f59e0b','#64748b'],
-        borderWidth: 0,
+        label: '収益 (USD)',
+        data: data.map(r => r.revenue_usd),
+        borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
       }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 }, padding: 12 } }
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: '#1e293b' } },
+        y: { ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => '$' + v.toFixed(4) }, grid: { color: '#334155' } },
       }
     }
   });
+
+  // 日別テーブル（新しい順）
+  const rows = [...data].reverse();
+  document.getElementById('report-tbody').innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.date}</td>
+      <td>${r.impressions.toLocaleString()}</td>
+      <td>${(r.fill_rate * 100).toFixed(1)}%</td>
+      <td>$${r.revenue_usd.toFixed(4)}</td>
+      <td>$${r.ecpm.toFixed(3)}</td>
+      <td style="font-size:12px;color:var(--muted)">${r.top_dsp || '—'}</td>
+    </tr>`).join('');
 }
 
-// ── モーダル ────────────────────────────────────────────────
-function showRegisterModal() {
-  document.getElementById('register-modal').classList.add('open');
+// ── プロフィール ─────────────────────────────────────────────────
+async function loadProfile() {
+  if (!pubInfo) return;
+  document.getElementById('profile-grid').innerHTML = `
+    <div class="profile-item"><div class="label">サイト名</div>${pubInfo.name}</div>
+    <div class="profile-item"><div class="label">ドメイン</div><span class="mono">${pubInfo.domain}</span></div>
+    <div class="profile-item"><div class="label">連絡先メール</div>${pubInfo.contact_email}</div>
+    <div class="profile-item"><div class="label">フロアCPM</div>$${pubInfo.floor_price}</div>
+    <div class="profile-item"><div class="label">ステータス</div>
+      <span class="status-badge ${pubInfo.status}">${pubInfo.status}</span></div>
+    <div class="profile-item"><div class="label">月間収益</div>$${pubInfo.monthly_revenue_usd.toFixed(4)}</div>
+  `;
+  document.getElementById('api-key').textContent = pubInfo.api_key;
 }
 
+function copyApiKey() {
+  navigator.clipboard.writeText(document.getElementById('api-key').textContent);
+}
+
+// ── モーダル ─────────────────────────────────────────────────────
+function openCreateSlotModal() {
+  document.getElementById('form-create-slot').reset();
+  document.getElementById('create-slot-msg').innerHTML = '';
+  document.getElementById('modal-create-slot').classList.add('open');
+}
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
 }
 
-async function showTagModal(pubId, pubName) {
-  document.getElementById('tag-modal-title').textContent = pubName + ' のタグ';
-  document.getElementById('tag-content').textContent = '読み込み中...';
-  document.getElementById('tag-modal').classList.add('open');
+// ── 初期化 ───────────────────────────────────────────────────────
+(async () => {
+  await loadPubInfo();
+  await Promise.all([loadKpi(), loadDsp()]);
+  loadSlots();
+})();
 
-  const token = prompt('JWTトークンを入力:');
-  if (!token) { closeModal('tag-modal'); return; }
-
-  try {
-    const r = await fetch('/api/tags/full', { headers: { Authorization: `Bearer ${token}` } });
-    if (!r.ok) { document.getElementById('tag-content').textContent = '認証エラー'; return; }
-    const d = await r.json();
-    document.getElementById('tag-content').textContent = JSON.stringify(d, null, 2);
-  } catch(e) {
-    document.getElementById('tag-content').textContent = 'エラー: ' + e.message;
-  }
-}
-
-function copyTag() {
-  navigator.clipboard.writeText(document.getElementById('tag-content').textContent);
-}
-
-// 登録フォーム
-document.getElementById('register-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const f = e.target;
-  const body = {
-    name: f.name.value, domain: f.domain.value,
-    contact_email: f.email.value, floor_price: parseFloat(f.floor.value),
-  };
-  const res = await fetch(`/auth/register?password=${encodeURIComponent(f.password.value)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const d = await res.json();
-  if (res.ok) {
-    document.getElementById('register-result').innerHTML =
-      `✓ 登録完了！<br>API Key: <code>${d.api_key}</code><br>Token: <code>${d.access_token?.slice(0,20)}...</code>`;
-    setTimeout(() => location.reload(), 3000);
-  } else {
-    document.getElementById('register-result').style.color = '#ef4444';
-    document.getElementById('register-result').textContent = d.detail || 'エラー';
-  }
-});
-
-// 初期化
-loadHealth();
-updateKPIs();
-drawCharts();
-setInterval(updateKPIs, 30000);
-setInterval(loadHealth, 60000);
+setInterval(loadKpi, 30000);
 </script>
 </body>
 </html>
