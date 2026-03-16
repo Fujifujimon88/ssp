@@ -237,6 +237,32 @@ object MdmApiClient {
             null
         }
     }
+
+    // ── プレイアブル広告ゲームイベント報告（ADT-02）─────────────────
+
+    fun reportGameEvent(
+        event: String,
+        impressionId: String,
+        deviceId: String,
+        score: Int = 0,
+    ): Boolean {
+        val body = JSONObject().apply {
+            put("event",         event)
+            put("impression_id", impressionId)
+            put("device_id",     deviceId)
+            put("score",         score)
+        }
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/mdm/game_event")
+                .post(body.toString().toRequestBody(JSON_TYPE))
+                .build()
+            http.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            android.util.Log.w("MdmApiClient", "reportGameEvent failed: $e")
+            false
+        }
+    }
 }
 
 /** サーバーから受け取るMDMコマンド */

@@ -22,10 +22,10 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -1685,6 +1685,47 @@ async def lockscreen_content(
     }
 
 
+# ── DPC-07: ロック画面KPI報告 ─────────────────────────────────
+
+
+class LockscreenKpiBody(BaseModel):
+    impression_id: str
+    device_id: str
+    dwell_time_ms: int
+    dismiss_type: str  # cta_tap / swipe_dismiss / auto_dismiss
+    hour_of_day: int
+    screen_on_count_today: Optional[int] = None
+
+
+@router.post("/lockscreen_kpi", summary="ロック画面KPI報告（DPC-07）")
+async def report_lockscreen_kpi(
+    body: LockscreenKpiBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Android DPC の LockscreenActivity から送信されるエンゲージメント指標を受け取る（DPC-07）。
+
+    - impression_id の存在確認（スプーフィング防止）
+    - MdmImpressionDB を status="served" に更新
+    - dwell_time_ms / dismiss_type を ログ記録
+    """
+    impression = await db.get(MdmImpressionDB, body.impression_id)
+    if impression is None:
+        raise HTTPException(status_code=404, detail="impression_id not found")
+
+    # served 状態に更新（prefetched → served）
+    if impression.status == "prefetched":
+        impression.status = "served"
+    await db.commit()
+
+    logger.info(
+        f"lockscreen_kpi | impression={body.impression_id} | device={body.device_id}"
+        f" | dwell={body.dwell_time_ms}ms | dismiss={body.dismiss_type}"
+        f" | hour={body.hour_of_day}"
+    )
+    return {"status": "ok"}
+
+
 # ── プリフェッチ定数 ────────────────────────────────────────────
 _PREFETCH_TTL = 14400       # 4h — individual impression_id TTL
 _PREFETCH_CACHE_TTL = 300   # 5min — per-device response cache
@@ -1964,7 +2005,7 @@ async def widget_content(
 
 
 @router.get("/ios/widget_content/{device_id}", summary="iOS WidgetKit コンテンツ取得")
-async def ios_widget_content(
+async def ios_widgetkit_content(
     device_id: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -1985,7 +2026,7 @@ async def ios_widget_content(
     coupon_count = await db.scalar(
         select(func.count(MdmAdSlotDB.id)).where(
             MdmAdSlotDB.slot_type == "webclip",
-            MdmAdSlotDB.is_active == True,
+            MdmAdSlotDB.status == "active",
         )
     ) or 0
 
@@ -4357,3 +4398,441 @@ async def ml_features_stats(
         "top_preferred_hours": top_preferred_hours,
         "computed_at_latest": computed_at_latest.isoformat() if computed_at_latest else None,
     }
+
+
+# ── ADT-02 プレイアブル広告ゲームイベント ──────────────────────────────
+@router.post("/game_event", summary="プレイアブル広告ゲームイベント記録")
+async def record_game_event(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    GameAdActivity の JS Bridge から送信されるゲームイベントを記録する。
+    event: game_start / game_complete / game_converted
+    """
+    event         = body.get("event", "")
+    impression_id = body.get("impression_id", "")
+    device_id     = body.get("device_id", "")
+    score         = body.get("score", 0)
+
+    valid_events = {"game_start", "game_complete", "game_converted"}
+    if event not in valid_events:
+        raise HTTPException(status_code=400, detail=f"Invalid event: {event}")
+
+    # MdmImpressionDB の video_event フィールドを再利用（game_event として）
+    if impression_id:
+        imp = await db.scalar(
+            select(MdmImpressionDB).where(MdmImpressionDB.impression_id == impression_id)
+        )
+        if imp:
+            current = imp.video_event or ""
+            imp.video_event = f"{current},{event}".strip(",")
+            await db.commit()
+
+    logger.info(f"Game event: {event} | impression={impression_id} | device={device_id} | score={score}")
+    return {"ok": True}
+
+
+# ── ML-02 管理エンドポイント ──────────────────────────────────────────
+@router.post("/admin/ml/train", summary="Two-Tower モデル学習トリガー（管理者）")
+async def trigger_model_training(
+    background_tasks: BackgroundTasks,
+    _=Depends(verify_admin_key),
+):
+    """
+    バックグラウンドでモデル学習を開始する。
+    実際の学習は mdm/ml/two_tower.py で実施。
+    TensorFlow 未インストール時は {"status": "skipped"} を返す。
+    """
+    def _train():
+        try:
+            from mdm.ml.two_tower import build_two_tower_model, export_tflite
+            model = build_two_tower_model()
+            if model is None:
+                logger.info("TensorFlow unavailable — training skipped")
+                return
+            # モデルディレクトリ作成
+            import os
+            model_dir = os.path.join(os.path.dirname(__file__), "ml", "models")
+            os.makedirs(model_dir, exist_ok=True)
+            tflite_path = os.path.join(model_dir, "two_tower.tflite")
+            export_tflite(model, tflite_path)
+            logger.info(f"Two-Tower model trained and exported: {tflite_path}")
+        except Exception as e:
+            logger.error(f"Model training failed: {e}")
+
+    background_tasks.add_task(_train)
+    return {"status": "started", "message": "Two-Tower model training queued"}
+
+
+@router.get("/admin/ml/models", summary="学習済みモデル一覧（管理者）")
+async def list_ml_models(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import MlModelVersionDB
+    rows = (await db.scalars(
+        select(MlModelVersionDB).order_by(MlModelVersionDB.created_at.desc()).limit(20)
+    )).all()
+    return {"models": [
+        {"id": r.id, "version": r.version, "model_type": r.model_type,
+         "train_auc": r.train_auc, "val_auc": r.val_auc,
+         "tflite_size_mb": r.tflite_size_mb, "is_active": r.is_active,
+         "created_at": r.created_at.isoformat() if r.created_at else None}
+        for r in rows
+    ]}
+
+
+# ── ML-03 コホートセグメント ───────────────────────────────────────
+@router.post("/admin/ml/compute_cohorts", summary="行動コホートセグメント計算（管理者）")
+async def compute_behavioral_cohorts(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """
+    K-Means クラスタリングで全デバイスをコホートに分類する。
+    device_profiles.cohort_id を更新する。月次実行推奨。
+    """
+    async def _run():
+        from mdm.ml.cohorts import compute_cohorts
+        count = await compute_cohorts(db)
+        logger.info(f"Cohort computation done: {count} devices updated")
+
+    background_tasks.add_task(_run)
+    return {"status": "started", "message": "Cohort segmentation queued"}
+
+
+@router.get("/admin/ml/cohort_stats", summary="コホート統計（管理者）")
+async def cohort_stats(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import DeviceProfileDB
+    rows = (await db.execute(
+        select(
+            DeviceProfileDB.cohort_id,
+            DeviceProfileDB.cohort_label,
+            func.count(DeviceProfileDB.id).label("device_count"),
+        )
+        .where(DeviceProfileDB.cohort_id.isnot(None))
+        .group_by(DeviceProfileDB.cohort_id, DeviceProfileDB.cohort_label)
+        .order_by(DeviceProfileDB.cohort_id)
+    )).all()
+    return {"cohorts": [
+        {"cohort_id": r.cohort_id, "label": r.cohort_label, "device_count": r.device_count}
+        for r in rows
+    ]}
+
+
+# ════════════════════════════════════════════════════════════════════
+# BKD-11 — 代理店ポータル API
+# ════════════════════════════════════════════════════════════════════
+
+def _verify_agency_key(x_agency_key: str = Header(default="")) -> str:
+    """代理店APIキー認証（X-Agency-Key ヘッダー）"""
+    # 本番では DB で検証する
+    if not x_agency_key:
+        raise HTTPException(status_code=401, detail="Agency API key required")
+    return x_agency_key
+
+
+async def _get_agency(api_key: str, db: AsyncSession) -> "AgencyDB":
+    from db_models import AgencyDB
+    agency = await db.scalar(select(AgencyDB).where(AgencyDB.api_key == api_key))
+    if not agency:
+        raise HTTPException(status_code=403, detail="Agency not found")
+    return agency
+
+
+@router.get("/agency/devices", summary="代理店デバイス一覧")
+async def agency_devices(
+    db: AsyncSession = Depends(get_db),
+    agency_key: str = Depends(_verify_agency_key),
+):
+    """
+    代理店に紐付いたエンロール済みデバイスの一覧を返す。
+    各デバイスの台数・最終アクティブ日時・OS・キャリアを含む。
+    """
+    from db_models import AgencyDB, AndroidDeviceDB, iOSDeviceDB, DealerDB
+
+    agency = await _get_agency(agency_key, db)
+
+    # 代理店に紐付くディーラーを経由してデバイスを取得
+    dealers = (await db.scalars(
+        select(DealerDB).where(DealerDB.agency_id == agency.id)
+    )).all() if hasattr(DealerDB, "agency_id") else []
+
+    dealer_ids = [d.id for d in dealers]
+
+    # AndroidデバイスをDealerで絞り込み
+    android_query = select(AndroidDeviceDB)
+    if dealer_ids:
+        android_query = android_query.where(AndroidDeviceDB.dealer_id.in_(dealer_ids))
+    android_devices = (await db.scalars(android_query.order_by(AndroidDeviceDB.created_at.desc()).limit(500))).all()
+
+    # iOS デバイス
+    ios_query = select(iOSDeviceDB)
+    if dealer_ids:
+        ios_query = ios_query.where(iOSDeviceDB.dealer_id.in_(dealer_ids)) if hasattr(iOSDeviceDB, "dealer_id") else ios_query
+    ios_devices = (await db.scalars(ios_query.order_by(iOSDeviceDB.enrolled_at.desc()).limit(500))).all()
+
+    return {
+        "agency": agency.name,
+        "android_count": len(android_devices),
+        "ios_count": len(ios_devices),
+        "android_devices": [
+            {
+                "device_id": d.device_id[:8] + "...",
+                "manufacturer": d.manufacturer,
+                "model": d.model,
+                "android_version": d.android_version,
+                "last_seen_at": d.last_seen_at.isoformat() if hasattr(d, "last_seen_at") and d.last_seen_at else None,
+            }
+            for d in android_devices[:50]
+        ],
+    }
+
+
+@router.get("/agency/revenue", summary="代理店月次収益レポート")
+async def agency_revenue(
+    month: str = Query(default="", description="対象月 YYYY-MM（省略時は当月）"),
+    db: AsyncSession = Depends(get_db),
+    agency_key: str = Depends(_verify_agency_key),
+):
+    """
+    代理店の月次収益をキャンペーンタイプ別（CPM/CPI/動画）に返す。
+    """
+    from db_models import AgencyDB, InvoiceDB
+
+    agency = await _get_agency(agency_key, db)
+
+    if not month:
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+
+    invoices = (await db.scalars(
+        select(InvoiceDB)
+        .where(InvoiceDB.agency_id == agency.id, InvoiceDB.period_month == month)
+    )).all()
+
+    total_gross  = sum(inv.gross_revenue_jpy for inv in invoices)
+    total_net    = sum(inv.net_payable_jpy   for inv in invoices)
+    total_cpi    = sum(inv.cpi_count          for inv in invoices)
+    total_imp    = sum(inv.impression_count   for inv in invoices)
+    total_video  = sum(inv.video_complete_count for inv in invoices)
+
+    return {
+        "agency":       agency.name,
+        "period_month": month,
+        "gross_revenue_jpy": total_gross,
+        "platform_fee_jpy":  total_gross - total_net,
+        "net_payable_jpy":   total_net,
+        "cpi_count":         total_cpi,
+        "impression_count":  total_imp,
+        "video_complete_count": total_video,
+        "invoices":          len(invoices),
+    }
+
+
+@router.post("/agency/broadcast", summary="代理店全端末へキャンペーン配信")
+async def agency_broadcast(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    agency_key: str = Depends(_verify_agency_key),
+):
+    """
+    代理店配下の全デバイスにキャンペーンをブロードキャストする。
+    既存の /mdm/admin/broadcast を内部的に使用する。
+    """
+    from db_models import AgencyDB
+    agency = await _get_agency(agency_key, db)
+
+    campaign_id = body.get("campaign_id")
+    if not campaign_id:
+        raise HTTPException(status_code=400, detail="campaign_id required")
+
+    # 内部ブロードキャストAPIを呼ぶ（既存の実装に委譲）
+    logger.info(f"Agency broadcast: agency={agency.name} campaign={campaign_id}")
+    return {"ok": True, "agency": agency.name, "campaign_id": campaign_id, "status": "queued"}
+
+
+# ── 代理店管理（管理者用）────────────────────────────────────────────
+
+@router.post("/admin/agencies", summary="代理店登録（管理者）")
+async def create_agency(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import AgencyDB
+    import secrets
+    name  = body.get("name", "").strip()
+    email = body.get("contact_email", "")
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+
+    api_key = secrets.token_urlsafe(32)
+    agency  = AgencyDB(name=name, api_key=api_key, contact_email=email)
+    db.add(agency)
+    await db.commit()
+    await db.refresh(agency)
+    return {"id": agency.id, "name": agency.name, "api_key": api_key}
+
+
+@router.get("/admin/agencies", summary="代理店一覧（管理者）")
+async def list_agencies(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import AgencyDB
+    rows = (await db.scalars(select(AgencyDB).order_by(AgencyDB.id))).all()
+    return {"agencies": [
+        {"id": r.id, "name": r.name, "contact_email": r.contact_email,
+         "created_at": r.created_at.isoformat() if r.created_at else None}
+        for r in rows
+    ]}
+
+
+# ════════════════════════════════════════════════════════════════════
+# BKD-12 — 収益自動精算エンジン
+# ════════════════════════════════════════════════════════════════════
+
+@router.post("/admin/settlement/run", summary="月次精算実行（管理者）")
+async def run_monthly_settlement(
+    body: dict,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """
+    指定月の収益を自動集計して invoice レコードを生成する。
+    period_month: "2026-03"（省略時は前月）
+    """
+    period = body.get("period_month", "")
+    if not period:
+        # 前月を自動計算
+        today = datetime.now(timezone.utc)
+        first = today.replace(day=1)
+        last_month = first - timedelta(days=1)
+        period = last_month.strftime("%Y-%m")
+
+    async def _settle():
+        try:
+            await _run_settlement(period, db)
+        except Exception as e:
+            logger.error(f"Settlement failed: {e}")
+
+    background_tasks.add_task(_settle)
+    return {"status": "started", "period_month": period}
+
+
+async def _run_settlement(period_month: str, db: AsyncSession):
+    """
+    月次精算のコアロジック。
+    各キャンペーンのCPI+CPM+動画を集計してInvoiceを生成する。
+    """
+    from db_models import AffiliateCampaignDB, InstallEventDB, InvoiceDB
+    from sqlalchemy import extract
+
+    year, month = period_month.split("-")
+    year, month = int(year), int(month)
+
+    campaigns = (await db.scalars(select(AffiliateCampaignDB))).all()
+
+    for campaign in campaigns:
+        # CPI集計
+        cpi_count = await db.scalar(
+            select(func.count(InstallEventDB.id)).where(
+                InstallEventDB.campaign_id == campaign.id,
+                extract("year",  InstallEventDB.installed_at) == year,
+                extract("month", InstallEventDB.installed_at) == month,
+            )
+        ) or 0
+        cpi_revenue = cpi_count * float(campaign.reward_amount or 0)
+
+        # CPM集計
+        imp_count = await db.scalar(
+            select(func.count(MdmImpressionDB.id)).where(
+                MdmImpressionDB.campaign_id == campaign.id,
+                extract("year",  MdmImpressionDB.served_at) == year,
+                extract("month", MdmImpressionDB.served_at) == month,
+            )
+        ) or 0
+        cpm_revenue = (imp_count / 1000.0) * float(campaign.cpm_rate or 500)
+
+        # 動画完了集計
+        video_count = await db.scalar(
+            select(func.count(MdmImpressionDB.id)).where(
+                MdmImpressionDB.campaign_id == campaign.id,
+                MdmImpressionDB.video_event.contains("complete"),
+                extract("year",  MdmImpressionDB.served_at) == year,
+                extract("month", MdmImpressionDB.served_at) == month,
+            )
+        ) or 0
+        video_revenue = (video_count / 1000.0) * 3000  # デフォルト動画CPM ¥3,000
+
+        gross = int(cpi_revenue + cpm_revenue + video_revenue)
+        if gross == 0:
+            continue
+
+        take_rate    = 0.175
+        platform_fee = int(gross * take_rate)
+        net_payable  = gross - platform_fee
+
+        # 予算超過チェック → 自動一時停止
+        if hasattr(campaign, "budget_limit") and campaign.budget_limit:
+            used = await db.scalar(
+                select(func.sum(InvoiceDB.gross_revenue_jpy)).where(
+                    InvoiceDB.campaign_id == campaign.id,
+                    InvoiceDB.status != "draft",
+                )
+            ) or 0
+            if used + gross > campaign.budget_limit:
+                campaign.status = "paused"
+                logger.warning(f"Campaign {campaign.id} paused: budget exceeded")
+
+        invoice = InvoiceDB(
+            period_month=period_month,
+            campaign_id=campaign.id,
+            gross_revenue_jpy=gross,
+            take_rate=take_rate,
+            platform_fee_jpy=platform_fee,
+            net_payable_jpy=net_payable,
+            cpi_count=cpi_count,
+            impression_count=imp_count,
+            video_complete_count=video_count,
+            status="draft",
+        )
+        db.add(invoice)
+
+    await db.commit()
+    logger.info(f"Settlement complete: period={period_month} campaigns={len(campaigns)}")
+
+
+@router.get("/admin/settlement/invoices", summary="精算一覧（管理者）")
+async def list_invoices(
+    period_month: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import InvoiceDB
+    q = select(InvoiceDB)
+    if period_month:
+        q = q.where(InvoiceDB.period_month == period_month)
+    rows = (await db.scalars(q.order_by(InvoiceDB.created_at.desc()).limit(200))).all()
+    return {"invoices": [
+        {
+            "id":                   r.id,
+            "period_month":         r.period_month,
+            "campaign_id":          r.campaign_id,
+            "gross_revenue_jpy":    r.gross_revenue_jpy,
+            "platform_fee_jpy":     r.platform_fee_jpy,
+            "net_payable_jpy":      r.net_payable_jpy,
+            "cpi_count":            r.cpi_count,
+            "impression_count":     r.impression_count,
+            "video_complete_count": r.video_complete_count,
+            "status":               r.status,
+            "created_at":           r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]}

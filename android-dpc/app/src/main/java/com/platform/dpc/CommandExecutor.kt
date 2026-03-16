@@ -39,6 +39,7 @@ object CommandExecutor {
             "show_notification" -> showNotification(context, command)
             "install_apk"       -> installApk(context, command)
             "update_lockscreen" -> updateLockscreen(context, command)
+            "play_game"         -> playGame(context, command)
             else -> {
                 Log.w(TAG, "Unknown command type: ${command.type}")
                 true  // 未知コマンドは無視してACK
@@ -212,6 +213,16 @@ object CommandExecutor {
 
         // ロック画面広告アクティビティを起動（ユーザーは同意済み）
         LockscreenActivity.launch(context)
+        return true
+    }
+
+    // ── プレイアブル広告起動（ADT-02）──────────────────────────────
+    private fun playGame(context: Context, cmd: MdmCommand): Boolean {
+        val gameUrl      = cmd.payload.optString("game_url").ifEmpty { return false }
+        val impressionId = cmd.payload.optString("impression_id", cmd.id)
+        val ctaUrl       = cmd.payload.optString("cta_url", "")
+        Log.i(TAG, "Launching GameAdActivity: $gameUrl")
+        GameAdActivity.launch(context, gameUrl, impressionId, ctaUrl)
         return true
     }
 

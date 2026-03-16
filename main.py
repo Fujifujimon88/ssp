@@ -39,6 +39,7 @@ from config import settings
 from database import Base, engine, get_db
 from db_models import AdSlotDB, ImpressionDB, PublisherDB
 from dsp.mock_dsp import create_mock_dsps
+from mdm.dsp.ssp_node import router as openrtb_router
 from mdm.router import router as mdm_router
 from publisher.router import router as publisher_router
 
@@ -79,6 +80,7 @@ app = FastAPI(
 templates = Jinja2Templates(directory="dashboard/templates")
 app.include_router(publisher_router)
 app.include_router(mdm_router)
+app.include_router(openrtb_router)
 
 
 # ── ヘッダービディングエンドポイント ───────────────────────────
@@ -334,26 +336,37 @@ async def get_my_ads_txt(
 async def apple_app_site_association():
     """
     App ClipsがNFC/QR起動する際にAppleが検証するファイル。
+    iOS-03: App Clips (NFC/QR Launch) 対応。
     app_bundle_id を .env で設定してから App Clipsを公開する。
+    Bundle ID形式: TEAMID.jp.platform.ssp
     参照: https://developer.apple.com/documentation/xcode/supporting-associated-domains
     """
-    bundle_id = settings.app_bundle_id or "com.example.ssp"
+    bundle_id = settings.app_bundle_id or "TEAMID.jp.platform.ssp"
+    clip_bundle_id = f"{bundle_id}.Clip"
     return JSONResponse(
         content={
             "applinks": {
-                "apps": [],
                 "details": [
                     {
-                        "appID": bundle_id,
-                        "paths": ["/appclip/*", "/mdm/appclips/*"],
+                        "appIDs": [bundle_id],
+                        "components": [
+                            {"/": "/mdm/*"},
+                            {"/": "/enroll/*"},
+                        ],
                     }
-                ],
+                ]
             },
             "appclips": {
+                "apps": [clip_bundle_id]
+            },
+            "webcredentials": {
                 "apps": [bundle_id]
             },
         },
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Cache-Control": "max-age=3600",
+        },
     )
 
 

@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -467,6 +467,8 @@ class DeviceProfileDB(Base):
     screen_height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ram_gb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     storage_free_mb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cohort_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cohort_label: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -565,3 +567,50 @@ class UserFeatureDB(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+# ── ML モデルバージョン管理（ML-02） ──────────────────────────────────
+class MlModelVersionDB(Base):
+    """Two-Towerモデルのバージョン管理テーブル"""
+    __tablename__ = "ml_model_versions"
+    id               = Column(Integer, primary_key=True)
+    version          = Column(String(32), nullable=False, unique=True)
+    model_type       = Column(String(32), nullable=False, default="two_tower")
+    train_auc        = Column(Float)
+    val_auc          = Column(Float)
+    offline_ctr_lift = Column(Float)
+    tflite_size_mb   = Column(Float)
+    tflite_path      = Column(Text)
+    is_active        = Column(Boolean, default=False)
+    created_at       = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── 代理店ポータル（BKD-11） ──────────────────────────────────────────
+class AgencyDB(Base):
+    """代理店テーブル"""
+    __tablename__ = "agencies"
+    id            = Column(Integer, primary_key=True)
+    name          = Column(String(128), nullable=False)
+    api_key       = Column(String(64), nullable=False, unique=True)
+    contact_email = Column(String(256))
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── 収益精算（BKD-12） ─────────────────────────────────────────────────
+class InvoiceDB(Base):
+    """月次請求書テーブル"""
+    __tablename__ = "invoices"
+    id                  = Column(Integer, primary_key=True)
+    period_month        = Column(String(7), nullable=False)   # "2026-03"
+    campaign_id         = Column(Integer, ForeignKey("affiliate_campaigns.id"))
+    agency_id           = Column(Integer, ForeignKey("agencies.id"), nullable=True)
+    gross_revenue_jpy   = Column(Integer, nullable=False, default=0)
+    take_rate           = Column(Float,   nullable=False, default=0.175)
+    platform_fee_jpy    = Column(Integer, nullable=False, default=0)
+    net_payable_jpy     = Column(Integer, nullable=False, default=0)
+    cpi_count           = Column(Integer, nullable=False, default=0)
+    impression_count    = Column(Integer, nullable=False, default=0)
+    video_complete_count= Column(Integer, nullable=False, default=0)
+    status              = Column(String(16), nullable=False, default="draft")  # draft/sent/paid
+    created_at          = Column(DateTime(timezone=True), server_default=func.now())
+    sent_at             = Column(DateTime(timezone=True), nullable=True)
