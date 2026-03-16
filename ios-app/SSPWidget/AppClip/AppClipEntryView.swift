@@ -28,7 +28,7 @@ struct AppClipEntryView: View {
            !url.isEmpty, url != "$(SSP_SERVER_URL)" {
             return url
         }
-        return UserDefaults(suiteName: "group.jp.platform.ssp")?
+        return UserDefaults(suiteName: kAppGroup)?
             .string(forKey: "server_url") ?? "https://mdm.example.com"
     }()
 
@@ -47,7 +47,7 @@ struct AppClipEntryView: View {
                 url: enrollURL,
                 onComplete: {
                     // Persist server_url to App Group so WidgetExtension can use it immediately.
-                    let shared = UserDefaults(suiteName: "group.jp.platform.ssp")
+                    let shared = UserDefaults(suiteName: kAppGroup)
                     shared?.set(serverURL, forKey: "server_url")
                     withAnimation { phase = .done }
                 }
@@ -194,7 +194,7 @@ struct EnrollWebView: UIViewRepresentable {
                 if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                    let deviceId = components.queryItems?.first(where: { $0.name == "device_id" })?.value,
                    !deviceId.isEmpty {
-                    UserDefaults(suiteName: "group.jp.platform.ssp")?.set(deviceId, forKey: "device_id")
+                    UserDefaults(suiteName: kAppGroup)?.set(deviceId, forKey: "device_id")
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     self.onComplete()

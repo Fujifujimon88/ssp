@@ -4742,6 +4742,13 @@ async def _run_settlement(period_month: str, db: AsyncSession):
 
     campaigns = (await db.scalars(select(AffiliateCampaignDB))).all()
 
+    # N+1 を防ぐため、対象キャンペーンに紐づく代理店を一括取得して辞書化
+    agency_ids = {c.agency_id for c in campaigns if c.agency_id is not None}
+    agencies_by_id: dict = {}
+    if agency_ids:
+        rows = (await db.scalars(select(AgencyDB).where(AgencyDB.id.in_(agency_ids)))).all()
+        agencies_by_id = {a.id: a for a in rows}
+
     for campaign in campaigns:
         # CPI集計
         cpi_count = await db.scalar(
@@ -4779,13 +4786,8 @@ async def _run_settlement(period_month: str, db: AsyncSession):
             continue
 
         # 担当代理店の take_rate を使用。未設定の場合はデフォルト値にフォールバック。
-        agency_take_rate = DEFAULT_TAKE_RATE
-        if getattr(campaign, "agency_id", None):
-            agency = await db.get(AgencyDB, campaign.agency_id)
-            if agency is not None:
-                agency_take_rate = agency.take_rate
-
-        take_rate    = agency_take_rate
+        agency = agencies_by_id.get(campaign.agency_id) if campaign.agency_id else None
+        take_rate = agency.take_rate if agency is not None else DEFAULT_TAKE_RATE
         platform_fee = int(gross * take_rate)
         net_payable  = gross - platform_fee
 
@@ -4804,7 +4806,7 @@ async def _run_settlement(period_month: str, db: AsyncSession):
         invoice = InvoiceDB(
             period_month=period_month,
             campaign_id=campaign.id,
-            agency_id=getattr(campaign, "agency_id", None),
+            agency_id=campaign.agency_id,
             gross_revenue_jpy=gross,
             take_rate=take_rate,
             platform_fee_jpy=platform_fee,

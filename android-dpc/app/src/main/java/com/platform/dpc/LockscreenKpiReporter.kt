@@ -81,14 +81,12 @@ object LockscreenKpiReporter {
     }
 
     /**
-     * ScreenOnReceiver が "mdm_freq_cap" SharedPrefs に書いた当日の点灯回数を返す。
+     * ScreenOnReceiver が FreqCapPrefs SharedPrefs に書いた当日の点灯回数を返す。
      * アプリ再起動後も正確な値を返せる。
      */
     private fun getScreenOnCountToday(context: Context): Int {
-        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
-            .format(java.util.Date())
-        val prefs = context.getSharedPreferences("mdm_freq_cap", Context.MODE_PRIVATE)
-        val lastDate = prefs.getString("date", "")
-        return if (lastDate == today) prefs.getInt("count", 1) else 1
+        val prefs = context.getSharedPreferences(FreqCapPrefs.PREFS_NAME, Context.MODE_PRIVATE)
+        val lastDate = prefs.getString(FreqCapPrefs.KEY_DATE, "")
+        return if (lastDate == FreqCapPrefs.today()) prefs.getInt(FreqCapPrefs.KEY_COUNT, 0) else 0
     }
 }

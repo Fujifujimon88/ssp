@@ -4,9 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * DPC-05 — 画面点灯イベントレシーバー
@@ -41,10 +38,10 @@ class ScreenOnReceiver : BroadcastReceiver() {
         }
 
         // 周波数キャップ確認（3回/日）— クライアントサイドチェック
-        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
-        val countPrefs = context.getSharedPreferences("mdm_freq_cap", Context.MODE_PRIVATE)
-        val lastDate = countPrefs.getString("date", "")
-        val count = if (lastDate == today) countPrefs.getInt("count", 0) else 0
+        val today     = FreqCapPrefs.today()
+        val countPrefs = context.getSharedPreferences(FreqCapPrefs.PREFS_NAME, Context.MODE_PRIVATE)
+        val lastDate  = countPrefs.getString(FreqCapPrefs.KEY_DATE, "")
+        val count     = if (lastDate == today) countPrefs.getInt(FreqCapPrefs.KEY_COUNT, 0) else 0
 
         if (count >= DAILY_CAP) {
             Log.d(TAG, "Frequency cap reached ($count/$DAILY_CAP), skipping")
@@ -53,8 +50,8 @@ class ScreenOnReceiver : BroadcastReceiver() {
 
         // カウントを更新
         countPrefs.edit()
-            .putString("date", today)
-            .putInt("count", count + 1)
+            .putString(FreqCapPrefs.KEY_DATE, today)
+            .putInt(FreqCapPrefs.KEY_COUNT, count + 1)
             .apply()
 
         Log.i(TAG, "Screen on → launching LockscreenActivity (impression ${count + 1}/$DAILY_CAP)")
