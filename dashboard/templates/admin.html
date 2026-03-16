@@ -632,7 +632,7 @@ async function loadDealers() {
         <td>${d.name}</td>
         <td><code style="background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px;font-size:12px">${d.store_code}</code></td>
         <td><span class="status-${d.status}">${d.status}</span></td>
-        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showQrModal('${d.store_code}','${d.name}')">📱 QR表示</button></td>
+        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showQrModal('${d.store_code}','${d.name}','${d.id}')">📱 QR表示</button></td>
       </tr>`
     ).join('');
     document.getElementById('dealers-table').style.display = 'table';
@@ -674,10 +674,10 @@ document.getElementById('dealer-form').addEventListener('submit', async (e) => {
 });
 
 // ── QRコード表示 ──────────────────────────────────────────────
-function showQrModal(storeCode, dealerName) {
+function showQrModal(storeCode, dealerName, dealerId) {
   const base = location.origin;
   const qrUrl = `${base}/mdm/qr/${storeCode}`;
-  const portalUrl = `${base}/mdm/portal?dealer=${storeCode}`;
+  const portalUrl = `${base}/mdm/portal?dealer=${dealerId}`;
 
   document.getElementById('qr-modal-title').textContent = `📱 ${dealerName}`;
   document.getElementById('qr-modal-store').textContent = `店舗コード: ${storeCode}`;
