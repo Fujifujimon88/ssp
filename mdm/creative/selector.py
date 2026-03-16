@@ -8,6 +8,7 @@
 """
 import json
 import logging
+import random
 from datetime import date, datetime, timezone
 
 from sqlalchemy import Integer, func, select
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db_models import (
     AffiliateCampaignDB,
     CreativeDB,
+    CreativeExperimentDB,
     DeviceDB,
     MdmAdSlotDB,
     MdmImpressionDB,
@@ -167,6 +169,19 @@ async def select_creative(
             f"| enrollment_token={enrollment_token}"
         )
         return None
+
+    # A/Bテスト: アクティブな実験があれば実験アームを使用
+    exp = await db.scalar(
+        select(CreativeExperimentDB).where(
+            CreativeExperimentDB.slot_type == slot_type,
+            CreativeExperimentDB.status == "active",
+        ).limit(1)
+    )
+    if exp:
+        chosen_id = exp.control_creative_id if random.random() > exp.traffic_split else exp.variant_creative_id
+        exp_candidates = [r for r in candidates if r[0].id == chosen_id]
+        if exp_candidates:
+            candidates = exp_candidates
 
     # eCPM = reward_amount × predicted_CTR × 1000 で降順ソートして最上位を選択
     creative_ids = [r[0].id for r in candidates]

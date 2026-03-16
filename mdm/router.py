@@ -2270,3 +2270,124 @@ async def creative_ecpm_stats(
 
     results.sort(key=lambda x: x["ecpm"], reverse=True)
     return results[:20]
+
+
+# ── A/Bテスト管理 ─────────────────────────────────────────────
+
+
+from db_models import CreativeExperimentDB
+from sqlalchemy import Integer as _Integer
+
+
+class ExperimentCreate(BaseModel):
+    name: str
+    slot_type: str
+    control_creative_id: str
+    variant_creative_id: str
+    traffic_split: float = 0.5
+
+
+@router.post("/admin/experiments", summary="A/Bテスト実験作成（管理者）")
+async def create_experiment(
+    body: ExperimentCreate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    exp = CreativeExperimentDB(**body.model_dump())
+    db.add(exp)
+    await db.commit()
+    await db.refresh(exp)
+    return exp
+
+
+@router.get("/admin/experiments/{experiment_id}/results", summary="A/Bテスト結果（管理者）")
+async def experiment_results(
+    experiment_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    exp = await db.get(CreativeExperimentDB, experiment_id)
+    if not exp:
+        raise HTTPException(404)
+
+    async def arm_stats(creative_id: str) -> dict:
+        rows = await db.execute(
+            select(
+                func.count(MdmImpressionDB.id).label("impressions"),
+                func.sum(func.cast(MdmImpressionDB.clicked, _Integer)).label("clicks"),
+            ).where(MdmImpressionDB.creative_id == creative_id)
+        )
+        row = rows.one()
+        imps = row.impressions or 0
+        clicks = row.clicks or 0
+        ctr = clicks / imps if imps > 0 else 0.0
+        return {"impressions": imps, "clicks": clicks, "ctr": round(ctr, 4)}
+
+    control = await arm_stats(exp.control_creative_id)
+    variant = await arm_stats(exp.variant_creative_id)
+
+    # 簡易有意差判定: CTR差がコントロールの20%以上かつ両方50imp以上
+    significant = (
+        control["impressions"] >= 50 and variant["impressions"] >= 50 and
+        abs(control["ctr"] - variant["ctr"]) / max(control["ctr"], 0.001) >= 0.20
+    )
+    winner = None
+    if significant:
+        winner = "variant" if variant["ctr"] > control["ctr"] else "control"
+
+    return {
+        "experiment_id": experiment_id,
+        "name": exp.name,
+        "slot_type": exp.slot_type,
+        "status": exp.status,
+        "control": {"creative_id": exp.control_creative_id, **control},
+        "variant": {"creative_id": exp.variant_creative_id, **variant},
+        "significant": significant,
+        "suggested_winner": winner,
+    }
+
+
+@router.get("/admin/analytics/impressions", summary="インプレッション分析（管理者・24h）")
+async def impression_analytics(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=24)
+
+    rows = await db.execute(
+        select(
+            MdmImpressionDB.slot_id,
+            func.count(MdmImpressionDB.id).label("impressions"),
+            func.sum(func.cast(MdmImpressionDB.clicked, _Integer)).label("clicks"),
+        )
+        .where(MdmImpressionDB.created_at >= since)
+        .group_by(MdmImpressionDB.slot_id)
+    )
+
+    total_imp = 0
+    total_clicks = 0
+    by_slot = []
+    for row in rows.all():
+        imps = row.impressions or 0
+        clicks = row.clicks or 0
+        total_imp += imps
+        total_clicks += clicks
+        # slot_typeをMdmAdSlotDBから取得
+        slot_obj = await db.get(MdmAdSlotDB, row.slot_id) if row.slot_id else None
+        slot_label = slot_obj.slot_type if slot_obj else "unknown"
+        by_slot.append({
+            "slot_type": slot_label,
+            "impressions": imps,
+            "clicks": clicks,
+            "ctr": round(clicks / imps, 4) if imps > 0 else 0.0,
+        })
+
+    return {
+        "period": "24h",
+        "total_impressions": total_imp,
+        "total_clicks": total_clicks,
+        "overall_ctr": round(total_clicks / total_imp, 4) if total_imp > 0 else 0.0,
+        "by_slot": by_slot,
+    }

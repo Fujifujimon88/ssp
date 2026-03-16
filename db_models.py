@@ -384,3 +384,18 @@ class MdmImpressionDB(Base):
 
     slot: Mapped["MdmAdSlotDB"] = relationship("MdmAdSlotDB", back_populates="impressions")
     creative: Mapped["CreativeDB"] = relationship("CreativeDB", back_populates="impressions")
+
+
+class CreativeExperimentDB(Base):
+    """A/Bテスト実験定義"""
+    __tablename__ = "creative_experiments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(200))
+    slot_type: Mapped[str] = mapped_column(String(50))  # lockscreen / widget etc.
+    control_creative_id: Mapped[str] = mapped_column(String(36), ForeignKey("creatives.id"))
+    variant_creative_id: Mapped[str] = mapped_column(String(36), ForeignKey("creatives.id"))
+    traffic_split: Mapped[float] = mapped_column(Float, default=0.5)  # 0.5 = 50/50
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active / paused / concluded
+    winner: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "control" / "variant" / None
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
