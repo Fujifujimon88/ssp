@@ -101,6 +101,9 @@
 
     /* ローダー */
     .loading { color: var(--muted); font-size: 13px; padding: 20px 0; }
+
+    /* アンカーリンクが固定ヘッダーに隠れないようにオフセット */
+    section[id], div[id] { scroll-margin-top: 72px; }
   </style>
 </head>
 <body>
@@ -129,6 +132,11 @@
     <a href="#publishers">📰 パブリッシャー一覧</a>
     <a href="#api-guide">🔌 API連携</a>
     <a href="/login">🔑 パブリッシャーログイン</a>
+
+    <div class="section-label" style="margin-top:16px">MDM管理</div>
+    <a href="#mdm-stats">📱 MDM概要</a>
+    <a href="#dealers">🏪 代理店管理</a>
+    <a href="#campaigns">📢 キャンペーン管理</a>
 
     <div class="section-label" style="margin-top:16px">DSP状況</div>
     <div id="dsp-list" style="padding:0 20px;font-size:12px;color:var(--muted);line-height:2">
@@ -224,6 +232,72 @@
       </div>
     </section>
 
+    <!-- MDM概要 -->
+    <section id="mdm-stats" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">MDM概要</h2>
+        <button class="btn btn-ghost" onclick="loadMdmStats()" style="font-size:12px">更新</button>
+      </div>
+      <div id="mdm-kpi-grid" class="kpi-grid">
+        <div class="card">
+          <div class="card-title">総デバイス数</div>
+          <div class="kpi-value" id="mdm-total-devices">-</div>
+        </div>
+        <div class="card">
+          <div class="card-title">アクティブ</div>
+          <div class="kpi-value" id="mdm-active-devices">-</div>
+        </div>
+        <div class="card">
+          <div class="card-title">設定済み</div>
+          <div class="kpi-value" id="mdm-downloaded">-</div>
+        </div>
+        <div class="card">
+          <div class="card-title">代理店数</div>
+          <div class="kpi-value" id="mdm-total-dealers">-</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 代理店管理 -->
+    <section id="dealers" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">代理店管理</h2>
+        <button class="btn btn-primary" onclick="showDealerModal()">+ 代理店登録</button>
+      </div>
+      <div class="table-wrap">
+        <div id="dealers-loading" class="loading">読み込み中...</div>
+        <table id="dealers-table" style="display:none">
+          <thead>
+            <tr><th>代理店名</th><th>店舗コード</th><th>ステータス</th><th>操作</th></tr>
+          </thead>
+          <tbody id="dealers-tbody"></tbody>
+        </table>
+        <div id="dealers-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">
+          代理店が登録されていません。「+ 代理店登録」から追加してください。
+        </div>
+      </div>
+    </section>
+
+    <!-- キャンペーン管理 -->
+    <section id="campaigns" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">キャンペーン管理</h2>
+        <button class="btn btn-primary" onclick="showCampaignModal()">+ キャンペーン作成</button>
+      </div>
+      <div class="table-wrap">
+        <div id="campaigns-loading" class="loading">読み込み中...</div>
+        <table id="campaigns-table" style="display:none">
+          <thead>
+            <tr><th>ID</th><th>キャンペーン名</th><th>代理店</th></tr>
+          </thead>
+          <tbody id="campaigns-tbody"></tbody>
+        </table>
+        <div id="campaigns-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">
+          キャンペーンが登録されていません。
+        </div>
+      </div>
+    </section>
+
     <!-- API連携ガイド -->
     <section id="api-guide" class="card">
       <h2 style="font-size:15px;margin-bottom:16px">API連携クイックスタート</h2>
@@ -267,6 +341,57 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       <input name="password" type="password" placeholder="パスワード" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
       <div id="register-result" style="font-size:13px;color:var(--green)"></div>
+    </form>
+  </div>
+</div>
+
+<!-- QRコードモーダル -->
+<div class="modal-overlay" id="qr-modal">
+  <div class="modal" style="max-width:420px;text-align:center">
+    <span class="modal-close" onclick="closeModal('qr-modal')">&times;</span>
+    <h2 id="qr-modal-title">QRコード</h2>
+    <p id="qr-modal-store" style="font-size:12px;color:var(--muted);margin-bottom:16px"></p>
+    <div id="qr-img-wrap" style="margin:0 auto 16px;width:220px;height:220px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border-radius:8px">
+      <span style="color:var(--muted);font-size:13px">読み込み中...</span>
+    </div>
+    <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:10px 14px;font-family:monospace;font-size:11px;color:var(--muted);word-break:break-all;margin-bottom:16px" id="qr-url"></div>
+    <div style="display:flex;gap:8px;justify-content:center">
+      <a id="qr-download-btn" class="btn btn-primary" download>⬇ 画像を保存</a>
+      <button class="btn btn-ghost" onclick="copyQrUrl()">🔗 URLをコピー</button>
+      <a id="qr-open-btn" class="btn btn-ghost" target="_blank">🖥 ポータルを開く</a>
+    </div>
+  </div>
+</div>
+
+<!-- 代理店登録モーダル -->
+<div class="modal-overlay" id="dealer-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('dealer-modal')">&times;</span>
+    <h2>代理店登録</h2>
+    <form id="dealer-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="代理店名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="store_code" placeholder="店舗コード (例: STORE001)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="address" placeholder="住所" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="dealer-result" style="font-size:13px;color:var(--green)"></div>
+    </form>
+  </div>
+</div>
+
+<!-- キャンペーン作成モーダル -->
+<div class="modal-overlay" id="campaign-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('campaign-modal')">&times;</span>
+    <h2>キャンペーン作成</h2>
+    <form id="campaign-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="キャンペーン名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <select name="dealer_id" id="campaign-dealer-select" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+        <option value="">代理店を選択...</option>
+      </select>
+      <input name="eru_nage_scenario_id" placeholder="エル投げシナリオID (省略可)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <input name="line_liff_url" placeholder="LINE LIFF URL (省略可)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">作成する</button>
+      <div id="campaign-result" style="font-size:13px;color:var(--green)"></div>
     </form>
   </div>
 </div>
@@ -484,10 +609,190 @@ async function updateStatus(pubId, newStatus) {
   }
 }
 
+// ── MDM 代理店 ─────────────────────────────────────────────
+let _dealersCache = [];
+
+async function loadDealers() {
+  document.getElementById('dealers-loading').style.display = 'block';
+  document.getElementById('dealers-table').style.display = 'none';
+  document.getElementById('dealers-empty').style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/dealers', { headers: adminHeaders() });
+    if (!r.ok) { document.getElementById('dealers-loading').textContent = 'エラー: ' + r.status; return; }
+    const dealers = await r.json();
+    _dealersCache = dealers;
+    document.getElementById('dealers-loading').style.display = 'none';
+    if (!dealers.length) {
+      document.getElementById('dealers-empty').style.display = 'block';
+      return;
+    }
+    const tbody = document.getElementById('dealers-tbody');
+    tbody.innerHTML = dealers.map(d =>
+      `<tr>
+        <td>${d.name}</td>
+        <td><code style="background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px;font-size:12px">${d.store_code}</code></td>
+        <td><span class="status-${d.status}">${d.status}</span></td>
+        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showQrModal('${d.store_code}','${d.name}')">📱 QR表示</button></td>
+      </tr>`
+    ).join('');
+    document.getElementById('dealers-table').style.display = 'table';
+
+    // キャンペーンモーダルのセレクトを更新
+    const sel = document.getElementById('campaign-dealer-select');
+    sel.innerHTML = '<option value="">代理店を選択...</option>' +
+      dealers.map(d => `<option value="${d.id}">${d.name} (${d.store_code})</option>`).join('');
+  } catch(e) {
+    document.getElementById('dealers-loading').textContent = 'エラー: ' + e.message;
+  }
+}
+
+function showDealerModal() {
+  document.getElementById('dealer-result').textContent = '';
+  document.getElementById('dealer-form').reset();
+  document.getElementById('dealer-modal').classList.add('open');
+}
+
+document.getElementById('dealer-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { name: f.name.value, store_code: f.store_code.value, address: f.address.value || null };
+  const res = await fetch('/mdm/admin/dealers', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('dealer-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 登録完了！<br>ID: <code>${d.id}</code><br>APIキー: <code>${d.api_key}</code>`;
+    loadDealers();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── QRコード表示 ──────────────────────────────────────────────
+function showQrModal(storeCode, dealerName) {
+  const base = location.origin;
+  const qrUrl = `${base}/mdm/qr/${storeCode}`;
+  const portalUrl = `${base}/mdm/portal?dealer=${storeCode}`;
+
+  document.getElementById('qr-modal-title').textContent = `📱 ${dealerName}`;
+  document.getElementById('qr-modal-store').textContent = `店舗コード: ${storeCode}`;
+  document.getElementById('qr-url').textContent = portalUrl;
+  document.getElementById('qr-open-btn').href = portalUrl;
+
+  const wrap = document.getElementById('qr-img-wrap');
+  wrap.innerHTML = '<span style="color:var(--muted);font-size:13px">読み込み中...</span>';
+
+  document.getElementById('qr-modal').classList.add('open');
+
+  const img = new Image();
+  img.onload = () => {
+    wrap.innerHTML = '';
+    img.style.cssText = 'width:200px;height:200px;border-radius:8px;background:#fff;padding:8px';
+    wrap.appendChild(img);
+    const dl = document.getElementById('qr-download-btn');
+    dl.href = qrUrl;
+    dl.download = `qr_${storeCode}.png`;
+  };
+  img.onerror = () => {
+    wrap.innerHTML = '<span style="color:var(--red);font-size:13px">QR生成エラー</span>';
+  };
+  img.src = qrUrl;
+}
+
+function copyQrUrl() {
+  const url = document.getElementById('qr-url').textContent;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.querySelector('#qr-modal .btn-ghost');
+    const orig = btn.textContent;
+    btn.textContent = '✓ コピーしました';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  });
+}
+
+// ── MDM キャンペーン ────────────────────────────────────────
+async function loadCampaigns() {
+  // GET /mdm/admin/campaigns は存在しないため代理店経由で取得できないが、
+  // 作成後の結果を一時表示するシンプルな実装とする
+  document.getElementById('campaigns-loading').style.display = 'none';
+  document.getElementById('campaigns-empty').style.display = 'block';
+}
+
+function showCampaignModal() {
+  document.getElementById('campaign-result').textContent = '';
+  document.getElementById('campaign-form').reset();
+  // 代理店リストを最新化
+  const sel = document.getElementById('campaign-dealer-select');
+  if (_dealersCache.length) {
+    sel.innerHTML = '<option value="">代理店を選択...</option>' +
+      _dealersCache.map(d => `<option value="${d.id}">${d.name} (${d.store_code})</option>`).join('');
+  }
+  document.getElementById('campaign-modal').classList.add('open');
+}
+
+document.getElementById('campaign-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    name: f.name.value,
+    dealer_id: f.dealer_id.value,
+    eru_nage_scenario_id: f.eru_nage_scenario_id.value || null,
+    line_liff_url: f.line_liff_url.value || null,
+  };
+  const res = await fetch('/mdm/admin/campaigns', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('campaign-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 作成完了！<br>ID: <code>${d.id}</code><br>名前: ${d.name}`;
+    // テーブルに追加
+    const tbody = document.getElementById('campaigns-tbody');
+    const dealerName = _dealersCache.find(x => x.id === body.dealer_id)?.name || body.dealer_id;
+    tbody.insertAdjacentHTML('beforeend',
+      `<tr>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${d.id.slice(0,8)}...</td>
+        <td>${d.name}</td>
+        <td>${dealerName}</td>
+      </tr>`
+    );
+    document.getElementById('campaigns-empty').style.display = 'none';
+    document.getElementById('campaigns-table').style.display = 'table';
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── MDM KPI ──────────────────────────────────────────────────
+async function loadMdmStats() {
+  try {
+    const r = await fetch('/mdm/admin/stats', { headers: adminHeaders() });
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('mdm-total-devices').textContent = (d.total_devices || 0).toLocaleString();
+    document.getElementById('mdm-active-devices').textContent = (d.active_devices || 0).toLocaleString();
+    document.getElementById('mdm-downloaded').textContent = (d.downloaded || 0).toLocaleString();
+    document.getElementById('mdm-total-dealers').textContent = (d.total_dealers || 0).toLocaleString();
+  } catch(e) {
+    console.error('mdm stats error', e);
+  }
+}
+
 // 初期化
 checkKeyBanner();
 loadHealth();
 loadAdminStats();
+loadDealers();
+loadCampaigns();
+loadMdmStats();
 setInterval(loadAdminStats, 30000);
 setInterval(loadHealth, 60000);
 </script>

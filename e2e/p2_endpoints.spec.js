@@ -6,12 +6,14 @@
  *   ADT-02  POST /mdm/game_event                    プレイアブル広告ゲームイベント
  *   ADT-03  POST /openrtb/bid                       OpenRTB インバウンド入札
  *           GET  /openrtb/win/{id}                  Win notice
+ *   BKD-07  POST /mdm/device_profile                デバイスプロファイル登録・更新
  *   BKD-11  POST /mdm/admin/agencies                代理店登録
  *           GET  /mdm/admin/agencies                代理店一覧
  *           GET  /mdm/agency/devices                代理店デバイス一覧
  *           GET  /mdm/agency/revenue                代理店月次収益
  *   BKD-12  POST /mdm/admin/settlement/run          月次精算実行
  *           GET  /mdm/admin/settlement/invoices     精算一覧
+ *   DPC-07  POST /mdm/lockscreen_kpi                ロック画面KPI報告
  *   ML-02   POST /mdm/admin/ml/train                Two-Tower 学習トリガー
  *           GET  /mdm/admin/ml/models               学習済みモデル一覧
  *   ML-03   POST /mdm/admin/ml/compute_cohorts      コホートセグメント計算
@@ -504,5 +506,131 @@ test.describe("ML-03 — コホート統計 GET /mdm/admin/ml/cohort_stats", () 
   test("管理者キーなしで 401 が返る", async ({ request }) => {
     const res = await request.get("/mdm/admin/ml/cohort_stats");
     expect(res.status()).toBe(401);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// BKD-07 — デバイスプロファイル登録・更新
+// ════════════════════════════════════════════════════════════════════
+
+test.describe("BKD-07 — デバイスプロファイル POST /mdm/device_profile", () => {
+  test("device_id を指定してプロファイルを登録できる", async ({ request }) => {
+    const res = await request.post("/mdm/device_profile", {
+      headers: { "Content-Type": "application/json" },
+      data: {
+        device_id: `e2e-device-${Date.now()}`,
+        manufacturer: "Google",
+        model: "Pixel 7",
+        os_version: "14",
+        carrier: "docomo",
+        mcc_mnc: "44010",
+        region: "JP-13",
+        screen_width: 1080,
+        screen_height: 2400,
+        ram_gb: 8,
+        storage_free_mb: 32768,
+      },
+    });
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.status).toBe("updated");
+  });
+
+  test("同一 device_id で再度送信すると upsert される（200）", async ({ request }) => {
+    const deviceId = `e2e-upsert-device-${Date.now()}`;
+    // 1回目
+    const res1 = await request.post("/mdm/device_profile", {
+      headers: { "Content-Type": "application/json" },
+      data: { device_id: deviceId, manufacturer: "Samsung", model: "Galaxy S23" },
+    });
+    expect(res1.ok()).toBeTruthy();
+
+    // 2回目（同一 device_id）
+    const res2 = await request.post("/mdm/device_profile", {
+      headers: { "Content-Type": "application/json" },
+      data: { device_id: deviceId, manufacturer: "Samsung", model: "Galaxy S23 Ultra" },
+    });
+    expect(res2.ok()).toBeTruthy();
+    const body = await res2.json();
+    expect(body.status).toBe("updated");
+  });
+
+  test("device_id なしで 422 が返る", async ({ request }) => {
+    const res = await request.post("/mdm/device_profile", {
+      headers: { "Content-Type": "application/json" },
+      data: { manufacturer: "Google", model: "Pixel 7" },
+    });
+    expect(res.status()).toBe(422);
+  });
+
+  test("最小フィールド（device_id のみ）でも登録できる", async ({ request }) => {
+    const res = await request.post("/mdm/device_profile", {
+      headers: { "Content-Type": "application/json" },
+      data: { device_id: `e2e-minimal-${Date.now()}` },
+    });
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.status).toBe("updated");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// DPC-07 — ロック画面KPI報告
+// ════════════════════════════════════════════════════════════════════
+
+test.describe("DPC-07 — ロック画面KPI POST /mdm/lockscreen_kpi", () => {
+  test("存在しない impression_id で 404 が返る", async ({ request }) => {
+    // 存在しない impression_id を指定すると 404 が返る
+    const res = await request.post("/mdm/lockscreen_kpi", {
+      headers: { "Content-Type": "application/json" },
+      data: {
+        impression_id: "nonexistent-impression-id-e2e",
+        device_id: "e2e-device-001",
+        dwell_time_ms: 3500,
+        dismiss_type: "cta_tap",
+        hour_of_day: 10,
+        screen_on_count_today: 5,
+      },
+    });
+    expect(res.status()).toBe(404);
+  });
+
+  test("必須フィールド（impression_id）なしで 422 が返る", async ({ request }) => {
+    const res = await request.post("/mdm/lockscreen_kpi", {
+      headers: { "Content-Type": "application/json" },
+      data: {
+        device_id: "e2e-device-001",
+        dwell_time_ms: 3500,
+        dismiss_type: "cta_tap",
+        hour_of_day: 10,
+      },
+    });
+    expect(res.status()).toBe(422);
+  });
+
+  test("必須フィールド（dwell_time_ms）なしで 422 が返る", async ({ request }) => {
+    const res = await request.post("/mdm/lockscreen_kpi", {
+      headers: { "Content-Type": "application/json" },
+      data: {
+        impression_id: "some-impression-id",
+        device_id: "e2e-device-001",
+        dismiss_type: "swipe_dismiss",
+        hour_of_day: 14,
+      },
+    });
+    expect(res.status()).toBe(422);
+  });
+
+  test("必須フィールド（hour_of_day）なしで 422 が返る", async ({ request }) => {
+    const res = await request.post("/mdm/lockscreen_kpi", {
+      headers: { "Content-Type": "application/json" },
+      data: {
+        impression_id: "some-impression-id",
+        device_id: "e2e-device-001",
+        dwell_time_ms: 2000,
+        dismiss_type: "auto_dismiss",
+      },
+    });
+    expect(res.status()).toBe(422);
   });
 });
