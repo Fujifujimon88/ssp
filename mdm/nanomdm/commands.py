@@ -4,12 +4,15 @@ MDMプロトコルのコマンドをplist形式で生成する。
 NanoMDMはこのplistをiOSデバイスへ配信する。
 
 サポートするコマンド:
-  add_web_clip        - ホーム画面にWebクリップ追加
-  install_profile     - 構成プロファイルインストール
-  remove_profile      - 構成プロファイル削除
-  device_info         - デバイス情報取得
-  profile_list        - インストール済みプロファイル一覧取得
-  device_lock         - デバイスロック
+  add_web_clip                - ホーム画面にWebクリップ追加
+  install_profile             - 構成プロファイルインストール
+  remove_profile              - 構成プロファイル削除
+  device_info                 - デバイス情報取得
+  profile_list                - インストール済みプロファイル一覧取得
+  device_lock                 - デバイスロック
+  install_application         - App Store / エンタープライズアプリインストール
+  install_enterprise_application - In-Houseアプリインストール
+  send_app_clip_invite        - App Clip起動URL送信
 """
 import plistlib
 import uuid
@@ -107,6 +110,56 @@ def get_profile_list(command_uuid: str | None = None) -> bytes:
     """インストール済みプロファイル一覧を取得するMDMコマンド"""
     cmd = _base_command("ProfileList", command_uuid)
     return plistlib.dumps(cmd, fmt=plistlib.FMT_XML)
+
+
+def install_application(
+    manifest_url: str,
+    management_flags: int = 1,
+    command_uuid: str | None = None,
+) -> bytes:
+    """
+    InstallApplication MDMコマンド。
+    App Store / エンタープライズ配布アプリをデバイスにインストールする。
+    management_flags=1: App is managed (removed on unenroll)
+    """
+    cmd = _base_command("InstallApplication", command_uuid)
+    cmd["Command"].update({
+        "ManifestURL": manifest_url,
+        "ManagementFlags": management_flags,
+        "Options": {"PurchaseMethod": 0},
+    })
+    return plistlib.dumps(cmd)
+
+
+def install_enterprise_application(
+    manifest_url: str,
+    command_uuid: str | None = None,
+) -> bytes:
+    """
+    エンタープライズ（In-House）アプリのインストール。
+    App Storeを経由せず直接配布する場合に使用。
+    """
+    cmd = _base_command("InstallEnterpriseApplication", command_uuid)
+    cmd["Command"].update({
+        "ManifestURL": manifest_url,
+    })
+    return plistlib.dumps(cmd)
+
+
+def send_app_clip_invite(
+    app_clip_url: str,
+    command_uuid: str | None = None,
+) -> bytes:
+    """
+    App Clip起動URLをデバイスに送信する（通知経由）。
+    """
+    cmd = _base_command("Settings", command_uuid)
+    cmd["Command"]["Settings"] = [{
+        "Item": "ApplicationAttributes",
+        "Identifier": "com.apple.AppClip",
+        "Attributes": {"AppClipURL": app_clip_url},
+    }]
+    return plistlib.dumps(cmd)
 
 
 def device_lock(pin: str | None = None, message: str = "", phone: str = "", command_uuid: str | None = None) -> bytes:

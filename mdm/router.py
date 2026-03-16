@@ -1963,6 +1963,53 @@ async def widget_content(
     }
 
 
+@router.get("/ios/widget_content/{device_id}", summary="iOS WidgetKit コンテンツ取得")
+async def ios_widget_content(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    iOS-01 WidgetKit TimelineProvider から呼ばれるエンドポイント。
+    ポイント残高・本日のクーポン・広告バナー（静止画）を返す。
+    ロック画面ウィジェットは video 不可（Apple ガイドライン）。
+    """
+    from mdm.creative.selector import select_creative
+
+    # ポイント残高（mdm_prefs / デバイス登録情報から取得）
+    ios_dev = await db.scalar(
+        select(iOSDeviceDB).where(iOSDeviceDB.udid == device_id)
+    )
+    points_balance = getattr(ios_dev, "points_balance", 0) if ios_dev else 0
+
+    # クーポン数（アクティブなwebclipスロットを代用）
+    coupon_count = await db.scalar(
+        select(func.count(MdmAdSlotDB.id)).where(
+            MdmAdSlotDB.slot_type == "webclip",
+            MdmAdSlotDB.is_active == True,
+        )
+    ) or 0
+
+    # 静止画広告クリエイティブ（image_url必須、video不可）
+    creative = await select_creative(db, slot_type="widget", device_id=device_id)
+    ad_payload = None
+    if creative and creative.get("image_url"):
+        ad_payload = {
+            "image_url": creative.get("image_url"),
+            "title": creative.get("title", ""),
+            "cta_url": creative.get("cta_url", ""),
+            "impression_id": creative.get("impression_id"),
+        }
+
+    return {
+        "device_id": device_id,
+        "points_balance": points_balance,
+        "coupon_count": int(coupon_count),
+        "ad": ad_payload,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "refresh_interval_minutes": 30,
+    }
+
+
 @router.get("/android/dpc.apk", summary="DPC APKダウンロード（プレースホルダー）")
 async def download_dpc_apk(token: Optional[str] = Query(None)):
     """
@@ -2299,11 +2346,14 @@ async def admin_ios_command(
     iOSデバイスにMDMコマンドをキューイングし、APNsでチェックインを促す。
 
     request_type の対応:
-      add_web_clip    - params: {url, label, full_screen}
-      remove_profile  - params: {identifier}
-      device_info     - params: {}
-      profile_list    - params: {}
-      device_lock     - params: {message, phone}
+      add_web_clip                    - params: {url, label, full_screen}
+      remove_profile                  - params: {identifier}
+      device_info                     - params: {}
+      profile_list                    - params: {}
+      device_lock                     - params: {message, phone}
+      install_application             - params: {manifest_url, management_flags?}
+      install_enterprise_application  - params: {manifest_url}
+      send_app_clip_invite            - params: {app_clip_url}
     """
     # デバイス確認
     ios_dev = await db.scalar(select(iOSDeviceDB).where(iOSDeviceDB.udid == body.udid))
@@ -2329,6 +2379,22 @@ async def admin_ios_command(
     elif rt == "device_lock":
         plist_bytes = mdm_commands.device_lock(
             message=p.get("message", ""), phone=p.get("phone", ""), command_uuid=cmd_uuid,
+        )
+    elif rt == "install_application":
+        plist_bytes = mdm_commands.install_application(
+            manifest_url=p["manifest_url"],
+            management_flags=p.get("management_flags", 1),
+            command_uuid=cmd_uuid,
+        )
+    elif rt == "install_enterprise_application":
+        plist_bytes = mdm_commands.install_enterprise_application(
+            manifest_url=p["manifest_url"],
+            command_uuid=cmd_uuid,
+        )
+    elif rt == "send_app_clip_invite":
+        plist_bytes = mdm_commands.send_app_clip_invite(
+            app_clip_url=p["app_clip_url"],
+            command_uuid=cmd_uuid,
         )
     else:
         raise HTTPException(status_code=400, detail=f"Unknown request_type: {rt}")

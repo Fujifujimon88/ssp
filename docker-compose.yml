@@ -1,70 +1,98 @@
 version: "3.9"
 
 services:
-  # ── SSP アプリ ──────────────────────────────────────────────
-  app:
+  # ── FastAPI SSP プラットフォーム ──────────────────────────────
+  ssp:
     build: .
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://ssp:ssp@db:5432/ssp_db
-      REDIS_URL: redis://redis:6379
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-      APP_ENV: ${APP_ENV:-development}
-      SSP_ENDPOINT: ${SSP_ENDPOINT:-http://localhost:8000}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=${SECRET_KEY}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - APP_ENV=${APP_ENV:-production}
+      - SSP_ENDPOINT=${SSP_ENDPOINT}
+      - NANOMDM_URL=http://nanomdm:9000
+      - NANOMDM_API_KEY=${NANOMDM_API_KEY}
+      - APNS_CERT_PATH=${APNS_CERT_PATH}
+      - APNS_KEY_PATH=${APNS_KEY_PATH}
+      - APNS_TOPIC=${APNS_TOPIC}
+      - APNS_PRODUCTION=${APNS_PRODUCTION:-false}
+      - MDM_SERVER_URL=${MDM_SERVER_URL}
     volumes:
-      - .:/app  # 開発時のホットリロード用
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - ./secrets:/app/secrets:ro
+      - ./static:/app/static
+    depends_on:
+      - db
+      - redis
+      - nanomdm
 
-  # ── PostgreSQL ──────────────────────────────────────────────
+  # ── PostgreSQL ────────────────────────────────────────────────
   db:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ssp
-      POSTGRES_PASSWORD: ssp
-      POSTGRES_DB: ssp_db
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ssp_platform
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ssp"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
-  # ── Redis ───────────────────────────────────────────────────
+  # ── Redis（プリフェッチキャッシュ）──────────────────────────────
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
 
-  # ── Locust 負荷テスト（開発時のみ） ────────────────────────
-  locust:
-    image: locustio/locust:latest
+  # ── NanoMDM（iOS MDM サーバー）────────────────────────────────
+  nanomdm:
+    image: ghcr.io/micromdm/nanomdm:latest
+    restart: unless-stopped
     ports:
-      - "8089:8089"
+      - "9000:9000"
+    command: >
+      nanomdm
+      -storage file
+      -storage-path /nanomdm/db
+      -listen :9000
+      -api-key ${NANOMDM_API_KEY:-changeme}
+      -cert /certs/mdm_push.pem
+      -key /certs/mdm_push_key.pem
     volumes:
-      - ./tests:/mnt/locust
-    command: -f /mnt/locust/locustfile.py --host http://app:8000
+      - nanomdm_db:/nanomdm/db
+      - ./secrets:/certs:ro
+
+  # ── Nginx リバースプロキシ（本番）──────────────────────────────
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt:ro
     depends_on:
-      - app
-    profiles:
-      - loadtest  # docker compose --profile loadtest up で起動
+      - ssp
+      - nanomdm
+
+  # ── Certbot（Let's Encrypt SSL）──────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_conf:/etc/letsencrypt
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done"
 
 volumes:
-  postgres_data:
-  redis_data:
+  pgdata:
+  nanomdm_db:
+  certbot_www:
+  certbot_conf:
