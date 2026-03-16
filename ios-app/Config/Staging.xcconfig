@@ -1,0 +1,6 @@
+// Staging environment — safe to commit
+// CI/CD: use this config for TestFlight builds
+
+SSP_SERVER_URL = https://staging-mdm.example.com
+PRODUCT_BUNDLE_IDENTIFIER = jp.platform.ssp.staging
+DISPLAY_NAME = SSP Platform (Staging)

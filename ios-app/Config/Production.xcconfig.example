@@ -1,0 +1,12 @@
+// Production environment template
+// Copy to Production.xcconfig and replace the placeholder URL.
+//
+// Usage:
+//   1. cp ios-app/Config/Production.xcconfig.example ios-app/Config/Production.xcconfig
+//   2. Set SSP_SERVER_URL to your production MDM server.
+//   3. In Xcode: Project settings > Info > Configurations > Release → select Production.xcconfig
+//   4. Archive & upload to App Store Connect.
+
+SSP_SERVER_URL = https://mdm.your-domain.com
+PRODUCT_BUNDLE_IDENTIFIER = jp.platform.ssp
+DISPLAY_NAME = SSP Platform

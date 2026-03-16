@@ -15,3 +15,6 @@ test-results/
 ssp.db
 
 .vercel
+
+# iOS xcconfig (production secrets)
+ios-app/Config/Production.xcconfig
