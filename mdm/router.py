@@ -1755,6 +1755,95 @@ async def list_conversions(
     ]
 
 
+# ── リアルタイム統計 SSE ──────────────────────────────────────
+
+
+def _require_admin_query(
+    admin_key: Optional[str] = Query(None, alias="admin_key"),
+    header_key: Optional[str] = None,
+) -> None:
+    """SSE用: クエリパラメータ admin_key でも認証を受け付ける（EventSourceはヘッダ非対応）。"""
+    from fastapi.security import APIKeyHeader
+    # header は Security() 経由で取れないのでここでは Query のみチェック
+    key = admin_key or header_key
+    if not key or key != settings.admin_api_key:
+        raise HTTPException(status_code=401, detail="Invalid admin key")
+
+
+@router.get("/admin/stats/stream", summary="リアルタイムKPI SSEストリーム（管理者）")
+async def stats_stream(
+    request: Request,
+    admin_key: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Server-Sent Events で 5 秒ごとに最新 KPI を push する。
+    管理ダッシュボードの数値をリアルタイム更新するために使用する。
+    認証: ?admin_key=xxx（EventSource はカスタムヘッダ非対応のためクエリ認証）
+    """
+    if not admin_key or admin_key != settings.admin_api_key:
+        raise HTTPException(status_code=401, detail="Invalid admin key")
+
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy import Integer, cast
+
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                now = datetime.now(timezone.utc)
+                today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                # 今日のインプレッション・クリック
+                imp_row = await db.execute(
+                    select(
+                        func.count(MdmImpressionDB.id).label("impressions"),
+                        func.sum(cast(MdmImpressionDB.clicked, Integer)).label("clicks"),
+                    ).where(MdmImpressionDB.created_at >= today)
+                )
+                imp = imp_row.one()
+                total_imp = imp.impressions or 0
+                total_clicks = int(imp.clicks or 0)
+
+                # 登録デバイス数
+                android_count = await db.scalar(select(func.count(AndroidDeviceDB.id)))
+                ios_count = await db.scalar(select(func.count(iOSDeviceDB.id)))
+
+                # 今月収益
+                start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                revenue = await db.scalar(
+                    select(func.sum(AffiliateConversionDB.revenue_jpy))
+                    .where(AffiliateConversionDB.converted_at >= start_of_month)
+                )
+
+                payload = json.dumps({
+                    "ts": now.isoformat(),
+                    "today_impressions": total_imp,
+                    "today_clicks": total_clicks,
+                    "today_ctr": round(total_clicks / total_imp, 4) if total_imp else 0.0,
+                    "android_devices": android_count or 0,
+                    "ios_devices": ios_count or 0,
+                    "month_revenue_jpy": float(revenue or 0),
+                })
+                yield f"data: {payload}\n\n"
+            except Exception as e:
+                logger.warning(f"SSE stats error: {e}")
+                yield f"data: {{}}\n\n"
+
+            await asyncio.sleep(5)
+
+    import asyncio
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Nginx buffering 無効化
+        },
+    )
+
+
 # ── Phase 6: ダッシュボード（HTML） ───────────────────────────
 
 
@@ -1887,6 +1976,44 @@ async def admin_dashboard(
         <div class="value revenue">¥{monthly['total_revenue_jpy']:,.0f}</div>
         <div class="sub">{monthly['period']} / {monthly['total_conversions']} CV</div></div>
     </div>
+
+    <div class="section" style="border-left: 4px solid #34c759;">
+      <h2 style="display:flex;align-items:center;gap:8px;">
+        <span id="live-dot" style="width:8px;height:8px;background:#34c759;border-radius:50%;display:inline-block;animation:pulse 1.5s infinite;"></span>
+        リアルタイム（今日）
+        <span style="font-size:12px;font-weight:400;color:#8e8e93;" id="live-ts"></span>
+      </h2>
+      <div class="grid" style="margin-top:16px;margin-bottom:0;">
+        <div class="card"><div class="label">本日インプレッション</div>
+          <div class="value" id="live-impressions">—</div></div>
+        <div class="card"><div class="label">本日クリック</div>
+          <div class="value" id="live-clicks">—</div></div>
+        <div class="card"><div class="label">本日 CTR</div>
+          <div class="value" id="live-ctr">—</div></div>
+        <div class="card"><div class="label">今月収益</div>
+          <div class="value revenue" id="live-revenue">—</div></div>
+      </div>
+    </div>
+    <style>@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.3}}}}</style>
+    <script>
+    (function(){{
+      var adminKey = new URLSearchParams(location.search).get('admin_key') || '';
+      if(!adminKey) return;
+      var src = new EventSource('/mdm/admin/stats/stream?admin_key=' + adminKey);
+      src.onmessage = function(e){{
+        try {{
+          var d = JSON.parse(e.data);
+          if(!d.ts) return;
+          document.getElementById('live-impressions').textContent = (d.today_impressions||0).toLocaleString();
+          document.getElementById('live-clicks').textContent = (d.today_clicks||0).toLocaleString();
+          document.getElementById('live-ctr').textContent = ((d.today_ctr||0)*100).toFixed(2) + '%';
+          document.getElementById('live-revenue').textContent = '¥' + (d.month_revenue_jpy||0).toLocaleString();
+          document.getElementById('live-ts').textContent = new Date(d.ts).toLocaleTimeString('ja-JP');
+        }} catch(err){{}}
+      }};
+      src.onerror = function(){{ document.getElementById('live-dot').style.background='#ff3b30'; }};
+    }})();
+    </script>
 
     <div class="section">
       <h2>代理店 Top 5（端末数順）</h2>
@@ -2733,3 +2860,241 @@ async def broadcast_command(
         f"| android={results['android_queued']} | ios={results['ios_queued']}"
     )
     return results
+
+
+# ── 公開ページ（プライバシーポリシー・代理店マニュアル）─────────────────────
+
+
+@router.get("/privacy", response_class=HTMLResponse, summary="プライバシーポリシー（公開）")
+async def privacy_policy():
+    """認証不要の公開プライバシーポリシーページ。"""
+    html = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>プライバシーポリシー</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+           background: #f0f2f5; color: #1d1d1f; }
+    .nav { background: #1d1d1f; color: #fff; padding: 14px 24px; }
+    .nav h1 { font-size: 16px; font-weight: 700; }
+    .nav span { font-size: 12px; color: #8e8e93; }
+    .main { max-width: 800px; margin: 0 auto; padding: 24px 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 28px 24px;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.06); margin-bottom: 20px; }
+    h2 { font-size: 18px; font-weight: 700; margin-bottom: 16px;
+         padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; }
+    h3 { font-size: 14px; font-weight: 600; margin: 18px 0 8px; color: #333; }
+    p, li { font-size: 14px; line-height: 1.8; color: #3a3a3c; }
+    ul { padding-left: 18px; }
+    li { margin-bottom: 4px; }
+    a { color: #007aff; text-decoration: none; }
+    .updated { font-size: 12px; color: #8e8e93; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <h1>プライバシーポリシー</h1>
+    <span>個人情報の取り扱いについて</span>
+  </div>
+  <div class="main">
+    <p class="updated">最終更新日: 2026年3月17日</p>
+
+    <div class="card">
+      <h2>1. 収集するデータ</h2>
+      <p>本サービスでは、以下の情報を収集します。</p>
+      <ul>
+        <li>デバイスID（端末識別子）</li>
+        <li>FCMトークン（プッシュ通知配信用）</li>
+        <li>ロック画面閲覧履歴・クリック履歴</li>
+        <li>デバイス情報（機種名・OSバージョン）</li>
+        <li>年齢層（ターゲティング広告配信のため、任意入力）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>2. 利用目的</h2>
+      <p>収集した情報は、以下の目的に限り利用します。</p>
+      <ul>
+        <li>ロック画面・ウィジェット広告の配信および最適化</li>
+        <li>アフィリエイト収益の精算および代理店への報酬支払い</li>
+        <li>サービスの品質改善・不正利用の検知</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>3. 第三者への提供</h2>
+      <p>
+        収集した個人情報は、原則として第三者に提供しません。
+        ただし、アフィリエイト案件のコンバージョン計測を目的として、
+        <strong>AppsFlyer</strong> および <strong>Adjust</strong> へ必要な範囲でデータを送信する場合があります。
+        これらの計測パートナーは、各社のプライバシーポリシーに基づきデータを管理します。
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>4. 保存期間</h2>
+      <p>
+        収集したデータは、収集日から <strong>1年間</strong> 保存します。
+        保存期間終了後は速やかに削除または匿名化処理を行います。
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>5. オプトアウト</h2>
+      <p>
+        ユーザーはいつでもサービスの利用を停止し、エンロールを解除することができます。
+        解除を希望する場合は、以下のページからお手続きください。
+      </p>
+      <p style="margin-top: 12px;">
+        <a href="/mdm/optout">/mdm/optout — エンロール解除ページ</a>
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>6. お問い合わせ</h2>
+      <p>
+        プライバシーに関するご質問・ご要望は、下記までご連絡ください。
+      </p>
+      <h3>サービス運営者</h3>
+      <p>メールアドレス: <a href="mailto:admin@example.com">admin@example.com</a></p>
+    </div>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@router.get("/dealer/manual", response_class=HTMLResponse, summary="代理店オペレーションマニュアル（公開）")
+async def dealer_manual():
+    """代理店スタッフ向け操作マニュアル。認証不要。"""
+    html = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>代理店オペレーションマニュアル</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+           background: #f0f2f5; color: #1d1d1f; }
+    .nav { background: #1d1d1f; color: #fff; padding: 14px 24px; }
+    .nav h1 { font-size: 16px; font-weight: 700; }
+    .nav span { font-size: 12px; color: #8e8e93; }
+    .main { max-width: 800px; margin: 0 auto; padding: 24px 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 28px 24px;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.06); margin-bottom: 20px; }
+    h2 { font-size: 18px; font-weight: 700; margin-bottom: 16px;
+         padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; }
+    h3 { font-size: 14px; font-weight: 600; margin: 18px 0 8px; color: #333; }
+    p, li { font-size: 14px; line-height: 1.8; color: #3a3a3c; }
+    ol, ul { padding-left: 20px; }
+    li { margin-bottom: 6px; }
+    a { color: #007aff; text-decoration: none; }
+    code { background: #f4f4f5; padding: 2px 6px; border-radius: 4px;
+           font-family: 'Menlo', 'Courier New', monospace; font-size: 12px; color: #d63384; }
+    .step-block { background: #f8f9fa; border-left: 3px solid #007aff;
+                  border-radius: 0 8px 8px 0; padding: 14px 16px; margin: 12px 0; }
+    .step-block p { margin: 0; }
+    .faq-q { font-weight: 600; color: #1d1d1f; margin-top: 16px; }
+    .faq-a { color: #3a3a3c; margin-top: 4px; padding-left: 12px;
+              border-left: 2px solid #e0e0e0; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <h1>代理店オペレーションマニュアル</h1>
+    <span>店舗スタッフ向け操作ガイド</span>
+  </div>
+  <div class="main">
+
+    <div class="card">
+      <h2>1. QRコードの使い方</h2>
+      <p>店頭に掲示するQRコードは、以下のURLで取得・印刷できます。</p>
+      <div class="step-block">
+        <p><code>GET /mdm/qr/{store_code}</code></p>
+      </div>
+      <ol style="margin-top: 12px;">
+        <li>ブラウザで上記URLにアクセスするとQRコード画像（PNG）が表示されます。</li>
+        <li>右クリック（長押し）で画像を保存し、A4用紙に印刷してください。</li>
+        <li>レジ周辺や端末展示コーナーなど、お客様の目に触れやすい場所に掲示してください。</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>2. エンロール手順（iOS）</h2>
+      <ol>
+        <li>お客様にQRコードをスキャンしていただきます。</li>
+        <li>ブラウザでエンロールポータル（<code>/mdm/portal</code>）が開きます。</li>
+        <li>利用規約・プライバシーポリシーへの同意にチェックを入れ、「同意してインストール」ボタンを押します。</li>
+        <li>「プロファイルをインストール」の確認ダイアログで <strong>許可</strong> を選択します。</li>
+        <li>設定アプリ → 「プロファイルがダウンロードされました」→ インストール → 完了。</li>
+      </ol>
+      <div class="step-block" style="margin-top: 16px;">
+        <p>インストール完了後、ロック画面・ウィジェットに広告が表示されるようになります。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3. Android端末の場合</h2>
+      <ol>
+        <li>ポータルページ（<code>/mdm/portal</code>）を開き、「Android用APKをダウンロード」ボタンを押します。</li>
+        <li>APKファイルをダウンロードし、インストールします（初回は「提供元不明のアプリ」を許可する必要があります）。</li>
+        <li>アプリを起動し、「デバイス管理者を有効にする」ボタンをタップして管理者権限を付与します。</li>
+        <li>画面の指示に従いセットアップを完了すると、ロック画面広告が有効になります。</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>4. 収益確認（代理店ポータル）</h2>
+      <p>代理店ポータルでは、エンロール端末数・クリック数・コンバージョン数・月次収益をリアルタイムで確認できます。</p>
+      <div class="step-block" style="margin-top: 12px;">
+        <p><code>GET /mdm/dealer/portal?api_key=YOUR_KEY</code></p>
+      </div>
+      <p style="margin-top: 10px;">
+        <code>YOUR_KEY</code> の部分は、運営者から発行されたAPIキーに置き換えてください。
+        APIキーは代理店登録時にメールでお知らせしています。
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>5. よくある質問</h2>
+
+      <p class="faq-q">Q. プロファイルがインストールできない（iOS）</p>
+      <p class="faq-a">A. 設定アプリ → 一般 → VPNとデバイス管理 にプロファイルが表示されている場合、そこからインストールを完了してください。表示されない場合は、いったんブラウザのキャッシュをクリアして再度QRをスキャンしてください。</p>
+
+      <p class="faq-q">Q. 通知（プッシュ）が来ない</p>
+      <p class="faq-a">A. 設定 → 通知 → 該当アプリ の通知が「オフ」になっていないか確認してください。また、機内モードや省電力モードをオフにしてから再起動をお試しください。</p>
+
+      <p class="faq-q">Q. ロック画面に広告が表示されない</p>
+      <p class="faq-a">A. エンロール後、広告が反映されるまで最大30分かかる場合があります。しばらく時間をおいてから端末を再起動してください。</p>
+
+      <p class="faq-q">Q. APKのインストールが「ブロックされました」と表示される（Android）</p>
+      <p class="faq-a">A. 設定 → セキュリティ → 「提供元不明のアプリ」またはブラウザアプリの「この提供元を許可する」をオンにしてから、再度インストールを試みてください。</p>
+
+      <p class="faq-q">Q. 代理店ポータルにアクセスできない</p>
+      <p class="faq-a">A. URLにAPIキーが正しく含まれているかご確認ください。キーが不明な場合は <a href="mailto:admin@example.com">admin@example.com</a> までお問い合わせください。</p>
+    </div>
+
+    <div class="card">
+      <h2>6. エンロール解除方法</h2>
+      <h3>方法①: 設定アプリから手動削除（iOS）</h3>
+      <ol>
+        <li>設定アプリを開く</li>
+        <li>一般 → VPNとデバイス管理</li>
+        <li>対象のプロファイルをタップ → 「プロファイルを削除」</li>
+        <li>パスコードを入力して確定</li>
+      </ol>
+      <h3>方法②: オプトアウトページから自己解除</h3>
+      <p>ユーザー自身が以下のページにアクセスしてデバイスIDを入力することで、エンロールを解除できます。</p>
+      <div class="step-block" style="margin-top: 8px;">
+        <p><a href="/mdm/optout">/mdm/optout — エンロール解除ページ</a></p>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
