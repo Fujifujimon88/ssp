@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">サービス設定</string>
+    <string name="device_admin_label">デバイス管理</string>
+    <string name="device_admin_description">サービスの設定と通知を受け取るための管理権限です。設定アプリからいつでも解除できます。</string>
+</resources>

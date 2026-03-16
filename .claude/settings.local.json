@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx playwright:*)",
+      "Bash(powershell -Command \"Start-Sleep 3; netstat -ano | Select-String '':8000 .*LISTEN''\")",
+      "Bash(git add:*)",
+      "WebFetch(domain:prtimes.jp)",
+      "WebFetch(domain:terms.line.me)",
+      "WebFetch(domain:developers.line.biz)"
+    ]
+  }
+}

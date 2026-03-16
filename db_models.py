@@ -145,6 +145,7 @@ class AffiliateCampaignDB(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     clicks: Mapped[list["AffiliateClickDB"]] = relationship("AffiliateClickDB", back_populates="campaign")
+    creatives: Mapped[list["CreativeDB"]] = relationship("CreativeDB", back_populates="campaign")
 
 
 class AffiliateClickDB(Base):
@@ -260,3 +261,102 @@ class MDMCommandDB(Base):
     result: Mapped[str] = mapped_column(Text, nullable=True)    # デバイスからの返答JSON
 
     device: Mapped["iOSDeviceDB"] = relationship("iOSDeviceDB", back_populates="commands")
+
+
+# ── クリエイティブ管理 ────────────────────────────────────────
+
+
+class CreativeDB(Base):
+    """
+    広告クリエイティブ（アフィリエイト案件に紐付く広告素材）
+
+    type:
+      text   - タイトル + 説明文のみ（DPCの通知広告）
+      image  - 画像URL + タイトル（ロック画面・ウィジェット）
+      html5  - HTML5コンテンツ（WebClip LP埋め込み）
+      video  - 動画URL + サムネイル（将来対応）
+    """
+    __tablename__ = "creatives"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("affiliate_campaigns.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    type: Mapped[str] = mapped_column(String(20), default="text")
+    # text / image / html5 / video
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str] = mapped_column(String(500), nullable=True)
+    html_content: Mapped[str] = mapped_column(Text, nullable=True)  # HTML5広告本文
+    click_url: Mapped[str] = mapped_column(String(500))             # クリック先URL
+    width: Mapped[int] = mapped_column(Integer, nullable=True)       # px
+    height: Mapped[int] = mapped_column(Integer, nullable=True)      # px
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    # active / paused / rejected
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    campaign: Mapped["AffiliateCampaignDB"] = relationship(
+        "AffiliateCampaignDB", back_populates="creatives"
+    )
+    impressions: Mapped[list["MdmImpressionDB"]] = relationship(
+        "MdmImpressionDB", back_populates="creative"
+    )
+
+
+class MdmAdSlotDB(Base):
+    """
+    MDM端末上の広告枠定義（SSP既存のAdSlotDBとは別にMDM専用）
+
+    slot_type:
+      lockscreen   - Android ロック画面（CPM ¥500-2000/千回）
+      widget       - Android ホーム画面ウィジェット（CPM ¥300-1000/千回）
+      notification - FCMプッシュ通知（CPC）
+      webclip_ios  - iOS WebClipホーム画面（CPC）
+
+    targeting_json: セグメント条件 例: {"age_group": ["20s","30s"], "platform": "android"}
+    """
+    __tablename__ = "mdm_ad_slots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    slot_type: Mapped[str] = mapped_column(String(30), index=True)
+    floor_price_cpm: Mapped[float] = mapped_column(Float, default=500.0)  # ¥/千回
+    targeting_json: Mapped[str] = mapped_column(Text, nullable=True)      # JSON
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    impressions: Mapped[list["MdmImpressionDB"]] = relationship(
+        "MdmImpressionDB", back_populates="slot"
+    )
+
+
+class MdmImpressionDB(Base):
+    """MDM広告配信インプレッションログ（課金・計測の基点）"""
+    __tablename__ = "mdm_impressions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    slot_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("mdm_ad_slots.id"), index=True, nullable=True
+    )
+    creative_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("creatives.id"), index=True, nullable=True
+    )
+    device_id: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
+    enrollment_token: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
+    dealer_id: Mapped[str] = mapped_column(String(36), index=True, nullable=True)
+    platform: Mapped[str] = mapped_column(String(10), nullable=True)
+    age_group: Mapped[str] = mapped_column(String(10), nullable=True)
+    cpm_price: Mapped[float] = mapped_column(Float, default=0.0)
+    clicked: Mapped[bool] = mapped_column(Boolean, default=False)
+    clicked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    served_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    slot: Mapped["MdmAdSlotDB"] = relationship("MdmAdSlotDB", back_populates="impressions")
+    creative: Mapped["CreativeDB"] = relationship("CreativeDB", back_populates="impressions")

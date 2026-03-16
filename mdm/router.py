@@ -28,9 +28,10 @@ from database import get_db
 from db_models import (
     AffiliateCampaignDB, AffiliateClickDB, AffiliateConversionDB,
     AndroidCommandDB, AndroidDeviceDB,
-    CampaignDB, DealerDB, DeviceDB,
-    MDMCommandDB, iOSDeviceDB,
+    CampaignDB, CreativeDB, DealerDB, DeviceDB,
+    MDMCommandDB, MdmAdSlotDB, MdmImpressionDB, iOSDeviceDB,
 )
+from mdm.creative.selector import record_click, select_creative
 from mdm.affiliate.billing import (
     calculate_monthly_revenue, get_all_dealers_report, get_dealer_monthly_report,
 )
@@ -883,33 +884,37 @@ async def android_command_ack(
 @router.get("/android/lockscreen/content", summary="ロック画面広告コンテンツ取得")
 async def lockscreen_content(
     device_id: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """
     ロック画面アプリが起動時に呼び出す。
-    デバイスのセグメントに応じた広告コンテンツを返す。
-    現時点ではアクティブなアフィリエイト案件をランダムで返す（Phase 5で最適化）。
+    登録クリエイティブから最適な広告をオークション選択して返す。
+    クリエイティブ未登録の場合はアフィリエイト案件のフォールバック。
     """
+    content = await select_creative(
+        db, slot_type="lockscreen",
+        device_id=device_id, enrollment_token=token, platform="android",
+    )
+    if content:
+        return {"content": content}
+
+    # フォールバック: クリエイティブ未登録時は案件直接返却
     result = await db.execute(
-        select(AffiliateCampaignDB)
-        .where(AffiliateCampaignDB.status == "active")
-        .limit(5)
+        select(AffiliateCampaignDB).where(AffiliateCampaignDB.status == "active").limit(5)
     )
     campaigns = list(result.scalars().all())
-
     if not campaigns:
         return {"content": None}
 
     import random
     campaign = random.choice(campaigns)
-
-    tracked_url = build_tracked_url(campaign.id, device_id or "anonymous")
-
     return {
         "content": {
             "campaign_id": campaign.id,
+            "type": "text",
             "title": campaign.name,
-            "cta_url": tracked_url,
+            "click_url": build_tracked_url(campaign.id, device_id or "anonymous"),
             "category": campaign.category,
         }
     }
@@ -918,30 +923,41 @@ async def lockscreen_content(
 @router.get("/android/widget/content", summary="ホーム画面ウィジェットコンテンツ取得")
 async def widget_content(
     device_id: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """ホーム画面ウィジェットアプリが表示するコンテンツを返す"""
+    """ホーム画面ウィジェットアプリが表示するコンテンツを返す（最大3件）"""
+    # 登録クリエイティブから選択（3件まで）
+    items = []
+    for _ in range(3):
+        content = await select_creative(
+            db, slot_type="widget",
+            device_id=device_id, enrollment_token=token, platform="android",
+        )
+        if content and content not in items:
+            items.append(content)
+
+    if items:
+        return {"items": items}
+
+    # フォールバック
     result = await db.execute(
         select(AffiliateCampaignDB)
         .where(AffiliateCampaignDB.status == "active", AffiliateCampaignDB.category == "app")
-        .limit(5)
+        .limit(3)
     )
     campaigns = list(result.scalars().all())
-
-    if not campaigns:
-        return {"items": []}
-
-    import random
-    random.shuffle(campaigns)
-    items = [
-        {
-            "campaign_id": c.id,
-            "title": c.name,
-            "cta_url": build_tracked_url(c.id, device_id or "anonymous"),
-        }
-        for c in campaigns[:3]
-    ]
-    return {"items": items}
+    return {
+        "items": [
+            {
+                "campaign_id": c.id,
+                "type": "text",
+                "title": c.name,
+                "click_url": build_tracked_url(c.id, device_id or "anonymous"),
+            }
+            for c in campaigns
+        ]
+    }
 
 
 @router.get("/android/dpc.apk", summary="DPC APKダウンロード（プレースホルダー）")
@@ -1883,3 +1899,171 @@ async def advertiser_portal(
 </body>
 </html>"""
     return HTMLResponse(content=html)
+
+
+# ── クリエイティブ管理 ────────────────────────────────────────
+
+
+class CreativeCreate(BaseModel):
+    campaign_id: str
+    name: str
+    type: str = "text"         # text / image / html5 / video
+    title: str
+    body: Optional[str] = None
+    image_url: Optional[str] = None
+    html_content: Optional[str] = None
+    click_url: str
+    width: Optional[int] = None
+    height: Optional[int] = None
+
+
+@router.post("/admin/creatives", summary="クリエイティブ登録（管理者）")
+async def create_creative(
+    body: CreativeCreate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    creative = CreativeDB(**body.model_dump())
+    db.add(creative)
+    await db.commit()
+    await db.refresh(creative)
+    logger.info(f"Creative created | id={creative.id} | type={creative.type}")
+    return {"id": creative.id, "name": creative.name, "type": creative.type}
+
+
+@router.get("/admin/creatives", summary="クリエイティブ一覧（管理者）")
+async def list_creatives(
+    campaign_id: Optional[str] = Query(None),
+    creative_type: Optional[str] = Query(None, alias="type"),
+    creative_status: Optional[str] = Query(None, alias="status"),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    q = select(CreativeDB).order_by(CreativeDB.created_at.desc())
+    if campaign_id:
+        q = q.where(CreativeDB.campaign_id == campaign_id)
+    if creative_type:
+        q = q.where(CreativeDB.type == creative_type)
+    if creative_status:
+        q = q.where(CreativeDB.status == creative_status)
+    rows = await db.execute(q)
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "type": c.type,
+            "title": c.title,
+            "image_url": c.image_url,
+            "click_url": c.click_url,
+            "status": c.status,
+            "campaign_id": c.campaign_id,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        }
+        for c in rows.scalars().all()
+    ]
+
+
+@router.patch("/admin/creatives/{creative_id}", summary="クリエイティブ ステータス変更（管理者）")
+async def update_creative_status(
+    creative_id: str,
+    status: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    creative = await db.get(CreativeDB, creative_id)
+    if not creative:
+        raise HTTPException(status_code=404, detail="Creative not found")
+    creative.status = status
+    await db.commit()
+    return {"id": creative_id, "status": status}
+
+
+# ── MDM広告枠管理 ────────────────────────────────────────────
+
+
+class MdmAdSlotCreate(BaseModel):
+    name: str
+    slot_type: str
+    floor_price_cpm: float = 500.0
+    targeting_json: Optional[str] = None
+
+
+@router.post("/admin/slots", summary="MDM広告枠登録（管理者）")
+async def create_mdm_slot(
+    body: MdmAdSlotCreate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    MDM端末上の広告枠を定義する。
+    slot_type: lockscreen / widget / notification / webclip_ios
+    """
+    slot = MdmAdSlotDB(**body.model_dump())
+    db.add(slot)
+    await db.commit()
+    await db.refresh(slot)
+    return {"id": slot.id, "name": slot.name, "slot_type": slot.slot_type, "floor_price_cpm": slot.floor_price_cpm}
+
+
+@router.get("/admin/slots", summary="MDM広告枠一覧（管理者）")
+async def list_mdm_slots(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    rows = await db.execute(select(MdmAdSlotDB).order_by(MdmAdSlotDB.created_at.desc()))
+    return [
+        {
+            "id": s.id,
+            "name": s.name,
+            "slot_type": s.slot_type,
+            "floor_price_cpm": s.floor_price_cpm,
+            "status": s.status,
+        }
+        for s in rows.scalars().all()
+    ]
+
+
+# ── インプレッション計測 ──────────────────────────────────────
+
+
+@router.post("/impression/click", summary="クリックイベント記録")
+async def record_impression_click(
+    impression_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """DPCがCTAタップ時に呼び出す。インプレッションにclicked=Trueを記録。"""
+    ok = await record_click(db, impression_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Impression not found")
+    return {"status": "ok"}
+
+
+@router.get("/admin/impressions/stats", summary="インプレッション統計（管理者）")
+async def impression_stats(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """スロット別のインプレッション数・クリック数・CTR"""
+    from sqlalchemy import Integer, cast
+    rows = await db.execute(
+        select(
+            MdmImpressionDB.slot_id,
+            func.count(MdmImpressionDB.id).label("impressions"),
+            func.sum(cast(MdmImpressionDB.clicked, Integer)).label("clicks"),
+            func.sum(MdmImpressionDB.cpm_price).label("revenue_est"),
+        ).group_by(MdmImpressionDB.slot_id)
+    )
+    results = []
+    for row in rows.all():
+        slot = await db.get(MdmAdSlotDB, row.slot_id) if row.slot_id else None
+        imps = row.impressions or 0
+        clicks = int(row.clicks or 0)
+        results.append({
+            "slot_name": slot.name if slot else "（スロット未設定）",
+            "slot_type": slot.slot_type if slot else "unknown",
+            "impressions": imps,
+            "clicks": clicks,
+            "ctr": round(clicks / imps * 100, 2) if imps > 0 else 0,
+            "revenue_est_jpy": round(float(row.revenue_est or 0) / 1000, 2),
+        })
+    return results

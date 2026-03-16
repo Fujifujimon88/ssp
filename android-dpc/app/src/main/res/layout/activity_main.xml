@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="📱 サービス設定"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginTop="32dp"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="初期化中..."
+        android:textSize="14sp"
+        android:textColor="#6e6e73"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:id="@+id/tvDeviceId"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="12sp"
+        android:textColor="#999"
+        android:layout_marginBottom="32dp" />
+
+    <Button
+        android:id="@+id/btnAdminEnable"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="デバイス管理者を有効化"
+        android:backgroundTint="#007aff"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btnRegister"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="サーバーに登録"
+        android:backgroundTint="#34c759"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/btnPoll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="コマンドを確認"
+        android:backgroundTint="#ff9500"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:id="@+id/tvLog"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#f5f5f7"
+        android:padding="12dp"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:scrollbars="vertical" />
+
+</LinearLayout>
