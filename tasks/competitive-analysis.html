@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSP Platform — 競合比較・開発進捗レポート</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    line-height: 1.6;
+  }
+
+  /* ── ヘッダー ── */
+  .hero {
+    background: linear-gradient(135deg, #0f3460 0%, #16213e 50%, #1a1a2e 100%);
+    color: white;
+    padding: 56px 40px 48px;
+    text-align: center;
+  }
+  .hero h1 { font-size: 2.2rem; font-weight: 700; letter-spacing: -0.5px; }
+  .hero .subtitle { margin-top: 10px; font-size: 1rem; opacity: 0.75; }
+  .hero .date { margin-top: 6px; font-size: 0.82rem; opacity: 0.5; }
+
+  /* ── バッジ ── */
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .badge-done  { background: #d1fae5; color: #065f46; }
+  .badge-p2    { background: #fef3c7; color: #92400e; }
+  .badge-adv   { background: #dbeafe; color: #1e40af; }
+  .badge-win   { background: #ede9fe; color: #5b21b6; }
+
+  /* ── サマリーカード ── */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    padding: 32px 40px 0;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .summary-card {
+    background: white;
+    border-radius: 14px;
+    padding: 24px 20px;
+    text-align: center;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+  }
+  .summary-card .num { font-size: 2.4rem; font-weight: 800; }
+  .summary-card .label { font-size: 0.8rem; color: #6b7280; margin-top: 4px; }
+  .summary-card.green .num { color: #059669; }
+  .summary-card.blue  .num { color: #2563eb; }
+  .summary-card.amber .num { color: #d97706; }
+  .summary-card.purple.num { color: #7c3aed; }
+
+  /* ── セクション ── */
+  .section {
+    max-width: 1200px;
+    margin: 32px auto;
+    padding: 0 40px;
+  }
+  .section-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+    padding-left: 12px;
+    border-left: 4px solid #2563eb;
+    color: #1e3a5f;
+  }
+
+  /* ── 比較テーブル ── */
+  .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+    font-size: 0.875rem;
+  }
+  .compare-table thead tr {
+    background: linear-gradient(90deg, #1e3a5f, #2563eb);
+    color: white;
+  }
+  .compare-table th {
+    padding: 14px 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.82rem;
+    letter-spacing: 0.3px;
+  }
+  .compare-table td {
+    padding: 11px 16px;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: top;
+  }
+  .compare-table tr:last-child td { border-bottom: none; }
+  .compare-table tr:hover td { background: #f8faff; }
+
+  .col-feature { font-weight: 600; color: #1e3a5f; min-width: 200px; }
+  .col-dt, .col-gl, .col-us { text-align: center; width: 130px; }
+  .col-status { min-width: 160px; }
+  .col-revenue { min-width: 140px; }
+
+  .icon-yes   { font-size: 1.1rem; }
+  .icon-no    { color: #d1d5db; font-size: 1.1rem; }
+  .icon-part  { color: #f59e0b; font-size: 1.1rem; }
+
+  .cat-header td {
+    background: #f1f5f9;
+    font-weight: 700;
+    color: #475569;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 8px 16px;
+  }
+
+  .status-done { color: #059669; font-weight: 600; font-size: 0.8rem; }
+  .status-p2   { color: #d97706; font-weight: 600; font-size: 0.8rem; }
+  .status-adv  { color: #2563eb; font-weight: 600; font-size: 0.8rem; }
+
+  /* ── 優位性カード ── */
+  .advantage-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .adv-card {
+    background: white;
+    border-radius: 14px;
+    padding: 22px 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+  }
+  .adv-card h3 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .adv-card ul { list-style: none; }
+  .adv-card ul li {
+    font-size: 0.84rem;
+    color: #374151;
+    padding: 5px 0;
+    border-bottom: 1px solid #f3f4f6;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .adv-card ul li:last-child { border-bottom: none; }
+  .adv-card ul li::before { content: "▸"; color: #2563eb; flex-shrink: 0; }
+
+  /* ── ロードマップ ── */
+  .roadmap-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+  .roadmap-card {
+    background: white;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+  }
+  .roadmap-header {
+    padding: 14px 20px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: white;
+  }
+  .roadmap-header.done   { background: linear-gradient(90deg, #059669, #10b981); }
+  .roadmap-header.soon   { background: linear-gradient(90deg, #2563eb, #3b82f6); }
+  .roadmap-header.future { background: linear-gradient(90deg, #d97706, #f59e0b); }
+  .roadmap-header.unique { background: linear-gradient(90deg, #7c3aed, #8b5cf6); }
+  .roadmap-body { padding: 16px 20px; }
+  .roadmap-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid #f3f4f6;
+    font-size: 0.84rem;
+  }
+  .roadmap-item:last-child { border-bottom: none; }
+  .roadmap-item .tag {
+    background: #f3f4f6;
+    color: #6b7280;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .roadmap-item.done-item .tag { background: #d1fae5; color: #065f46; }
+  .roadmap-item.p2-item   .tag { background: #fef3c7; color: #92400e; }
+
+  /* ── 収益インパクト ── */
+  .revenue-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+    font-size: 0.875rem;
+  }
+  .revenue-table thead tr { background: linear-gradient(90deg, #1e3a5f, #2563eb); color: white; }
+  .revenue-table th { padding: 12px 16px; font-weight: 600; font-size: 0.82rem; text-align: left; }
+  .revenue-table td { padding: 10px 16px; border-bottom: 1px solid #f3f4f6; }
+  .revenue-table tr:last-child td { border-bottom: none; }
+  .revenue-table tr:hover td { background: #f8faff; }
+  .revenue-table .total-row td { background: #1e3a5f; color: white; font-weight: 700; }
+  .num-right { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* ── フッター ── */
+  .footer {
+    text-align: center;
+    padding: 40px;
+    color: #9ca3af;
+    font-size: 0.78rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- ヒーロー -->
+<div class="hero">
+  <h1>SSP Platform — 開発進捗 & 競合比較レポート</h1>
+  <div class="subtitle">Digital Turbine (Ignite) / Glance (InMobi) との機能比較 + ロードマップ</div>
+  <div class="date">作成日: 2026年3月17日</div>
+</div>
+
+<!-- サマリーカード -->
+<div class="summary-grid">
+  <div class="summary-card green">
+    <div class="num">20</div>
+    <div class="label">実装完了機能（P0/P1）</div>
+  </div>
+  <div class="summary-card blue">
+    <div class="num">7</div>
+    <div class="label">今後の開発（P2）</div>
+  </div>
+  <div class="summary-card amber">
+    <div class="num">¥280〜300万</div>
+    <div class="label">1万台あたり月収（P1完了後）</div>
+  </div>
+  <div class="summary-card" style="color:#7c3aed;">
+    <div class="num" style="color:#7c3aed;">2</div>
+    <div class="label">独自優位（競合ゼロ）</div>
+  </div>
+</div>
+
+<!-- ── セクション1: 詳細機能比較 ── -->
+<div class="section">
+  <div class="section-title">機能別比較表</div>
+  <table class="compare-table">
+    <thead>
+      <tr>
+        <th class="col-feature">機能</th>
+        <th class="col-dt">Digital Turbine<br><span style="font-weight:400;opacity:0.8">Ignite / SingleTap</span></th>
+        <th class="col-gl">Glance<br><span style="font-weight:400;opacity:0.8">InMobi</span></th>
+        <th class="col-us">我々</th>
+        <th class="col-status">ステータス</th>
+        <th class="col-revenue">収益インパクト</th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <!-- ── アプリインストール ── -->
+      <tr class="cat-header"><td colspan="6">📦 アプリインストール / CPI</td></tr>
+      <tr>
+        <td class="col-feature">サイレントAPKインストール</td>
+        <td class="col-dt"><span class="icon-yes">✅</span><br><small>/priv-app OEM組込み</small></td>
+        <td class="col-gl"><span class="icon-no">✗</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>PackageInstaller.Session</small></td>
+        <td><span class="status-done">✅ DPC-01 完了</span></td>
+        <td>CPI ¥300-500/件<br><small>CVR 5%→20%</small></td>
+      </tr>
+      <tr>
+        <td class="col-feature">APKプリダウンロード</td>
+        <td class="col-dt"><span class="icon-yes">✅</span><br><small>ファームウェアレベル</small></td>
+        <td class="col-gl"><span class="icon-no">✗</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>WorkManager (Wi-Fi/充電)</small></td>
+        <td><span class="status-done">✅ DPC-02 完了</span></td>
+        <td>表示成功率70%→98%</td>
+      </tr>
+      <tr>
+        <td class="col-feature">決定論的アトリビューション</td>
+        <td class="col-dt"><span class="icon-yes">✅</span><br><small>Ignite S2S確認</small></td>
+        <td class="col-gl"><span class="icon-no">✗</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>AppsFlyer / Adjust S2S</small></td>
+        <td><span class="status-done">✅ DPC-03/BKD-04 完了</span></td>
+        <td>CPI単価2〜3倍向上</td>
+      </tr>
+      <tr>
+        <td class="col-feature">間接アトリビューション (VTA)</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-part">△</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>24-168h窓 CPI50%</small></td>
+        <td><span class="status-done">✅ BKD-09 完了</span></td>
+        <td>インストール捕捉率+15%</td>
+      </tr>
+      <tr>
+        <td class="col-feature">ホーム画面ショートカット配置</td>
+        <td class="col-dt"><span class="icon-yes">✅</span><br><small>SingleTap</small></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>Device Owner サイレント更新</small></td>
+        <td><span class="status-done">✅ DPC-10 完了</span></td>
+        <td>Webクリップ収益</td>
+      </tr>
+
+      <!-- ── ロック画面 ── -->
+      <tr class="cat-header"><td colspan="6">🔒 ロック画面広告 / CPM</td></tr>
+      <tr>
+        <td class="col-feature">常駐フォアグラウンドサービス</td>
+        <td class="col-dt"><span class="icon-yes">✅</span><br><small>OEMレベル</small></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>OEMレベル</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>START_STICKY + BOOT</small></td>
+        <td><span class="status-done">✅ DPC-04 完了</span></td>
+        <td>広告配信の基盤</td>
+      </tr>
+      <tr>
+        <td class="col-feature">スクリーンオン→キャッシュ即表示</td>
+        <td class="col-dt"><span class="icon-no">✗</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>Glance主力機能</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>50ms以下 頻度上限3回/日</small></td>
+        <td><span class="status-done">✅ DPC-05 完了</span></td>
+        <td>CTR +20〜40%</td>
+      </tr>
+      <tr>
+        <td class="col-feature">コンテンツプリフェッチ</td>
+        <td class="col-dt"><span class="icon-no">✗</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>Two-Tower + TFLite</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>30分間隔 WorkManager</small></td>
+        <td><span class="status-done">✅ DPC-06 完了</span></td>
+        <td>表示成功率向上</td>
+      </tr>
+      <tr>
+        <td class="col-feature">KPI計測（滞留・解除・時間帯）</td>
+        <td class="col-dt"><span class="icon-part">△</span><br><small>非公開</small></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>詳細計測</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>dwell_ms・dismiss_type・hour</small></td>
+        <td><span class="status-done">✅ DPC-07 完了</span></td>
+        <td>プレミアム枠の価格根拠</td>
+      </tr>
+      <tr>
+        <td class="col-feature">時間帯プレミアム価格</td>
+        <td class="col-dt"><span class="icon-part">△</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>朝枠プレミアム</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>朝3倍 / 昼1.5倍 / 夜2倍</small></td>
+        <td><span class="status-done">✅ BKD-08 完了</span></td>
+        <td>CPM ¥500→¥3,000</td>
+      </tr>
+
+      <!-- ── 動画広告 ── -->
+      <tr class="cat-header"><td colspan="6">🎬 動画広告 / 高CPM在庫</td></tr>
+      <tr>
+        <td class="col-feature">動画広告プリキャッシュ</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>ExoPlayer 50MB LRU</small></td>
+        <td><span class="status-done">✅ DPC-09 完了</span></td>
+        <td rowspan="2">CPM ¥2,000〜5,000</td>
+      </tr>
+      <tr>
+        <td class="col-feature">VAST 3.0 四分位ビーコン</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>start/Q1/mid/Q3/complete/skip</small></td>
+        <td><span class="status-done">✅ BKD-05/DPC-09 完了</span></td>
+      </tr>
+
+      <!-- ── プログラマティック ── -->
+      <tr class="cat-header"><td colspan="6">📡 プログラマティック広告 / DSP連携</td></tr>
+      <tr>
+        <td class="col-feature">OpenRTB 2.5 DSP出稿（出）</td>
+        <td class="col-dt"><span class="icon-yes">✅</span><br><small>DT Exchange</small></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>InMobi DSP</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>asyncio fan-out 250ms</small></td>
+        <td><span class="status-done">✅ BKD-06 完了</span></td>
+        <td>空き枠+30%収益</td>
+      </tr>
+      <tr>
+        <td class="col-feature">IAB OM SDK Viewability</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>v1.4.12 impressionOccurred</small></td>
+        <td><span class="status-done">✅ ADT-01 完了</span></td>
+        <td>ブランド広告主接続</td>
+      </tr>
+      <tr>
+        <td class="col-feature">OpenRTB 2.5 SSPノード（受）</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-part">△</span><br><small>P2で実装予定</small></td>
+        <td><span class="status-p2">🔲 ADT-03 P2</span></td>
+        <td>エクスチェンジ手数料収入</td>
+      </tr>
+
+      <!-- ── ターゲティング/ML ── -->
+      <tr class="cat-header"><td colspan="6">🤖 ターゲティング / ML</td></tr>
+      <tr>
+        <td class="col-feature">デバイスプロファイル収集</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>キャリア/RAM/画面サイズ</small></td>
+        <td><span class="status-done">✅ DPC-08/BKD-07 完了</span></td>
+        <td>DSP入札率向上</td>
+      </tr>
+      <tr>
+        <td class="col-feature">ユーザー特徴量パイプライン</td>
+        <td class="col-dt"><span class="icon-part">△</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>Two-Tower入力</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>30日集計 CTR/滞留/時間帯</small></td>
+        <td><span class="status-done">✅ ML-01 完了</span></td>
+        <td>パーソナライズ基盤</td>
+      </tr>
+      <tr>
+        <td class="col-feature">Two-Tower推薦モデル（TFLite）</td>
+        <td class="col-dt"><span class="icon-part">△</span><br><small>独自ML</small></td>
+        <td class="col-gl"><span class="icon-yes">✅</span><br><small>TFLite端末推論</small></td>
+        <td class="col-us"><span class="icon-part">△</span><br><small>P2で実装予定</small></td>
+        <td><span class="status-p2">🔲 ML-02 P2</span></td>
+        <td>CTR 2〜5倍向上</td>
+      </tr>
+      <tr>
+        <td class="col-feature">行動コホートセグメント</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-part">△</span><br><small>P2で実装予定</small></td>
+        <td><span class="status-p2">🔲 ML-03 P2</span></td>
+        <td>DSP入札単価向上</td>
+      </tr>
+
+      <!-- ── iOS ── -->
+      <tr class="cat-header"><td colspan="6">🍎 iOS 対応</td></tr>
+      <tr>
+        <td class="col-feature">iOSウィジェット（WidgetKit）</td>
+        <td class="col-dt"><span class="icon-no">✗</span></td>
+        <td class="col-gl"><span class="icon-no">✗</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>ホーム画面 + ロック画面(iOS16+)</small></td>
+        <td><span class="status-done">✅ iOS-01 完了</span></td>
+        <td>iOS市場（日本50%）獲得</td>
+      </tr>
+      <tr>
+        <td class="col-feature">iOS MDM (NanoMDM + APNs)</td>
+        <td class="col-dt"><span class="icon-no">✗</span></td>
+        <td class="col-gl"><span class="icon-no">✗</span><br><small>SoftBankのみ</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>docker-compose + OTA更新</small></td>
+        <td><span class="status-done">✅ iOS-02 完了</span></td>
+        <td>iOS遠隔管理・OTA更新</td>
+      </tr>
+      <tr>
+        <td class="col-feature">App Clips（NFC/QR起動）</td>
+        <td class="col-dt"><span class="icon-no">✗</span></td>
+        <td class="col-gl"><span class="icon-no">✗</span></td>
+        <td class="col-us"><span class="icon-part">△</span><br><small>P2で実装予定</small></td>
+        <td><span class="status-p2">🔲 iOS-03 P2</span></td>
+        <td>エンロール率向上</td>
+      </tr>
+
+      <!-- ── 日本市場特化 ── -->
+      <tr class="cat-header"><td colspan="6">🇯🇵 日本市場特化（独自優位）</td></tr>
+      <tr>
+        <td class="col-feature">携帯代理店ネットワーク連携</td>
+        <td class="col-dt"><span class="icon-no">✗</span><br><small>日本キャリア関係なし</small></td>
+        <td class="col-gl"><span class="icon-no">✗</span><br><small>SoftBankのみ</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>全キャリア対応（店頭QR）</small></td>
+        <td><span class="status-adv">🏆 独自優位</span></td>
+        <td>エンロール獲得コスト最小化</td>
+      </tr>
+      <tr>
+        <td class="col-feature">エル投げ LINE自動化連携</td>
+        <td class="col-dt"><span class="icon-no">✗</span></td>
+        <td class="col-gl"><span class="icon-no">✗</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>Webhook→LINEステップ配信</small></td>
+        <td><span class="status-adv">🏆 独自優位</span></td>
+        <td>LTVリテンション向上</td>
+      </tr>
+      <tr>
+        <td class="col-feature">APPI完全準拠の同意UI</td>
+        <td class="col-dt"><span class="icon-no">✗</span><br><small>日本法対応弱い</small></td>
+        <td class="col-gl"><span class="icon-no">✗</span><br><small>不明確</small></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>6チェックボックス実装済み</small></td>
+        <td><span class="status-done">✅ 実装済み</span></td>
+        <td>法的リスク排除</td>
+      </tr>
+      <tr>
+        <td class="col-feature">広告主セルフサーブポータル</td>
+        <td class="col-dt"><span class="icon-yes">✅</span></td>
+        <td class="col-gl"><span class="icon-yes">✅</span></td>
+        <td class="col-us"><span class="icon-yes">✅</span><br><small>キャンペーンCRUD・動画四分位</small></td>
+        <td><span class="status-done">✅ BKD-10 完了</span></td>
+        <td>直販収益拡大</td>
+      </tr>
+
+    </tbody>
+  </table>
+</div>
+
+<!-- ── セクション2: 競合優位まとめ ── -->
+<div class="section">
+  <div class="section-title">競合優位ポジション</div>
+  <div class="advantage-grid">
+
+    <div class="adv-card">
+      <h3>⚡ Digital Turbine vs 我々</h3>
+      <ul>
+        <li><strong>勝ち：</strong>iOS完全対応（DTはAndroidのみ）</li>
+        <li><strong>勝ち：</strong>携帯代理店ネットワーク（全キャリア）</li>
+        <li><strong>勝ち：</strong>APPI/日本語対応</li>
+        <li><strong>勝ち：</strong>エル投げLINE自動化（DTにない）</li>
+        <li><strong>同等：</strong>サイレントインストール（Device Owner vs /priv-app）</li>
+        <li><strong>同等：</strong>決定論的アトリビューション（S2S共通）</li>
+        <li><strong>課題：</strong>DTはOEM組込みで永続性が高い</li>
+      </ul>
+    </div>
+
+    <div class="adv-card">
+      <h3>🌟 Glance vs 我々</h3>
+      <ul>
+        <li><strong>勝ち：</strong>iOS Widget対応（Glanceは非対応）</li>
+        <li><strong>勝ち：</strong>CPI収益源（Glanceはロック画面のみ）</li>
+        <li><strong>勝ち：</strong>全キャリア対応（Glanceは SoftBankのみ）</li>
+        <li><strong>勝ち：</strong>エル投げLINE自動化</li>
+        <li><strong>同等：</strong>ロック画面広告・プリフェッチ・時間帯プレミアム</li>
+        <li><strong>課題：</strong>Two-Tower推薦モデルはP2（ML-02）</li>
+        <li><strong>課題：</strong>コンテンツパートナー（Glanceはニュース/ゲーム充実）</li>
+      </ul>
+    </div>
+
+    <div class="adv-card">
+      <h3>🏆 我々だけの独自優位</h3>
+      <ul>
+        <li>携帯代理店ネットワーク × 店頭QRエンロール（取得コスト最小）</li>
+        <li>エル投げLINE自動化 × MDMエンロール（業界初の組み合わせ）</li>
+        <li>日本版Glance × Digital Turbine の統合モデル</li>
+        <li>全キャリア × 両OS（Android DPC + iOS MDM）同時対応</li>
+        <li>APPI完全準拠（競合2社は不明確、法的リスク高）</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── セクション3: 開発ロードマップ ── -->
+<div class="section">
+  <div class="section-title">開発ロードマップ</div>
+  <div class="roadmap-grid">
+
+    <div class="roadmap-card">
+      <div class="roadmap-header done">✅ 実装完了（P0）— 収益化前必須</div>
+      <div class="roadmap-body">
+        <div class="roadmap-item done-item"><span class="tag">DPC-01</span>サイレントAPKインストール（PackageInstaller.Session）</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-02</span>APKプリダウンロード（WorkManager Wi-Fi/充電時）</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-03</span>インストール確認レポート + CPI課金トリガー</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-04</span>常駐フォアグラウンドサービス（BOOT_COMPLETED対応）</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-05</span>スクリーンオン → キャッシュ即表示（50ms以下）</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-06</span>WorkManagerコンテンツプリフェッチ（30分間隔）</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-01</span>コンテンツプリフェッチAPI（eCPMランキング）</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-02</span>ロック画面KPIスキーマ + 収集API</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-03</span>CPI課金トリガー（install_events DB + 請求記録）</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-04</span>S2Sポストバック AppsFlyer / Adjust（リトライ付き）</div>
+      </div>
+    </div>
+
+    <div class="roadmap-card">
+      <div class="roadmap-header done">✅ 実装完了（P1）— 収益最大化</div>
+      <div class="roadmap-body">
+        <div class="roadmap-item done-item"><span class="tag">DPC-07</span>ロック画面KPI計測（滞留時間・解除タイプ・時間帯）</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-08</span>デバイスプロファイル収集（キャリア・RAM・画面サイズ）</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-09</span>動画広告プリキャッシュ + ExoPlayer（VAST 3.0）</div>
+        <div class="roadmap-item done-item"><span class="tag">DPC-10</span>ホーム画面ショートカット（Device Owner サイレント）</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-05</span>VAST 3.0エンドポイント + 動画イベント追跡</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-06</span>OpenRTB 2.5 DSP出稿（asyncio fan-out 250ms）</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-07〜09</span>デバイスプロファイルDB・プレミアム時間帯・VTA</div>
+        <div class="roadmap-item done-item"><span class="tag">BKD-10</span>広告主セルフサーブポータルAPI</div>
+        <div class="roadmap-item done-item"><span class="tag">ADT-01</span>IAB OM SDK Viewability（v1.4.12）</div>
+        <div class="roadmap-item done-item"><span class="tag">ML-01</span>ユーザー特徴量パイプライン（30日集計）</div>
+        <div class="roadmap-item done-item"><span class="tag">iOS-01</span>WidgetKit iOSアプリ（ホーム+ロック画面ウィジェット）</div>
+        <div class="roadmap-item done-item"><span class="tag">iOS-02</span>NanoMDM + docker-compose本番構成 + Nginx</div>
+      </div>
+    </div>
+
+    <div class="roadmap-card">
+      <div class="roadmap-header soon">🔲 今後の開発（P2）— 差別化強化</div>
+      <div class="roadmap-body">
+        <div class="roadmap-item p2-item"><span class="tag">ML-02</span>Two-Tower推薦モデル（TFLite端末推論）→ CTR 2〜5倍向上</div>
+        <div class="roadmap-item p2-item"><span class="tag">ML-03</span>行動コホートセグメント → DSP入札単価向上</div>
+        <div class="roadmap-item p2-item"><span class="tag">ADT-02</span>HTML5プレイアブル広告（WebView サンドボックス）→ CPM ¥3k〜8k</div>
+        <div class="roadmap-item p2-item"><span class="tag">ADT-03</span>OpenRTB 2.5 SSPノード（外部DSP受け入れ）→ エクスチェンジ手数料</div>
+        <div class="roadmap-item p2-item"><span class="tag">iOS-03</span>App Clips（NFC/QR起動）→ エンロール率向上</div>
+        <div class="roadmap-item p2-item"><span class="tag">BKD-11</span>代理店ポータル（QR管理・端末数・収益レポート）</div>
+        <div class="roadmap-item p2-item"><span class="tag">BKD-12</span>収益自動精算エンジン（CPI/CPM/月額 自動集計）</div>
+      </div>
+    </div>
+
+    <div class="roadmap-card">
+      <div class="roadmap-header unique">🏆 ヒューマンアクション（開発外）</div>
+      <div class="roadmap-body">
+        <div class="roadmap-item"><span class="tag" style="background:#fce7f3;color:#9d174d;">急ぎ</span>VPS契約 + ドメイン取得 → docker-compose up -d</div>
+        <div class="roadmap-item"><span class="tag" style="background:#fce7f3;color:#9d174d;">急ぎ</span>Android APKビルド・署名 → 代理店に配布</div>
+        <div class="roadmap-item"><span class="tag" style="background:#fce7f3;color:#9d174d;">急ぎ</span>Apple Developer Program（APNs MDM証明書, 年$99）</div>
+        <div class="roadmap-item"><span class="tag" style="background:#fef3c7;color:#92400e;">2〜4週</span>i-mobile DSP申請（OpenRTB接続審査）</div>
+        <div class="roadmap-item"><span class="tag" style="background:#fef3c7;color:#92400e;">随時</span>代理店実機テスト（店頭エンロールフローデモ）</div>
+        <div class="roadmap-item"><span class="tag" style="background:#fef3c7;color:#92400e;">随時</span>TestFlight登録 → iOSアプリ実機テスト</div>
+        <div class="roadmap-item"><span class="tag" style="background:#ede9fe;color:#5b21b6;">中長期</span>Yahoo Japan / LINE / 楽天 コンテンツパートナー交渉</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── セクション4: 収益インパクト ── -->
+<div class="section">
+  <div class="section-title">収益インパクト（1万台・月次）</div>
+  <table class="revenue-table">
+    <thead>
+      <tr>
+        <th>収益源</th>
+        <th>開発ステータス</th>
+        <th style="text-align:right">現在</th>
+        <th style="text-align:right">P0完了後</th>
+        <th style="text-align:right">P1完了後</th>
+        <th style="text-align:right">P2完了後</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ロック画面 朝プレミアム枠 (CPM×3)</td>
+        <td><span class="badge badge-done">✅ 完了</span></td>
+        <td class="num-right">¥10万</td>
+        <td class="num-right">¥30万</td>
+        <td class="num-right">¥60万</td>
+        <td class="num-right">¥80万</td>
+      </tr>
+      <tr>
+        <td>ロック画面 通常枠 (CPM ¥500→800)</td>
+        <td><span class="badge badge-done">✅ 完了</span></td>
+        <td class="num-right">¥30万</td>
+        <td class="num-right">¥35万</td>
+        <td class="num-right">¥48万</td>
+        <td class="num-right">¥55万</td>
+      </tr>
+      <tr>
+        <td>動画広告インタースティシャル</td>
+        <td><span class="badge badge-done">✅ 完了</span></td>
+        <td class="num-right">—</td>
+        <td class="num-right">—</td>
+        <td class="num-right">¥30万</td>
+        <td class="num-right">¥60万</td>
+      </tr>
+      <tr>
+        <td>CPI サイレントインストール</td>
+        <td><span class="badge badge-done">✅ 完了</span></td>
+        <td class="num-right">¥15万</td>
+        <td class="num-right">¥50万</td>
+        <td class="num-right">¥80〜200万</td>
+        <td class="num-right">¥150〜300万</td>
+      </tr>
+      <tr>
+        <td>OpenRTB DSP空き枠</td>
+        <td><span class="badge badge-done">✅ 完了</span></td>
+        <td class="num-right">—</td>
+        <td class="num-right">—</td>
+        <td class="num-right">+30%</td>
+        <td class="num-right">+40%</td>
+      </tr>
+      <tr>
+        <td>プレイアブル広告（HTML5）</td>
+        <td><span class="badge badge-p2">🔲 P2</span></td>
+        <td class="num-right">—</td>
+        <td class="num-right">—</td>
+        <td class="num-right">—</td>
+        <td class="num-right">¥30〜80万</td>
+      </tr>
+      <tr class="total-row">
+        <td colspan="2">合計（1万台あたり月収）</td>
+        <td class="num-right">¥55〜60万</td>
+        <td class="num-right">¥115〜120万</td>
+        <td class="num-right">¥280〜300万</td>
+        <td class="num-right">¥400〜600万</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="margin-top:14px;padding:16px 20px;background:white;border-radius:12px;font-size:0.83rem;color:#6b7280;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+    ※ 前提: 周波数キャップ3回/日 × 1万台 × 30日 = 90万インプレッション/月。CPI数値はCVR 15〜20%（P0完了後）で算出。P2のTwo-Tower(ML-02)によるCTR改善込みで+20〜40%の収益上乗せを想定。
+  </div>
+</div>
+
+<div class="footer">
+  SSP Platform 開発進捗レポート — 2026年3月17日<br>
+  Digital Turbine (Ignite / SingleTap / DT Exchange) + Glance (InMobi) 競合分析をベースに作成
+</div>
+
+</body>
+</html>
