@@ -166,6 +166,8 @@ class AffiliateCampaignDB(Base):
     vta_window_hours: Mapped[int] = mapped_column(Integer, default=24)  # 24 | 72 | 168
     vta_cpi_rate: Mapped[float] = mapped_column(Float, default=0.5)     # fraction of full CPI rate
     status: Mapped[str] = mapped_column(String(20), default="active")
+    # 担当代理店 ID（nullable: 直販キャンペーンは NULL）
+    agency_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agencies.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     clicks: Mapped[list["AffiliateClickDB"]] = relationship("AffiliateClickDB", back_populates="campaign")
@@ -593,6 +595,8 @@ class AgencyDB(Base):
     name          = Column(String(128), nullable=False)
     api_key       = Column(String(64), nullable=False, unique=True)
     contact_email = Column(String(256))
+    # 代理店ごとのテイクレート（0.0〜1.0）。精算時に使用。
+    take_rate     = Column(Float, nullable=False, default=0.175)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
 
 

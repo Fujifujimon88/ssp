@@ -1,5 +1,6 @@
 package com.platform.dpc
 
+import android.content.Context
 import android.util.Log
 import com.platform.dpc.BuildConfig
 import okhttp3.MediaType.Companion.toMediaType
@@ -36,19 +37,24 @@ object LockscreenKpiReporter {
     /**
      * KPIをサーバーへ非同期送信する。
      * バックグラウンドスレッド（IO コルーチン）から呼ぶこと。
+     *
+     * @param context アクティビティまたはサービスの Context。
+     *   SharedPrefs から当日の点灯回数を読み取るために使用。
+     *   アプリ再起動をまたいでも正確な値を返せる。
      */
     fun report(
         impressionId: String,
         deviceId: String,
         dwellTimeMs: Long,
         dismissType: String,
+        context: Context,
     ) {
         val calendar = java.util.Calendar.getInstance()
         val hourOfDay = calendar.get(java.util.Calendar.HOUR_OF_DAY)
         val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK) - 1  // 0=Sun
 
-        // 本日の点灯回数を取得
-        val screenOnCount = getScreenOnCountToday()
+        // 本日の点灯回数を取得（ScreenOnReceiver が書いた SharedPrefs から読む）
+        val screenOnCount = getScreenOnCountToday(context)
 
         val body = JSONObject().apply {
             put("impression_id",       impressionId)
@@ -74,15 +80,15 @@ object LockscreenKpiReporter {
         }
     }
 
-    // アプリ起動時にcontextを保持する簡易手段として Application クラス経由が望ましいが、
-    // ここでは ScreenOnReceiver が更新した SharedPrefs から読む
-    private fun getScreenOnCountToday(): Int {
-        // ScreenOnReceiver が "mdm_freq_cap" に count を書いている
-        // ただし、ここではApplication contextがないためstaticに保持
-        return currentScreenOnCount
+    /**
+     * ScreenOnReceiver が "mdm_freq_cap" SharedPrefs に書いた当日の点灯回数を返す。
+     * アプリ再起動後も正確な値を返せる。
+     */
+    private fun getScreenOnCountToday(context: Context): Int {
+        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+            .format(java.util.Date())
+        val prefs = context.getSharedPreferences("mdm_freq_cap", Context.MODE_PRIVATE)
+        val lastDate = prefs.getString("date", "")
+        return if (lastDate == today) prefs.getInt("count", 1) else 1
     }
-
-    /** ScreenOnReceiver から更新される点灯回数 */
-    @Volatile
-    var currentScreenOnCount: Int = 1
 }

@@ -113,8 +113,9 @@ class LockscreenActivity : Activity() {
         val impId = currentImpressionId ?: return
         val devId = currentDeviceId ?: return
         val dwell = android.os.SystemClock.elapsedRealtime() - displayStartMs
+        val ctx = this
         CoroutineScope(Dispatchers.IO).launch {
-            LockscreenKpiReporter.report(impId, devId, dwell, dismissType)
+            LockscreenKpiReporter.report(impId, devId, dwell, dismissType, ctx)
         }
     }
 

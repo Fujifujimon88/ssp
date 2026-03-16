@@ -4730,9 +4730,12 @@ async def _run_settlement(period_month: str, db: AsyncSession):
     """
     月次精算のコアロジック。
     各キャンペーンのCPI+CPM+動画を集計してInvoiceを生成する。
+    take_rate は担当代理店の設定値を使用（代理店なしの場合はデフォルト 17.5%）。
     """
-    from db_models import AffiliateCampaignDB, InstallEventDB, InvoiceDB
+    from db_models import AffiliateCampaignDB, AgencyDB, InstallEventDB, InvoiceDB
     from sqlalchemy import extract
+
+    DEFAULT_TAKE_RATE = 0.175
 
     year, month = period_month.split("-")
     year, month = int(year), int(month)
@@ -4775,7 +4778,14 @@ async def _run_settlement(period_month: str, db: AsyncSession):
         if gross == 0:
             continue
 
-        take_rate    = 0.175
+        # 担当代理店の take_rate を使用。未設定の場合はデフォルト値にフォールバック。
+        agency_take_rate = DEFAULT_TAKE_RATE
+        if getattr(campaign, "agency_id", None):
+            agency = await db.get(AgencyDB, campaign.agency_id)
+            if agency is not None:
+                agency_take_rate = agency.take_rate
+
+        take_rate    = agency_take_rate
         platform_fee = int(gross * take_rate)
         net_payable  = gross - platform_fee
 
@@ -4794,6 +4804,7 @@ async def _run_settlement(period_month: str, db: AsyncSession):
         invoice = InvoiceDB(
             period_month=period_month,
             campaign_id=campaign.id,
+            agency_id=getattr(campaign, "agency_id", None),
             gross_revenue_jpy=gross,
             take_rate=take_rate,
             platform_fee_jpy=platform_fee,
