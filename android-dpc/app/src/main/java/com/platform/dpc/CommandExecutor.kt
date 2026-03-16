@@ -129,13 +129,25 @@ object CommandExecutor {
     // ── ロック画面コンテンツ更新 ─────────────────────────────
 
     private fun updateLockscreen(context: Context, cmd: MdmCommand): Boolean {
+        val title        = cmd.payload.optString("title")
+        val ctaUrl       = cmd.payload.optString("cta_url")
+        val impressionId = cmd.payload.optString("impression_id").ifEmpty { null }
+
         val prefs = context.getSharedPreferences("mdm_lockscreen", Context.MODE_PRIVATE)
         prefs.edit()
-            .putString("title",   cmd.payload.optString("title"))
-            .putString("cta_url", cmd.payload.optString("cta_url"))
-            .putString("updated_at", System.currentTimeMillis().toString())
+            .putString("title",        title)
+            .putString("cta_url",      ctaUrl)
+            .putString("updated_at",   System.currentTimeMillis().toString())
+            .apply {
+                if (impressionId != null) putString("impression_id", impressionId)
+                else remove("impression_id")
+            }
             .apply()
-        Log.i(TAG, "Lockscreen content updated")
+
+        Log.i(TAG, "Lockscreen content updated | impression=$impressionId")
+
+        // ロック画面広告アクティビティを起動（ユーザーは同意済み）
+        LockscreenActivity.launch(context)
         return true
     }
 

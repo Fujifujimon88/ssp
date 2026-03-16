@@ -1128,7 +1128,11 @@ async def lockscreen_content(
         device_id=device_id, enrollment_token=token, platform="android",
     )
     if content:
-        return {"content": content}
+        # impression_id をトップレベルに露出してDPCがクリック報告に使えるようにする
+        return {
+            "impression_id": content.get("impression_id"),
+            "content": content,
+        }
 
     # フォールバック: クリエイティブ未登録時は案件直接返却
     result = await db.execute(
@@ -1141,13 +1145,14 @@ async def lockscreen_content(
     import random
     campaign = random.choice(campaigns)
     return {
+        "impression_id": None,
         "content": {
             "campaign_id": campaign.id,
             "type": "text",
             "title": campaign.name,
             "click_url": build_tracked_url(campaign.id, device_id or "anonymous"),
             "category": campaign.category,
-        }
+        },
     }
 
 
@@ -1283,7 +1288,8 @@ async def admin_android_push(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_admin_key),
 ):
-    """管理画面からAndroidデバイスにコマンドをキューイングし、FCMで通知する"""
+    """管理画面からAndroidデバイスにコマンドをキューイングし、FCMで通知する。
+    update_lockscreen の場合はクリエイティブ選択 + impression_id を自動注入する。"""
     # デバイス確認
     device = await db.scalar(
         select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == body.device_id)
@@ -1291,7 +1297,20 @@ async def admin_android_push(
     if not device:
         raise HTTPException(status_code=404, detail="Android device not found")
 
-    cmd = await enqueue_command(db, body.device_id, body.command_type, body.payload)
+    payload = dict(body.payload)
+
+    # update_lockscreen: クリエイティブ選択して impression_id を自動注入
+    if body.command_type == "update_lockscreen" and "impression_id" not in payload:
+        creative = await select_creative(
+            db, slot_type="lockscreen",
+            device_id=body.device_id, platform="android",
+        )
+        if creative:
+            payload.setdefault("title", creative.get("title", ""))
+            payload.setdefault("cta_url", creative.get("click_url", ""))
+            payload["impression_id"] = creative.get("impression_id")
+
+    cmd = await enqueue_command(db, body.device_id, body.command_type, payload)
 
     fcm_sent = False
     if body.send_fcm and device.fcm_token:

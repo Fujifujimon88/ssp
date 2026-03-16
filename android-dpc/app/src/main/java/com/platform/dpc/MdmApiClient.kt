@@ -135,6 +135,44 @@ object MdmApiClient {
             null
         }
     }
+
+    // ── インプレッション・クリック報告 ────────────────────────────
+
+    /**
+     * ロック画面広告のCTAボタンタップをサーバーへ報告する。
+     * バックグラウンドスレッド（IO コルーチン）から呼ぶこと。
+     */
+    fun reportClick(impressionId: String): Boolean {
+        val body = JSONObject().apply { put("impression_id", impressionId) }
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/mdm/impression/click")
+                .post(body.toString().toRequestBody(JSON_TYPE))
+                .build()
+            http.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            android.util.Log.w("MdmApiClient", "reportClick failed: $e")
+            false
+        }
+    }
+
+    /**
+     * ロック画面コンテンツを取得する。
+     * impression_id を含むレスポンス全体を返す（CTR計測用）。
+     */
+    fun fetchLockscreenAd(deviceId: String, enrollmentToken: String?): JSONObject? {
+        return try {
+            var url = "$serverUrl/mdm/android/lockscreen/content?device_id=$deviceId"
+            if (enrollmentToken != null) url += "&enrollment_token=$enrollmentToken"
+            val request = Request.Builder().url(url).get().build()
+            val response = http.newCall(request).execute()
+            if (!response.isSuccessful) return null
+            JSONObject(response.body!!.string())
+        } catch (e: Exception) {
+            android.util.Log.w("MdmApiClient", "fetchLockscreenAd failed: $e")
+            null
+        }
+    }
 }
 
 /** サーバーから受け取るMDMコマンド */
