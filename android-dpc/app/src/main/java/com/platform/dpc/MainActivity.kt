@@ -1,12 +1,15 @@
 package com.platform.dpc
 
+import android.app.ActivityManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.StatFs
 import android.provider.Settings
+import android.telephony.TelephonyManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -107,6 +110,9 @@ class MainActivity : AppCompatActivity() {
             binding.tvStatus.text = "登録済み ✓"
             appendLog("サーバー登録済み")
         }
+
+        // DPC-08: デバイスプロファイル送信（毎起動時）
+        sendDeviceProfile()
     }
 
     private fun registerToServer() {
@@ -144,6 +150,31 @@ class MainActivity : AppCompatActivity() {
         appendLog("コマンド確認中...")
         CommandPoller.runNow(this)
         appendLog("WorkManager ジョブをキューに追加しました")
+    }
+
+    // DPC-08: デバイスプロファイルをバックグラウンドで送信
+    private fun sendDeviceProfile() {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val tm = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                val memInfo = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+                val stat = StatFs(android.os.Environment.getDataDirectory().path)
+
+                MdmApiClient.sendDeviceProfile(
+                    deviceId      = deviceId,
+                    manufacturer  = Build.MANUFACTURER,
+                    model         = Build.MODEL,
+                    osVersion     = Build.VERSION.RELEASE,
+                    carrier       = tm.networkOperatorName.ifEmpty { null },
+                    mccMnc        = tm.networkOperator.ifEmpty { null },
+                    screenWidth   = resources.displayMetrics.widthPixels,
+                    screenHeight  = resources.displayMetrics.heightPixels,
+                    ramGb         = (memInfo.totalMem / 1024 / 1024 / 1024).toInt(),
+                    storageFreeMb = stat.availableBytes / 1024 / 1024,
+                )
+            }
+        }
     }
 
     private fun appendLog(message: String) {

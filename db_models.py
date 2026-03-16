@@ -163,6 +163,8 @@ class AffiliateCampaignDB(Base):
     adjust_event_token: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     advertising_id_field: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     gtm_container_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    vta_window_hours: Mapped[int] = mapped_column(Integer, default=24)  # 24 | 72 | 168
+    vta_cpi_rate: Mapped[float] = mapped_column(Float, default=0.5)     # fraction of full CPI rate
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -315,6 +317,10 @@ class CreativeDB(Base):
     click_url: Mapped[str] = mapped_column(String(500))             # クリック先URL
     width: Mapped[int] = mapped_column(Integer, nullable=True)       # px
     height: Mapped[int] = mapped_column(Integer, nullable=True)      # px
+    video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    video_duration_sec: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    skip_after_sec: Mapped[int] = mapped_column(Integer, default=5)
+    creative_type: Mapped[str] = mapped_column(String(20), default="banner")  # banner | video | html5
     status: Mapped[str] = mapped_column(String(20), default="active")
     # active / paused / rejected
     created_at: Mapped[datetime] = mapped_column(
@@ -379,6 +385,7 @@ class MdmImpressionDB(Base):
     cpm_price: Mapped[float] = mapped_column(Float, default=0.0)
     clicked: Mapped[bool] = mapped_column(Boolean, default=False)
     clicked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    video_event: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # start|q1|midpoint|q3|complete|skip
     served_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
@@ -424,6 +431,8 @@ class InstallEventDB(Base):
     postback_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | success | failed
     postback_attempts: Mapped[int] = mapped_column(Integer, default=0)
     cpi_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    attribution_type: Mapped[str] = mapped_column(String(20), default="click")  # click | view_through
+    vta_impression_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -438,3 +447,121 @@ class PostbackLogDB(Base):
     response_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     success: Mapped[bool] = mapped_column(Boolean, default=False)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+# ── デバイスプロファイル ──────────────────────────────────────
+
+
+class DeviceProfileDB(Base):
+    """デバイスメタデータストア（BKD-07）"""
+    __tablename__ = "device_profiles"
+
+    device_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    manufacturer: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    os_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    carrier: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    mcc_mnc: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    region: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    screen_width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    screen_height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ram_gb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    storage_free_mb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+# ── タイムスロット価格乗数 ────────────────────────────────────
+
+
+class TimeSlotMultiplierDB(Base):
+    """時間帯別eCPM乗数定義（BKD-08）"""
+    __tablename__ = "time_slot_multipliers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    hour_start: Mapped[int] = mapped_column(Integer)          # 0-23
+    hour_end: Mapped[int] = mapped_column(Integer)            # 0-23 inclusive
+    day_of_week: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 0=Mon, 6=Sun, None=all
+    multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    label: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)    # e.g. "朝プレミアム"
+
+
+# ── DSP接続設定・落札ログ（BKD-06） ──────────────────────────────
+
+
+class DspConfigDB(Base):
+    """
+    アウトバウンドDSP接続設定（OpenRTB 2.5）
+
+    active=False の間はbid requestを送信しない（申請完了後にTrueへ変更）。
+    take_rate: プラットフォームの取り分（0.15 = 15%）
+    """
+    __tablename__ = "dsp_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    endpoint_url: Mapped[str] = mapped_column(String(500))
+    timeout_ms: Mapped[int] = mapped_column(Integer, default=200)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    take_rate: Mapped[float] = mapped_column(Float, default=0.15)  # 15%
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class DspWinLogDB(Base):
+    """
+    DSP落札ログ（収益記録・レポート用）
+
+    platform_revenue_jpy: clearing_price_usd × (1 - take_rate) × 150 JPY/USD
+    """
+    __tablename__ = "dsp_win_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    impression_id: Mapped[str] = mapped_column(String(36), index=True)
+    dsp_name: Mapped[str] = mapped_column(String(100), index=True)
+    bid_price_usd: Mapped[float] = mapped_column(Float)
+    clearing_price_usd: Mapped[float] = mapped_column(Float)
+    platform_revenue_jpy: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
+
+# ── ML 特徴量テーブル（ML-01） ──────────────────────────────────
+
+
+class UserFeatureDB(Base):
+    """
+    デバイス単位のML特徴量スナップショット（ML-01）
+
+    毎日02:00 JSTのバッチ処理で過去30日分のmdm_impressionsを集計してupsert。
+    プライバシー: device_idは疑似匿名UUID。PII（氏名・電話・メール）は含まない。
+    APPI準拠: consent_given=Trueのデバイスのみ対象。
+    """
+    __tablename__ = "user_features"
+
+    device_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    # 過去30日のimpression集計
+    impression_count_30d: Mapped[int] = mapped_column(Integer, default=0)
+    click_count_30d: Mapped[int] = mapped_column(Integer, default=0)
+    ctr_30d: Mapped[float] = mapped_column(Float, default=0.0)
+    avg_dwell_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # CTRが最も高い時間帯（0-23）
+    preferred_hour: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # 最頻出のdismissタイプ
+    dominant_dismiss_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # デバイスプロファイルスナップショット
+    carrier: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    region: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    feature_version: Mapped[int] = mapped_column(Integer, default=1)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )

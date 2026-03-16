@@ -9,9 +9,10 @@
 import json
 import logging
 import random
+import time
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_models import (
@@ -21,6 +22,7 @@ from db_models import (
     DeviceDB,
     MdmAdSlotDB,
     MdmImpressionDB,
+    TimeSlotMultiplierDB,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,57 @@ logger = logging.getLogger(__name__)
 FREQ_CAP_DAILY = 3
 
 DEFAULT_CTR = 0.03  # コールドスタート: 3%
+
+# ── タイムスロット乗数キャッシュ（5分TTL） ───────────────────
+_TS_CACHE_TTL = 300  # seconds
+# key: (hour, dow) → (multiplier: float, expires_at: float)
+_ts_cache: dict[tuple[int, int], tuple[float, float]] = {}
+
+
+async def get_time_slot_multiplier(hour: int, dow: int, db: AsyncSession) -> float:
+    """
+    指定した時刻・曜日に一致するタイムスロット乗数を返す。
+    一致するレコードがなければ 1.0 を返す。
+    結果は 5 分間モジュールレベルでキャッシュする。
+
+    Args:
+        hour: 0-23
+        dow:  0=月曜 .. 6=日曜
+        db:   AsyncSession
+
+    Returns:
+        multiplier (float), デフォルト 1.0
+    """
+    cache_key = (hour, dow)
+    now = time.monotonic()
+    cached = _ts_cache.get(cache_key)
+    if cached is not None:
+        multiplier, expires_at = cached
+        if now < expires_at:
+            return multiplier
+
+    # day_of_week が NULL（全曜日） または dow と一致する行を検索
+    # 複数ヒット時は最も具体的な（day_of_week IS NOT NULL）行を優先する
+    row = await db.scalar(
+        select(TimeSlotMultiplierDB)
+        .where(
+            TimeSlotMultiplierDB.hour_start <= hour,
+            TimeSlotMultiplierDB.hour_end >= hour,
+            or_(
+                TimeSlotMultiplierDB.day_of_week == dow,
+                TimeSlotMultiplierDB.day_of_week.is_(None),
+            ),
+        )
+        .order_by(
+            # day_of_week IS NOT NULL → 0 (優先), IS NULL → 1 (フォールバック)
+            TimeSlotMultiplierDB.day_of_week.is_(None),
+        )
+        .limit(1)
+    )
+
+    multiplier = row.multiplier if row else 1.0
+    _ts_cache[cache_key] = (multiplier, now + _TS_CACHE_TTL)
+    return multiplier
 
 
 async def _get_creative_ctrs(
@@ -75,6 +128,7 @@ async def select_creative(
     device_id: str | None = None,
     enrollment_token: str | None = None,
     platform: str = "android",
+    hour: int = -1,
 ) -> dict | None:
     """
     指定スロットタイプに最適なクリエイティブを選択してインプレッションを記録する。
@@ -84,6 +138,7 @@ async def select_creative(
         device_id:        Android ID（ターゲティング用）
         enrollment_token: エンロールトークン（dealer_id取得用）
         platform:         "android" / "ios"
+        hour:             0-23 の時刻。-1 の場合はタイムスロット乗数を適用しない。
 
     Returns:
         クリエイティブ情報の dict、または None（配信可能なものなし）
@@ -187,10 +242,22 @@ async def select_creative(
     creative_ids = [r[0].id for r in candidates]
     ctrs = await _get_creative_ctrs(db, creative_ids, slot_type)
 
+    # タイムスロット乗数の取得（hour >= 0 のときのみ）
+    ts_multiplier = 1.0
+    if hour >= 0:
+        dow = datetime.now(timezone.utc).weekday()
+        ts_multiplier = await get_time_slot_multiplier(hour, dow, db)
+        if ts_multiplier != 1.0:
+            logger.info(
+                f"MDM time-slot multiplier applied | slot={slot_type} "
+                f"| hour={hour} | dow={dow} | multiplier={ts_multiplier}"
+            )
+
     def ecpm(row) -> float:
         creative, campaign = row
         ctr = ctrs.get(creative.id, DEFAULT_CTR)
-        return campaign.reward_amount * ctr * 1000
+        base = campaign.reward_amount * ctr * 1000
+        return base * ts_multiplier
 
     candidates.sort(key=ecpm, reverse=True)
     creative, campaign = candidates[0]

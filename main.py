@@ -55,10 +55,6 @@ auction_engine = AuctionEngine()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # DBテーブル作成（開発用。本番はAlembicマイグレーションを使う）
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     # DSP登録（開発: モックDSP / 本番: HttpDSPに差し替え）
     for dsp in create_mock_dsps():
         auction_engine.register_dsp(dsp.dsp_id, dsp)

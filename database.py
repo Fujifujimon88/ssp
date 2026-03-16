@@ -9,8 +9,8 @@ _is_sqlite = settings.database_url.startswith("sqlite")
 
 engine = create_async_engine(
     settings.database_url,
-    **({} if _is_sqlite else {"pool_size": 10, "max_overflow": 20}),
-    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    **({} if _is_sqlite else {"pool_size": 5, "max_overflow": 0, "pool_pre_ping": True}),
+    connect_args={"check_same_thread": False} if _is_sqlite else {"ssl": "require"},
     echo=(settings.app_env == "development"),
 )
 

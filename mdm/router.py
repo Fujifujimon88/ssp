@@ -9,6 +9,14 @@
   GET  /mdm/admin/dealers       ← 代理店一覧（管理者）
   POST /mdm/admin/campaigns     ← キャンペーン作成（管理者）
   GET  /mdm/admin/stats         ← MDM KPI（管理者）
+
+BKD-10: Advertiser Self-Serve Portal API
+  POST /mdm/advertiser/campaigns                        ← 広告主キャンペーン作成
+  GET  /mdm/advertiser/campaigns                        ← 広告主キャンペーン一覧（統計付き）
+  GET  /mdm/advertiser/campaigns/{id}/report            ← キャンペーン詳細レポート
+  POST /mdm/advertiser/campaigns/{id}/creative          ← クリエイティブ追加
+  GET  /mdm/advertiser/campaigns/{id}/creatives         ← クリエイティブ一覧（統計付き）
+  PUT  /mdm/advertiser/campaigns/{id}/status            ← ステータス変更（pause/resume）
 """
 import json
 import logging
@@ -31,10 +39,14 @@ from db_models import (
     AffiliateCampaignDB, AffiliateClickDB, AffiliateConversionDB,
     AndroidCommandDB, AndroidDeviceDB,
     CampaignDB, ConsentLogDB, CreativeDB, DealerDB, DeviceDB,
+    DeviceProfileDB,
+    DspConfigDB, DspWinLogDB,
     InstallEventDB,
-    MDMCommandDB, MdmAdSlotDB, MdmImpressionDB, iOSDeviceDB,
+    MDMCommandDB, MdmAdSlotDB, MdmImpressionDB, TimeSlotMultiplierDB, UserFeatureDB, iOSDeviceDB,
 )
-from mdm.measurement.postback import trigger_postbacks
+from mdm.ml.features import compute_user_features
+from mdm.dsp import rtb_client
+from mdm.measurement.postback import check_vta, trigger_postbacks
 from mdm.creative.selector import record_click, select_creative
 from mdm.affiliate.billing import (
     calculate_monthly_revenue, get_all_dealers_report, get_dealer_monthly_report,
@@ -990,6 +1002,416 @@ async def list_affiliate_campaigns(
     return [{"id": c.id, "name": c.name, "category": c.category, "reward_type": c.reward_type, "reward_amount": c.reward_amount} for c in campaigns]
 
 
+# ── BKD-10: Advertiser Self-Serve Portal API ──────────────────
+# TODO: add per-advertiser API key auth for production
+
+
+class AdvertiserCampaignCreate(BaseModel):
+    name: str
+    budget_jpy: float
+    cpi_rate_jpy: float              # CPI単価（円）
+    cpm_rate_jpy: float = 0.0        # CPM単価（円、0=CPIのみ）
+    targeting_carrier: Optional[str] = None   # e.g. "44010" (MCC-MNC)
+    targeting_os_min: Optional[str] = None    # e.g. "10"
+    targeting_region: Optional[str] = None    # e.g. "JP-13"
+    appsflyer_dev_key: Optional[str] = None
+    adjust_app_token: Optional[str] = None
+    adjust_event_token: Optional[str] = None
+    vta_window_hours: int = 24
+    status: str = "active"
+
+
+class AdvertiserCreativeUpload(BaseModel):
+    title: str
+    cta_url: str
+    creative_type: str = "banner"    # banner | video | html5
+    image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    video_duration_sec: Optional[int] = None
+    reward_amount: float             # CPM/CPI bid price in JPY
+
+
+def _pack_advertiser_meta(body: AdvertiserCampaignCreate) -> str:
+    """追加フィールドを advertising_id_field にJSON格納（既存DB列を再利用）"""
+    return json.dumps({
+        "budget_jpy": body.budget_jpy,
+        "cpm_rate_jpy": body.cpm_rate_jpy,
+        "targeting_carrier": body.targeting_carrier,
+        "targeting_os_min": body.targeting_os_min,
+        "targeting_region": body.targeting_region,
+    })
+
+
+def _unpack_advertiser_meta(raw: Optional[str]) -> dict:
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+@router.post("/advertiser/campaigns", summary="広告主キャンペーン作成（BKD-10）")
+async def create_advertiser_campaign(
+    body: AdvertiserCampaignCreate,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_admin_key),
+):
+    """
+    広告主セルフサーブポータル — キャンペーン作成。
+    AffiliateCampaignDB を作成し、デフォルトのロック画面広告枠 MdmAdSlotDB も同時に作成する。
+    budget_jpy / cpm_rate_jpy / targeting_* は advertising_id_field に JSON で格納。
+    """
+    campaign = AffiliateCampaignDB(
+        name=body.name,
+        category="app",
+        destination_url="",          # クリエイティブ追加時に上書き想定
+        reward_type="cpi",
+        reward_amount=body.cpi_rate_jpy,
+        appsflyer_dev_key=body.appsflyer_dev_key,
+        adjust_app_token=body.adjust_app_token,
+        adjust_event_token=body.adjust_event_token,
+        vta_window_hours=body.vta_window_hours,
+        advertising_id_field=_pack_advertiser_meta(body),
+        status=body.status,
+    )
+    db.add(campaign)
+    await db.flush()  # campaign.id を確定させる
+
+    # デフォルトのロック画面広告枠を作成
+    slot = MdmAdSlotDB(
+        name=f"{body.name} — lockscreen default",
+        slot_type="lockscreen",
+        floor_price_cpm=body.cpm_rate_jpy if body.cpm_rate_jpy > 0 else body.cpi_rate_jpy,
+        targeting_json=json.dumps({
+            "carrier": body.targeting_carrier,
+            "os_min": body.targeting_os_min,
+            "region": body.targeting_region,
+        }),
+        status="active",
+    )
+    db.add(slot)
+    await db.commit()
+    await db.refresh(campaign)
+
+    meta = _unpack_advertiser_meta(campaign.advertising_id_field)
+    return {
+        "id": campaign.id,
+        "name": campaign.name,
+        "status": campaign.status,
+        "cpi_rate_jpy": campaign.reward_amount,
+        "cpm_rate_jpy": meta.get("cpm_rate_jpy", 0.0),
+        "budget_jpy": meta.get("budget_jpy", 0.0),
+        "slot_id": slot.id,
+        "created_at": campaign.created_at.isoformat(),
+    }
+
+
+@router.get("/advertiser/campaigns", summary="広告主キャンペーン一覧（BKD-10）")
+async def list_advertiser_campaigns(
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_admin_key),
+):
+    """
+    全キャンペーン一覧。インプレッション数・クリック数・インストール数・消化金額・残予算を付与。
+    """
+    rows = await db.execute(
+        select(AffiliateCampaignDB).order_by(AffiliateCampaignDB.created_at.desc())
+    )
+    campaigns = rows.scalars().all()
+
+    results = []
+    for c in campaigns:
+        meta = _unpack_advertiser_meta(c.advertising_id_field)
+        budget_jpy = meta.get("budget_jpy", 0.0)
+
+        imp_count = await db.scalar(
+            select(func.count(MdmImpressionDB.id))
+            .join(CreativeDB, MdmImpressionDB.creative_id == CreativeDB.id)
+            .where(CreativeDB.campaign_id == c.id)
+        ) or 0
+
+        click_count = await db.scalar(
+            select(func.count(MdmImpressionDB.id))
+            .join(CreativeDB, MdmImpressionDB.creative_id == CreativeDB.id)
+            .where(CreativeDB.campaign_id == c.id)
+            .where(MdmImpressionDB.clicked == True)
+        ) or 0
+
+        install_count = await db.scalar(
+            select(func.count(InstallEventDB.id)).where(InstallEventDB.campaign_id == c.id)
+        ) or 0
+
+        spend_jpy = await db.scalar(
+            select(func.sum(InstallEventDB.cpi_amount)).where(InstallEventDB.campaign_id == c.id)
+        ) or 0.0
+
+        results.append({
+            "id": c.id,
+            "name": c.name,
+            "status": c.status,
+            "cpi_rate_jpy": c.reward_amount,
+            "cpm_rate_jpy": meta.get("cpm_rate_jpy", 0.0),
+            "budget_jpy": budget_jpy,
+            "impression_count": imp_count,
+            "click_count": click_count,
+            "install_count": install_count,
+            "spend_jpy": round(spend_jpy, 2),
+            "remaining_budget_jpy": round(max(0.0, budget_jpy - spend_jpy), 2),
+            "created_at": c.created_at.isoformat(),
+        })
+    return results
+
+
+@router.get("/advertiser/campaigns/{campaign_id}/report", summary="広告主キャンペーン詳細レポート（BKD-10）")
+async def get_advertiser_campaign_report(
+    campaign_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_admin_key),
+):
+    """
+    キャンペーン詳細レポート。
+    - インプレッション（合計・直近7日間日別）
+    - クリック（合計・CTR）
+    - インストール（合計・CVR・帰属タイプ別）
+    - 消化金額・残予算
+    - 動画完了クォータイル（動画クリエイティブのみ）
+    """
+    campaign = await db.get(AffiliateCampaignDB, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    meta = _unpack_advertiser_meta(campaign.advertising_id_field)
+    budget_jpy = meta.get("budget_jpy", 0.0)
+
+    # ── インプレッション合計 ──
+    total_impressions = await db.scalar(
+        select(func.count(MdmImpressionDB.id))
+        .join(CreativeDB, MdmImpressionDB.creative_id == CreativeDB.id)
+        .where(CreativeDB.campaign_id == campaign_id)
+    ) or 0
+
+    # ── 直近7日間の日別インプレッション ──
+    daily_rows = await db.execute(
+        select(
+            func.date(MdmImpressionDB.created_at).label("day"),
+            func.count(MdmImpressionDB.id).label("count"),
+        )
+        .join(CreativeDB, MdmImpressionDB.creative_id == CreativeDB.id)
+        .where(CreativeDB.campaign_id == campaign_id)
+        .group_by(func.date(MdmImpressionDB.created_at))
+        .order_by(func.date(MdmImpressionDB.created_at).desc())
+        .limit(7)
+    )
+    impressions_by_day = [
+        {"date": str(row.day), "count": row.count}
+        for row in daily_rows.all()
+    ]
+
+    # ── クリック合計 ──
+    total_clicks = await db.scalar(
+        select(func.count(MdmImpressionDB.id))
+        .join(CreativeDB, MdmImpressionDB.creative_id == CreativeDB.id)
+        .where(CreativeDB.campaign_id == campaign_id)
+        .where(MdmImpressionDB.clicked == True)
+    ) or 0
+
+    ctr = round(total_clicks / total_impressions * 100, 2) if total_impressions > 0 else 0.0
+
+    # ── インストール合計・帰属タイプ別 ──
+    total_installs = await db.scalar(
+        select(func.count(InstallEventDB.id)).where(InstallEventDB.campaign_id == campaign_id)
+    ) or 0
+
+    cvr = round(total_installs / total_clicks * 100, 2) if total_clicks > 0 else 0.0
+
+    attr_rows = await db.execute(
+        select(InstallEventDB.attribution_type, func.count(InstallEventDB.id).label("count"))
+        .where(InstallEventDB.campaign_id == campaign_id)
+        .group_by(InstallEventDB.attribution_type)
+    )
+    installs_by_attribution = {row.attribution_type: row.count for row in attr_rows.all()}
+
+    # ── 消化金額 ──
+    spend_jpy = await db.scalar(
+        select(func.sum(InstallEventDB.cpi_amount)).where(InstallEventDB.campaign_id == campaign_id)
+    ) or 0.0
+
+    # ── 動画クォータイル（video_event が NULL でない行のみ集計） ──
+    video_rows = await db.execute(
+        select(MdmImpressionDB.video_event, func.count(MdmImpressionDB.id).label("count"))
+        .join(CreativeDB, MdmImpressionDB.creative_id == CreativeDB.id)
+        .where(CreativeDB.campaign_id == campaign_id)
+        .where(MdmImpressionDB.video_event.isnot(None))
+        .group_by(MdmImpressionDB.video_event)
+    )
+    video_completions = {row.video_event: row.count for row in video_rows.all()}
+
+    return {
+        "campaign_id": campaign_id,
+        "name": campaign.name,
+        "status": campaign.status,
+        "cpi_rate_jpy": campaign.reward_amount,
+        "cpm_rate_jpy": meta.get("cpm_rate_jpy", 0.0),
+        "budget_jpy": budget_jpy,
+        "spend_jpy": round(spend_jpy, 2),
+        "remaining_budget_jpy": round(max(0.0, budget_jpy - spend_jpy), 2),
+        "impressions": {
+            "total": total_impressions,
+            "by_day_last_7": impressions_by_day,
+        },
+        "clicks": {
+            "total": total_clicks,
+            "ctr_pct": ctr,
+        },
+        "installs": {
+            "total": total_installs,
+            "cvr_pct": cvr,
+            "by_attribution_type": installs_by_attribution,
+        },
+        "video_completions": video_completions,
+    }
+
+
+@router.post("/advertiser/campaigns/{campaign_id}/creative", summary="広告主クリエイティブ追加（BKD-10）")
+async def add_advertiser_creative(
+    campaign_id: str,
+    body: AdvertiserCreativeUpload,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_admin_key),
+):
+    """
+    クリエイティブをキャンペーンに追加。
+    - banner: image_url または title が必須
+    - video: video_url が必須
+    - html5: title が必須
+    """
+    campaign = await db.get(AffiliateCampaignDB, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    # バリデーション
+    if body.creative_type == "video" and not body.video_url:
+        raise HTTPException(status_code=422, detail="video_url is required for video creatives")
+    if body.creative_type == "banner" and not body.image_url and not body.title:
+        raise HTTPException(status_code=422, detail="image_url or title is required for banner creatives")
+
+    creative = CreativeDB(
+        campaign_id=campaign_id,
+        name=body.title,
+        type=body.creative_type,
+        creative_type=body.creative_type,
+        title=body.title,
+        click_url=body.cta_url,
+        image_url=body.image_url,
+        video_url=body.video_url,
+        video_duration_sec=body.video_duration_sec,
+        status="active",
+    )
+    db.add(creative)
+    await db.commit()
+    await db.refresh(creative)
+
+    return {
+        "id": creative.id,
+        "campaign_id": campaign_id,
+        "title": creative.title,
+        "creative_type": creative.creative_type,
+        "click_url": creative.click_url,
+        "image_url": creative.image_url,
+        "video_url": creative.video_url,
+        "video_duration_sec": creative.video_duration_sec,
+        "status": creative.status,
+        "created_at": creative.created_at.isoformat(),
+    }
+
+
+@router.get("/advertiser/campaigns/{campaign_id}/creatives", summary="広告主クリエイティブ一覧（BKD-10）")
+async def list_advertiser_creatives(
+    campaign_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_admin_key),
+):
+    """
+    キャンペーンに紐付くクリエイティブ一覧。クリエイティブ別インプレッション・クリック・CTR・eCPMを付与。
+    """
+    campaign = await db.get(AffiliateCampaignDB, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    creative_rows = await db.execute(
+        select(CreativeDB)
+        .where(CreativeDB.campaign_id == campaign_id)
+        .order_by(CreativeDB.created_at.desc())
+    )
+    creatives = creative_rows.scalars().all()
+
+    results = []
+    for cr in creatives:
+        imp_count = await db.scalar(
+            select(func.count(MdmImpressionDB.id)).where(MdmImpressionDB.creative_id == cr.id)
+        ) or 0
+
+        click_count = await db.scalar(
+            select(func.count(MdmImpressionDB.id))
+            .where(MdmImpressionDB.creative_id == cr.id)
+            .where(MdmImpressionDB.clicked == True)
+        ) or 0
+
+        ctr = round(click_count / imp_count * 100, 2) if imp_count > 0 else 0.0
+
+        total_cpm_revenue = await db.scalar(
+            select(func.sum(MdmImpressionDB.cpm_price)).where(MdmImpressionDB.creative_id == cr.id)
+        ) or 0.0
+        ecpm = round(total_cpm_revenue / imp_count * 1000, 2) if imp_count > 0 else 0.0
+
+        results.append({
+            "id": cr.id,
+            "title": cr.title,
+            "creative_type": cr.creative_type,
+            "status": cr.status,
+            "impressions": imp_count,
+            "clicks": click_count,
+            "ctr_pct": ctr,
+            "ecpm_jpy": ecpm,
+            "created_at": cr.created_at.isoformat(),
+        })
+    return results
+
+
+class AdvertiserCampaignStatusUpdate(BaseModel):
+    status: str  # "active" | "paused"
+
+
+@router.put("/advertiser/campaigns/{campaign_id}/status", summary="広告主キャンペーンステータス変更（BKD-10）")
+async def update_advertiser_campaign_status(
+    campaign_id: str,
+    body: AdvertiserCampaignStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_admin_key),
+):
+    """
+    キャンペーンを一時停止 / 再開する。
+    許可ステータス: active | paused
+    """
+    if body.status not in ("active", "paused"):
+        raise HTTPException(status_code=422, detail="status must be 'active' or 'paused'")
+
+    campaign = await db.get(AffiliateCampaignDB, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    campaign.status = body.status
+    await db.commit()
+    await db.refresh(campaign)
+
+    return {
+        "id": campaign.id,
+        "name": campaign.name,
+        "status": campaign.status,
+    }
+
+
 @router.get("/admin/stats", summary="MDM KPI（管理者）")
 async def mdm_stats(
     db: AsyncSession = Depends(get_db),
@@ -1106,6 +1528,16 @@ async def install_confirmed(
 
     # 5. S2Sポストバック（バックグラウンドで実行）
     background_tasks.add_task(trigger_postbacks, install_event_id, db)
+
+    # 6. VTA チェック（バックグラウンドで実行）
+    background_tasks.add_task(
+        check_vta,
+        body.device_id,
+        body.package_name,
+        body.campaign_id,
+        install_event_id,
+        db,
+    )
 
     return {
         "status": "recorded",
@@ -1296,7 +1728,7 @@ async def content_prefetch(
     from datetime import date
     from sqlalchemy import Integer, func as sqlfunc
     from db_models import AffiliateCampaignDB as _CampaignDB, CreativeExperimentDB
-    from mdm.creative.selector import FREQ_CAP_DAILY, DEFAULT_CTR, _get_creative_ctrs
+    from mdm.creative.selector import FREQ_CAP_DAILY, DEFAULT_CTR, _get_creative_ctrs, get_time_slot_multiplier
 
     # スロット定義取得
     slot = await db.scalar(
@@ -1343,17 +1775,78 @@ async def content_prefetch(
         payload = {"slots": [], "prefetched_at": datetime.now(timezone.utc).isoformat()}
         return payload
 
-    # eCPM スコア降順ソート
+    # eCPM スコア降順ソート（タイムスロット乗数適用）
     creative_ids = [r[0].id for r in candidates]
     ctrs = await _get_creative_ctrs(db, creative_ids, "lockscreen")
+
+    _ts_multiplier = 1.0
+    if hour is not None and hour >= 0:
+        _dow = datetime.now(timezone.utc).weekday()
+        _ts_multiplier = await get_time_slot_multiplier(hour, _dow, db)
+        if _ts_multiplier != 1.0:
+            logger.info(
+                f"MDM prefetch time-slot multiplier | device_id={device_id} "
+                f"| hour={hour} | dow={_dow} | multiplier={_ts_multiplier}"
+            )
 
     def _ecpm(row) -> float:
         creative, campaign = row
         ctr = ctrs.get(creative.id, DEFAULT_CTR)
-        return campaign.reward_amount * ctr * 1000
+        return campaign.reward_amount * ctr * 1000 * _ts_multiplier
 
     candidates.sort(key=_ecpm, reverse=True)
     top = candidates[:_PREFETCH_COUNT]
+
+    # ── DSP入札（フォールバック付き） ─────────────────────────────
+    # 直販クリエイティブ選択と並走させ、DSP入札がフロアを超えた場合は
+    # DspWinLogDB に収益を記録する。active DSPなし or タイムアウト時は
+    # 直販クリエイティブをそのまま使用する（フォールバック）。
+    _device_profile_dict: dict = {}
+    try:
+        _dp = await db.get(DeviceProfileDB, device_id)
+        if _dp:
+            _device_profile_dict = {
+                "manufacturer": _dp.manufacturer or "",
+                "model": _dp.model or "",
+                "os_version": _dp.os_version or "",
+                "os": "android",
+            }
+    except Exception:
+        pass  # デバイスプロファイル取得失敗は無視して直販フォールバック
+
+    _dsp_result: Optional[dict] = None
+    _dsp_impression_id = str(uuid.uuid4())
+    try:
+        _dsp_result = await rtb_client.request_bid(
+            impression_id=_dsp_impression_id,
+            floor_price_jpy=floor_cpm,
+            device_profile=_device_profile_dict,
+            slot_type="lockscreen",
+            creative_w=1080,
+            creative_h=1920,
+        )
+    except Exception as _dsp_exc:
+        logger.warning(f"DSP bid request failed (non-fatal): {_dsp_exc}")
+
+    if _dsp_result:
+        # DSP落札: プラットフォーム収益を記録（take_rate=15% 控除後）
+        _take_rate = 0.15
+        _platform_rev_jpy = (
+            _dsp_result["clearing_price_usd"] * (1.0 - _take_rate) * 150.0
+        )
+        _win_log = DspWinLogDB(
+            impression_id=_dsp_impression_id,
+            dsp_name=_dsp_result["dsp_name"],
+            bid_price_usd=_dsp_result["bid_price_usd"],
+            clearing_price_usd=_dsp_result["clearing_price_usd"],
+            platform_revenue_jpy=_platform_rev_jpy,
+        )
+        db.add(_win_log)
+        logger.info(
+            f"DSP win | dsp={_dsp_result['dsp_name']} "
+            f"| clearing=${_dsp_result['clearing_price_usd']:.4f} USD "
+            f"| platform_rev=¥{_platform_rev_jpy:.2f}"
+        )
 
     # ── impression_id 払い出し & DB + Redis 保存 ─────────────────
     slots_out = []
@@ -1379,6 +1872,8 @@ async def content_prefetch(
             "campaign_id": campaign.id,
             "hour": hour,
             "carrier": carrier,
+            # DSP落札フラグ（クライアントは無視してよい）
+            "dsp_win": _dsp_result is not None,
         })
         prefetch_redis_key = f"prefetch:{imp_id}"
         try:
@@ -3370,3 +3865,429 @@ async def dealer_manual():
 </body>
 </html>"""
     return HTMLResponse(content=html)
+
+
+# ── BKD-07: デバイスプロファイルストア ───────────────────────────
+
+
+class DeviceProfileBody(BaseModel):
+    device_id: str
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    os_version: Optional[str] = None
+    carrier: Optional[str] = None
+    mcc_mnc: Optional[str] = None
+    region: Optional[str] = None
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
+    ram_gb: Optional[int] = None
+    storage_free_mb: Optional[int] = None
+
+
+@router.post("/device_profile", summary="デバイスメタデータ登録・更新（BKD-07）")
+async def upsert_device_profile(
+    body: DeviceProfileBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    デバイスのハードウェア・ネットワーク情報を保存する。
+    同一 device_id が既存の場合は全フィールドを上書き（upsert）する。
+    """
+    profile = DeviceProfileDB(
+        device_id=body.device_id,
+        manufacturer=body.manufacturer,
+        model=body.model,
+        os_version=body.os_version,
+        carrier=body.carrier,
+        mcc_mnc=body.mcc_mnc,
+        region=body.region,
+        screen_width=body.screen_width,
+        screen_height=body.screen_height,
+        ram_gb=body.ram_gb,
+        storage_free_mb=body.storage_free_mb,
+    )
+    # merge() は primary key 一致時は UPDATE、未存在時は INSERT を行う
+    await db.merge(profile)
+    await db.commit()
+    logger.info(f"device_profile upserted | device_id={body.device_id}")
+    return {"status": "updated"}
+
+
+# ── BKD-08: タイムスロット価格エンジン（管理エンドポイント）─────
+
+
+class TimeSlotBody(BaseModel):
+    hour_start: int
+    hour_end: int
+    day_of_week: Optional[int] = None
+    multiplier: float = 1.0
+    label: Optional[str] = None
+
+
+@router.get("/admin/time_slots", summary="タイムスロット乗数一覧（管理者）")
+async def list_time_slots(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """登録されているタイムスロット乗数をすべて返す。"""
+    rows = await db.execute(
+        select(TimeSlotMultiplierDB).order_by(TimeSlotMultiplierDB.id)
+    )
+    return {
+        "time_slots": [
+            {
+                "id": r.id,
+                "hour_start": r.hour_start,
+                "hour_end": r.hour_end,
+                "day_of_week": r.day_of_week,
+                "multiplier": r.multiplier,
+                "label": r.label,
+            }
+            for r in rows.scalars().all()
+        ]
+    }
+
+
+@router.post("/admin/time_slots", summary="タイムスロット乗数作成（管理者）")
+async def create_time_slot(
+    body: TimeSlotBody,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    新しいタイムスロット乗数を作成する。
+    hour_start / hour_end は 0-23 の範囲で指定する。
+    day_of_week は 0=月曜〜6=日曜、省略時は全曜日に適用される。
+    """
+    if not (0 <= body.hour_start <= 23 and 0 <= body.hour_end <= 23):
+        raise HTTPException(status_code=422, detail="hour_start and hour_end must be 0-23")
+    if body.hour_start > body.hour_end:
+        raise HTTPException(status_code=422, detail="hour_start must be <= hour_end")
+    if body.day_of_week is not None and not (0 <= body.day_of_week <= 6):
+        raise HTTPException(status_code=422, detail="day_of_week must be 0-6 or null")
+
+    row = TimeSlotMultiplierDB(
+        hour_start=body.hour_start,
+        hour_end=body.hour_end,
+        day_of_week=body.day_of_week,
+        multiplier=body.multiplier,
+        label=body.label,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+
+    # キャッシュを無効化（次回クエリ時に再読み込みされる）
+    from mdm.creative.selector import _ts_cache
+    _ts_cache.clear()
+
+    logger.info(
+        f"time_slot created | id={row.id} | {row.hour_start}-{row.hour_end}h "
+        f"| dow={row.day_of_week} | multiplier={row.multiplier} | label={row.label}"
+    )
+    return {
+        "id": row.id,
+        "hour_start": row.hour_start,
+        "hour_end": row.hour_end,
+        "day_of_week": row.day_of_week,
+        "multiplier": row.multiplier,
+        "label": row.label,
+    }
+
+
+# ── VAST 3.0 動画広告 (BKD-05) ────────────────────────────────
+
+_VALID_VIDEO_EVENTS = {"start", "q1", "midpoint", "q3", "complete", "skip"}
+
+
+@router.get("/ad/vast/{impression_id}", summary="VAST 3.0 動画広告XML取得")
+async def get_vast(impression_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    VAST 3.0 XML を返す。
+
+    - MdmImpressionDB を impression_id で検索
+    - 関連する CreativeDB をロードし video_url が設定されていることを確認
+    - VAST 3.0 XML を生成して返す（Content-Type: application/xml）
+    """
+    impression = await db.get(MdmImpressionDB, impression_id)
+    if impression is None:
+        raise HTTPException(status_code=404, detail="impression not found")
+
+    creative = await db.get(CreativeDB, impression.creative_id) if impression.creative_id else None
+    if creative is None or not creative.video_url:
+        raise HTTPException(status_code=404, detail="video creative not found")
+
+    base_url = settings.ssp_endpoint.rstrip("/")
+    duration = creative.video_duration_sec or 30
+    skip_after = creative.skip_after_sec if creative.skip_after_sec is not None else 5
+
+    vast_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<VAST version="3.0">
+  <Ad id="{impression_id}">
+    <InLine>
+      <AdSystem>MDM Ad Platform</AdSystem>
+      <AdTitle>{creative.title}</AdTitle>
+      <Impression><![CDATA[{base_url}/mdm/ad/impression/{impression_id}]]></Impression>
+      <Creatives>
+        <Creative>
+          <Linear skipoffset="00:00:{skip_after:02d}">
+            <Duration>00:00:{duration:02d}</Duration>
+            <TrackingEvents>
+              <Tracking event="start"><![CDATA[{base_url}/mdm/ad/video_event/{impression_id}/start]]></Tracking>
+              <Tracking event="firstQuartile"><![CDATA[{base_url}/mdm/ad/video_event/{impression_id}/q1]]></Tracking>
+              <Tracking event="midpoint"><![CDATA[{base_url}/mdm/ad/video_event/{impression_id}/midpoint]]></Tracking>
+              <Tracking event="thirdQuartile"><![CDATA[{base_url}/mdm/ad/video_event/{impression_id}/q3]]></Tracking>
+              <Tracking event="complete"><![CDATA[{base_url}/mdm/ad/video_event/{impression_id}/complete]]></Tracking>
+              <Tracking event="skip"><![CDATA[{base_url}/mdm/ad/video_event/{impression_id}/skip]]></Tracking>
+            </TrackingEvents>
+            <MediaFiles>
+              <MediaFile delivery="progressive" type="video/mp4" width="1080" height="1920">
+                <![CDATA[{creative.video_url}]]>
+              </MediaFile>
+            </MediaFiles>
+            <VideoClicks>
+              <ClickThrough><![CDATA[{creative.click_url}]]></ClickThrough>
+              <ClickTracking><![CDATA[{base_url}/mdm/ios/click?imp={impression_id}&to={creative.click_url}]]></ClickTracking>
+            </VideoClicks>
+          </Linear>
+        </Creative>
+      </Creatives>
+    </InLine>
+  </Ad>
+</VAST>"""
+
+    return Response(content=vast_xml, media_type="application/xml")
+
+
+@router.post("/ad/video_event/{impression_id}/{event}", summary="動画広告イベント記録")
+async def record_video_event(
+    impression_id: str,
+    event: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    動画広告のトラッキングイベントを記録する（BKD-05）。
+
+    有効イベント: start | q1 | midpoint | q3 | complete | skip
+    MdmImpressionDB の video_event カラムを更新する。
+    """
+    if event not in _VALID_VIDEO_EVENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid event '{event}'. Must be one of: {', '.join(sorted(_VALID_VIDEO_EVENTS))}",
+        )
+
+    impression = await db.get(MdmImpressionDB, impression_id)
+    if impression is None:
+        raise HTTPException(status_code=404, detail="impression not found")
+
+    impression.video_event = event
+    await db.commit()
+
+    logger.info(f"video_event recorded | impression={impression_id} | event={event}")
+    return {"ok": True}
+
+
+# ── DSP管理 API (BKD-06) ─────────────────────────────────────────────────
+
+
+class _DspConfigIn(BaseModel):
+    name: str
+    endpoint_url: str
+    timeout_ms: int = 200
+    active: bool = False
+    take_rate: float = 0.15
+
+
+@router.get(
+    "/admin/dsp/configs",
+    summary="DSP設定一覧",
+    dependencies=[Depends(verify_admin_key)],
+)
+async def list_dsp_configs(db: AsyncSession = Depends(get_db)):
+    """登録済みDSP接続設定の一覧を返す。"""
+    result = await db.execute(select(DspConfigDB).order_by(DspConfigDB.created_at))
+    configs = result.scalars().all()
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "endpoint_url": c.endpoint_url,
+            "timeout_ms": c.timeout_ms,
+            "active": c.active,
+            "take_rate": c.take_rate,
+            "created_at": c.created_at.isoformat(),
+        }
+        for c in configs
+    ]
+
+
+@router.post(
+    "/admin/dsp/configs",
+    summary="DSP設定追加・更新",
+    dependencies=[Depends(verify_admin_key)],
+)
+async def upsert_dsp_config(
+    body: _DspConfigIn,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    DSP接続設定を追加または更新する。
+    同一 name が存在する場合は上書き、存在しない場合は新規作成。
+    """
+    existing = await db.scalar(
+        select(DspConfigDB).where(DspConfigDB.name == body.name)
+    )
+    if existing:
+        existing.endpoint_url = body.endpoint_url
+        existing.timeout_ms = body.timeout_ms
+        existing.active = body.active
+        existing.take_rate = body.take_rate
+        await db.commit()
+        await db.refresh(existing)
+        config = existing
+    else:
+        config = DspConfigDB(
+            name=body.name,
+            endpoint_url=body.endpoint_url,
+            timeout_ms=body.timeout_ms,
+            active=body.active,
+            take_rate=body.take_rate,
+        )
+        db.add(config)
+        await db.commit()
+        await db.refresh(config)
+
+    return {
+        "id": config.id,
+        "name": config.name,
+        "endpoint_url": config.endpoint_url,
+        "timeout_ms": config.timeout_ms,
+        "active": config.active,
+        "take_rate": config.take_rate,
+        "created_at": config.created_at.isoformat(),
+    }
+
+
+@router.get(
+    "/admin/dsp/performance",
+    summary="DSP別パフォーマンスレポート（過去7日）",
+    dependencies=[Depends(verify_admin_key)],
+)
+async def dsp_performance(db: AsyncSession = Depends(get_db)):
+    """
+    DSP別の過去7日間のパフォーマンス指標を返す:
+    - win_rate: 今後の実装で bid_request ログと突合（現在は落札数/推定インプレッション数）
+    - avg_cpm_jpy: 平均落札CPM（円）
+    - total_revenue_jpy: 合計プラットフォーム収益（円）
+    """
+    from datetime import timedelta
+    from sqlalchemy import cast, Float as SAFloat
+
+    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+
+    rows = await db.execute(
+        select(
+            DspWinLogDB.dsp_name,
+            func.count(DspWinLogDB.id).label("win_count"),
+            func.avg(DspWinLogDB.clearing_price_usd).label("avg_clearing_usd"),
+            func.sum(DspWinLogDB.platform_revenue_jpy).label("total_revenue_jpy"),
+        )
+        .where(DspWinLogDB.created_at >= seven_days_ago)
+        .group_by(DspWinLogDB.dsp_name)
+        .order_by(func.sum(DspWinLogDB.platform_revenue_jpy).desc())
+    )
+
+    results = []
+    for row in rows.all():
+        avg_cpm_jpy = (row.avg_clearing_usd or 0.0) * 1000.0 * 150.0  # USD CPM → JPY CPM
+        results.append({
+            "dsp_name": row.dsp_name,
+            "win_count_7d": row.win_count,
+            "avg_cpm_jpy": round(avg_cpm_jpy, 2),
+            "total_revenue_jpy": round(row.total_revenue_jpy or 0.0, 2),
+        })
+
+    return {"period_days": 7, "dsps": results}
+
+
+# ── ML-01 特徴量パイプライン（管理者） ────────────────────────────
+
+
+@router.post("/admin/ml/compute_features", summary="ユーザー特徴量計算をキュー（管理者）")
+async def trigger_compute_features(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    全エンロール済みデバイスの特徴量計算をバックグラウンドで開始する（ML-01）。
+
+    本番環境ではcronで毎日02:00 JSTに自動実行。
+    このエンドポイントは手動トリガー・デバッグ用途に使用する。
+
+    処理内容:
+      - 過去30日のmdm_impressionsをdevice_id単位で集計
+      - user_featuresテーブルにupsert（AsyncSession.merge使用）
+
+    プライバシー: device_idは疑似匿名UUID。PII（氏名・電話・メール）は含まない。
+    APPI準拠: consent_given=Trueのデバイスのみ対象。
+    """
+    background_tasks.add_task(compute_user_features, db)
+    return {"status": "started", "message": "Feature computation queued"}
+
+
+@router.get("/admin/ml/features/stats", summary="特徴量集計統計（管理者）")
+async def ml_features_stats(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    user_featuresテーブルの集計統計を返す（ML-01 モニタリング用）。
+
+    レスポンス:
+      - total_devices_with_features: 特徴量が計算済みのデバイス数
+      - avg_ctr_30d: 全デバイスの平均30日CTR
+      - avg_dwell_ms: 全デバイスの平均dwell時間（ms）
+      - top_preferred_hours: 上位preferred_hourランキング（{hour, device_count}のリスト）
+      - computed_at_latest: 最終バッチ実行日時
+
+    プライバシー: device_idは疑似匿名UUID。PII（氏名・電話・メール）は含まない。
+    """
+    # 基本集計
+    total_devices = await db.scalar(
+        select(func.count(UserFeatureDB.device_id))
+    )
+    avg_ctr = await db.scalar(
+        select(func.avg(UserFeatureDB.ctr_30d))
+    )
+    avg_dwell = await db.scalar(
+        select(func.avg(UserFeatureDB.avg_dwell_ms))
+    )
+    computed_at_latest = await db.scalar(
+        select(func.max(UserFeatureDB.computed_at))
+    )
+
+    # 上位preferred_hour ランキング（上位5時間帯）
+    hour_rows = await db.execute(
+        select(
+            UserFeatureDB.preferred_hour,
+            func.count(UserFeatureDB.device_id).label("device_count"),
+        )
+        .where(UserFeatureDB.preferred_hour.is_not(None))
+        .group_by(UserFeatureDB.preferred_hour)
+        .order_by(func.count(UserFeatureDB.device_id).desc())
+        .limit(5)
+    )
+    top_preferred_hours = [
+        {"hour": row.preferred_hour, "device_count": row.device_count}
+        for row in hour_rows.all()
+    ]
+
+    return {
+        "total_devices_with_features": total_devices or 0,
+        "avg_ctr_30d": round(float(avg_ctr or 0.0), 6),
+        "avg_dwell_ms": round(float(avg_dwell or 0.0), 2) if avg_dwell else None,
+        "top_preferred_hours": top_preferred_hours,
+        "computed_at_latest": computed_at_latest.isoformat() if computed_at_latest else None,
+    }

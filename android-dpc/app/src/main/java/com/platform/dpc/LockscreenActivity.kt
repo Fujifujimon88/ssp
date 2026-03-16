@@ -40,6 +40,11 @@ class LockscreenActivity : Activity() {
         }
     }
 
+    // DPC-07: KPI計測用
+    private var displayStartMs: Long = 0L
+    private var currentImpressionId: String? = null
+    private var currentDeviceId: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -66,10 +71,36 @@ class LockscreenActivity : Activity() {
             return
         }
 
+        currentImpressionId = impressionId
+        currentDeviceId = getSharedPreferences("mdm_prefs", Context.MODE_PRIVATE)
+            .getString("device_id", null)
+
         buildUi(title, ctaUrl, impressionId)
 
-        // 8秒後に自動解除
-        Handler(Looper.getMainLooper()).postDelayed({ finish() }, AUTO_DISMISS_MS)
+        // 8秒後に自動解除（DPC-07: dismiss_type = auto_dismiss）
+        Handler(Looper.getMainLooper()).postDelayed({
+            reportKpi(LockscreenKpiReporter.DISMISS_AUTO)
+            finish()
+        }, AUTO_DISMISS_MS)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        displayStartMs = android.os.SystemClock.elapsedRealtime()  // DPC-07: 滞留時間計測開始
+    }
+
+    override fun onBackPressed() {
+        reportKpi(LockscreenKpiReporter.DISMISS_SWIPE)
+        super.onBackPressed()
+    }
+
+    private fun reportKpi(dismissType: String) {
+        val impId = currentImpressionId ?: return
+        val devId = currentDeviceId ?: return
+        val dwell = android.os.SystemClock.elapsedRealtime() - displayStartMs
+        CoroutineScope(Dispatchers.IO).launch {
+            LockscreenKpiReporter.report(impId, devId, dwell, dismissType)
+        }
     }
 
     private fun buildUi(title: String, ctaUrl: String, impressionId: String?) {
@@ -126,6 +157,9 @@ class LockscreenActivity : Activity() {
     }
 
     private fun onCtaTapped(ctaUrl: String, impressionId: String?) {
+        // DPC-07: KPI報告（CTA tap）
+        reportKpi(LockscreenKpiReporter.DISMISS_CTA_TAP)
+
         // クリックをバックグラウンドで報告
         if (impressionId != null) {
             CoroutineScope(Dispatchers.IO).launch {

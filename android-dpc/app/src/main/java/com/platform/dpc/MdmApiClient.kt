@@ -178,6 +178,48 @@ object MdmApiClient {
         }
     }
 
+    // ── デバイスプロファイル送信（DPC-08）───────────────────────
+
+    /**
+     * デバイスプロファイル（機種・キャリア・画面サイズ等）を送信する。
+     * DSP入札リクエストのターゲティング精度向上に使用。
+     */
+    fun sendDeviceProfile(
+        deviceId: String,
+        manufacturer: String,
+        model: String,
+        osVersion: String,
+        carrier: String?,
+        mccMnc: String?,
+        screenWidth: Int,
+        screenHeight: Int,
+        ramGb: Int,
+        storageFreeMb: Long,
+    ): Boolean {
+        val body = JSONObject().apply {
+            put("device_id",       deviceId)
+            put("manufacturer",    manufacturer)
+            put("model",           model)
+            put("os_version",      osVersion)
+            carrier?.let { put("carrier", it) }
+            mccMnc?.let  { put("mcc_mnc", it) }
+            put("screen_width",    screenWidth)
+            put("screen_height",   screenHeight)
+            put("ram_gb",          ramGb)
+            put("storage_free_mb", storageFreeMb)
+        }
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/mdm/device_profile")
+                .post(body.toString().toRequestBody(JSON_TYPE))
+                .build()
+            http.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            android.util.Log.w("MdmApiClient", "sendDeviceProfile failed: $e")
+            false
+        }
+    }
+
     /**
      * ロック画面コンテンツを取得する。
      * impression_id を含むレスポンス全体を返す（CTR計測用）。

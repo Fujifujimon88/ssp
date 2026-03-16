@@ -4,7 +4,8 @@ DPC APKからインストール確認を受けた後、計測パートナー（A
 S2Sポストバックを送信してインストールイベントを計上する。
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import httpx
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from db_models import (
     AffiliateCampaignDB,
     AndroidDeviceDB,
     InstallEventDB,
+    MdmImpressionDB,
     PostbackLogDB,
 )
 
@@ -179,4 +181,74 @@ async def trigger_postbacks(install_event_id: str, db: AsyncSession) -> None:
         f"trigger_postbacks done | install_event={install_event_id} "
         f"| postback_status={install_event.postback_status} "
         f"| billing_status={install_event.billing_status}"
+    )
+
+
+async def check_vta(
+    device_id: str,
+    package_name: str,
+    campaign_id: str,
+    install_event_id: str,
+    db: AsyncSession,
+) -> None:
+    """View-Through Attribution（BKD-09）。
+
+    クリックアトリビューションが存在しない場合に、キャンペーンのVTAウィンドウ内で
+    該当デバイスのインプレッションを探し、マッチすれば InstallEventDB を更新する。
+
+    1. 同一 (device_id, package_name) のclick attributionがないことを確認
+    2. キャンペーンの vta_window_hours 以内の MdmImpressionDB を検索
+    3. マッチすれば attribution_type="view_through" に更新し、
+       cpi_amount = reward_amount * vta_cpi_rate で再計算する
+    """
+    install_event = await db.get(InstallEventDB, install_event_id)
+    if install_event is None:
+        logger.warning(f"check_vta: install_event not found | id={install_event_id}")
+        return
+
+    # 既にクリックアトリビューションが設定されている場合はスキップ
+    if install_event.attribution_type == "click":
+        # click由来のポストバックが成功していれば VTA は不要
+        if install_event.postback_status == "success":
+            return
+
+    campaign = await db.get(AffiliateCampaignDB, campaign_id)
+    if campaign is None:
+        logger.warning(f"check_vta: campaign not found | id={campaign_id}")
+        return
+
+    # VTAウィンドウの開始時刻を計算
+    window_start = datetime.now(timezone.utc) - timedelta(hours=campaign.vta_window_hours)
+
+    # デバイスのインプレッション履歴を検索（キャンペーン紐付きクリエイティブ経由）
+    from db_models import CreativeDB
+    imp = await db.scalar(
+        select(MdmImpressionDB)
+        .join(CreativeDB, MdmImpressionDB.creative_id == CreativeDB.id)
+        .where(
+            MdmImpressionDB.device_id == device_id,
+            CreativeDB.campaign_id == campaign_id,
+            MdmImpressionDB.served_at >= window_start,
+        )
+        .order_by(MdmImpressionDB.served_at.desc())
+        .limit(1)
+    )
+
+    if imp is None:
+        logger.info(
+            f"check_vta: no VTA match | device={device_id[:8]}... "
+            f"| pkg={package_name} | campaign={campaign_id}"
+        )
+        return
+
+    # VTAマッチ: attribution_type と cpi_amount を更新
+    install_event.attribution_type = "view_through"
+    install_event.vta_impression_id = imp.id
+    install_event.cpi_amount = campaign.reward_amount * campaign.vta_cpi_rate
+    install_event.billing_status = "billable"
+
+    await db.commit()
+    logger.info(
+        f"check_vta: VTA match | install_event={install_event_id} "
+        f"| impression={imp.id} | device={device_id[:8]}... | cpi={install_event.cpi_amount}"
     )
