@@ -173,6 +173,71 @@ npx playwright test e2e/dashboard.spec.js
 | /api/reports/range?days=1 は1件返す | レポート件数確認 |
 | 未来日付のレポートは impressions=0 | エッジケース確認 |
 
+### mdm_affiliate.spec.js（5テスト）- GTM LP・アフィリエイト案件
+| テスト | 概要 |
+|--------|------|
+| 存在しないキャンペーンIDで404 | GET /mdm/lp/:id エラー確認 |
+| アフィリエイト案件一覧取得 | GET /mdm/admin/affiliate/campaigns |
+| 認証なしで401 | 認証必須確認 |
+| 新規案件登録で200 + id返る | POST /mdm/admin/affiliate/campaigns |
+| 認証なし POST で401 | 認証必須確認 |
+
+### mdm_dashboard.spec.js（10テスト）- MDM管理ダッシュボード
+| テスト | 概要 |
+|--------|------|
+| 認証なしで401 | GET /mdm/admin/dashboard 認証確認 |
+| 有効な管理者キーでダッシュボード表示 | UI確認 |
+| KPIカードが8枚表示される | UI確認 |
+| 代理店 Top 5 テーブルセクション表示 | UI確認 |
+| アフィリエイト案件 Top 5 セクション表示 | UI確認 |
+| 主要APIエンドポイント一覧セクション表示 | UI確認 |
+| アフィリエイトレポートAPIで200 + フィールド確認 | GET /mdm/admin/affiliate/report |
+| year/month 指定で period 確認 | クエリパラメータ確認 |
+| 認証なしで401 | 認証必須確認 |
+| CV一覧取得 | GET /mdm/admin/affiliate/conversions |
+
+### p2_endpoints.spec.js（38テスト）- P2 新規エンドポイント群
+| テスト | 概要 |
+|--------|------|
+| game_start イベントを記録（印象IDなし） | ADT-02: ゲームイベント記録 |
+| game_complete イベントを記録 | ADT-02: ゲームイベント記録 |
+| game_converted イベントを記録 | ADT-02: ゲームイベント記録 |
+| 不正なイベント名は400 | ADT-02: バリデーション確認 |
+| event 空文字は400 | ADT-02: バリデーション確認 |
+| 有効な DSP APIキーで入札が通る | ADT-03: POST /openrtb/bid |
+| APIキーなしで401 | ADT-03: 認証確認 |
+| 不正な APIキーで401 | ADT-03: 認証確認 |
+| 2つ目の許可済み DSP キーで入札 | ADT-03: 複数キー対応確認 |
+| Win notice を受け付ける | ADT-03: GET /openrtb/win/:id |
+| price=0 でも Win notice が成功 | ADT-03: エッジケース確認 |
+| 管理者キーで代理店を登録できる | BKD-11: POST /mdm/admin/agencies |
+| 管理者キーなしで401 | BKD-11: 認証確認 |
+| name フィールドなしで400 | BKD-11: バリデーション確認 |
+| 管理者キーで代理店一覧取得 | BKD-11: GET /mdm/admin/agencies |
+| 管理者キーなしで401 | BKD-11: 認証確認 |
+| 登録した代理店が一覧に含まれる | BKD-11: 作成後確認 |
+| 有効な代理店キーでデバイス一覧取得 | BKD-11: GET /mdm/agency/devices |
+| 代理店キーなしで401 | BKD-11: 認証確認 |
+| 不正な代理店キーで403 | BKD-11: 認証確認 |
+| 有効な代理店キーで収益レポート取得 | BKD-11: GET /mdm/agency/revenue |
+| month クエリパラメータで特定月指定 | BKD-11: 月指定確認 |
+| 代理店キーなしで401 | BKD-11: 認証確認 |
+| 管理者キーで精算を開始できる | BKD-12: POST /mdm/admin/settlement/run |
+| period_month 省略時は前月が自動設定 | BKD-12: デフォルト挙動 |
+| 管理者キーなしで401 | BKD-12: 認証確認 |
+| 管理者キーで精算一覧取得 | BKD-12: GET /mdm/admin/settlement/invoices |
+| period_month フィルタが動作する | BKD-12: フィルタ確認 |
+| 管理者キーなしで401 | BKD-12: 認証確認 |
+| 管理者キーで学習をキューできる | ML-02: POST /mdm/admin/ml/train |
+| 管理者キーなしで401 | ML-02: 認証確認 |
+| 管理者キーでモデル一覧取得 | ML-02: GET /mdm/admin/ml/models |
+| 管理者キーなしで401 | ML-02: 認証確認 |
+| 管理者キーでコホート計算をキュー | ML-03: POST /mdm/admin/ml/compute_cohorts |
+| 管理者キーなしで401 | ML-03: 認証確認 |
+| 管理者キーでコホート統計取得 | ML-03: GET /mdm/admin/ml/cohort_stats |
+| コホートが存在する場合は各フィールドを持つ | ML-03: フィールド確認 |
+| 管理者キーなしで401 | ML-03: 認証確認 |
+
 ## グローバルセットアップについて
 
 `global-setup.js` が自動的に以下を行います：
