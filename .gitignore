@@ -13,3 +13,5 @@ test-results/
 
 # SQLite DB（ローカル開発用）
 ssp.db
+
+.vercel

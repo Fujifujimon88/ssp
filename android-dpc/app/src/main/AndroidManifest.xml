@@ -48,6 +48,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- インストール検知レシーバー（DPC-03: ユーザー確認後のインストール完了を報告） -->
+        <receiver
+            android:name=".PackageInstallReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
         <!-- ロック画面広告アクティビティ（ユーザー同意済み） -->
         <activity
             android:name=".LockscreenActivity"

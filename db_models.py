@@ -1,8 +1,9 @@
 """SQLAlchemy ORMモデル（PostgreSQLテーブル定義）"""
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -157,9 +158,11 @@ class AffiliateCampaignDB(Base):
     reward_type: Mapped[str] = mapped_column(String(10), default="cpi") # cpi/cps/cpl
     reward_amount: Mapped[float] = mapped_column(Float, default=0.0)    # 円
     # 計測ツール連携
-    appsflyer_dev_key: Mapped[str] = mapped_column(String(200), nullable=True)
-    adjust_app_token: Mapped[str] = mapped_column(String(200), nullable=True)
-    gtm_container_id: Mapped[str] = mapped_column(String(50), nullable=True)
+    appsflyer_dev_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    adjust_app_token: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    adjust_event_token: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    advertising_id_field: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    gtm_container_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -212,6 +215,7 @@ class AndroidDeviceDB(Base):
     model: Mapped[str] = mapped_column(String(100), nullable=True)
     android_version: Mapped[str] = mapped_column(String(20), nullable=True)
     sdk_int: Mapped[int] = mapped_column(Integer, nullable=True)
+    gaid: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)       # Google Advertising ID
     status: Mapped[str] = mapped_column(String(20), default="active")             # active/unenrolled
     registered_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -370,6 +374,8 @@ class MdmImpressionDB(Base):
     dealer_id: Mapped[str] = mapped_column(String(36), index=True, nullable=True)
     platform: Mapped[str] = mapped_column(String(10), nullable=True)
     age_group: Mapped[str] = mapped_column(String(10), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="served")
+    # served / prefetched / expired
     cpm_price: Mapped[float] = mapped_column(Float, default=0.0)
     clicked: Mapped[bool] = mapped_column(Boolean, default=False)
     clicked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -399,3 +405,36 @@ class CreativeExperimentDB(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")  # active / paused / concluded
     winner: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "control" / "variant" / None
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+# ── CPI課金・ポストバック テーブル ──────────────────────────────
+
+
+class InstallEventDB(Base):
+    """DPC APKが報告したインストール確認イベント（CPI課金起点）"""
+    __tablename__ = "install_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String(255), index=True)
+    package_name: Mapped[str] = mapped_column(String(255))
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_campaigns.id"), index=True)
+    install_ts: Mapped[int] = mapped_column(BigInteger)
+    apk_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    billing_status: Mapped[str] = mapped_column(String(20), default="pending")   # pending | billable | paid
+    postback_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | success | failed
+    postback_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    cpi_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class PostbackLogDB(Base):
+    """S2Sポストバック送信ログ"""
+    __tablename__ = "postback_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    install_event_id: Mapped[str] = mapped_column(String(36), ForeignKey("install_events.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(20))                              # appsflyer | adjust
+    request_url: Mapped[str] = mapped_column(Text)
+    response_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

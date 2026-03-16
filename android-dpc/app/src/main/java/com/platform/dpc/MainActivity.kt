@@ -93,7 +93,9 @@ class MainActivity : AppCompatActivity() {
 
         // WorkManagerスケジュール
         CommandPoller.schedule(this)
+        PrefetchWorker.schedule(this)
         appendLog("バックグラウンドポーリング: 開始（30分間隔）")
+        appendLog("コンテンツプリフェッチ: 開始（30分間隔）")
 
         // 初回登録
         val isRegistered = prefs.getBoolean("registered", false)

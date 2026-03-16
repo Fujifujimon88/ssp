@@ -112,17 +112,48 @@ object CommandExecutor {
     // ── APKインストール ───────────────────────────────────────
 
     /**
-     * APKをダウンロードしてインストール画面を開く。
-     * ※ サイレントインストールはデバイスオーナー権限が必要。
-     *   まずはユーザーにインストール画面を表示する方式で実装する。
+     * APKをダウンロードしてインストール画面を開く（ユーザー確認あり）。
+     * キャッシュ済みAPKがあれば事前DL済みのものを使用。
+     * インストール完了後はInstallReporter経由でサーバーへ報告（DPC-03）。
      */
     private fun installApk(context: Context, cmd: MdmCommand): Boolean {
         val apkUrl = cmd.payload.optString("apk_url").ifEmpty { return false }
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)).apply {
+        val packageName = cmd.payload.optString("package_name")
+        val campaignId = cmd.payload.optString("campaign_id")
+        val apkSha256 = cmd.payload.optString("apk_sha256").ifEmpty { null }
+
+        // キャッシュ済みAPKを確認（DPC-02のプリDL済みファイル）
+        val cachedApk = ApkDownloadManager.getCachedApk(context, apkUrl, apkSha256)
+        val installUri = if (cachedApk != null) {
+            Log.i(TAG, "Using cached APK: ${cachedApk.name}")
+            androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                cachedApk,
+            )
+        } else {
+            // キャッシュなし → URLを直接開く（ブラウザ経由）
+            Uri.parse(apkUrl)
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW, installUri).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (cachedApk != null) {
+                setDataAndType(installUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
         context.startActivity(intent)
-        Log.i(TAG, "APK install triggered: $apkUrl")
+        Log.i(TAG, "APK install screen shown: $apkUrl")
+
+        // インストール確認はパッケージマネージャーで監視（PackageInstallReceiver）
+        // campaignIdがあれば後続レポートのためにPrefsに保存
+        if (campaignId.isNotEmpty() && packageName.isNotEmpty()) {
+            val prefs = context.getSharedPreferences("mdm_pending_installs", Context.MODE_PRIVATE)
+            prefs.edit().putString(packageName, campaignId).apply()
+            Log.i(TAG, "Pending install tracked: pkg=$packageName campaign=$campaignId")
+        }
+
         return true
     }
 

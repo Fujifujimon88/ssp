@@ -13,24 +13,28 @@
 import json
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_admin_key
+from cache import get_redis, _mem_get, _mem_set
 from config import settings
 from database import get_db
 from db_models import (
     AffiliateCampaignDB, AffiliateClickDB, AffiliateConversionDB,
     AndroidCommandDB, AndroidDeviceDB,
     CampaignDB, ConsentLogDB, CreativeDB, DealerDB, DeviceDB,
+    InstallEventDB,
     MDMCommandDB, MdmAdSlotDB, MdmImpressionDB, iOSDeviceDB,
 )
+from mdm.measurement.postback import trigger_postbacks
 from mdm.creative.selector import record_click, select_creative
 from mdm.affiliate.billing import (
     calculate_monthly_revenue, get_all_dealers_report, get_dealer_monthly_report,
@@ -1017,6 +1021,99 @@ async def mdm_stats(
     }
 
 
+# ── CPI インストール確認 (BKD-03 / BKD-04) ────────────────────
+
+
+class InstallConfirmedBody(BaseModel):
+    device_id: str
+    package_name: str
+    campaign_id: str
+    install_ts: int                   # Unix timestamp (ms)
+    apk_sha256: Optional[str] = None  # APK ハッシュ（任意）
+
+
+@router.post("/install_confirmed", summary="APKインストール確認（DPC報告）")
+async def install_confirmed(
+    body: InstallConfirmedBody,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    DPC APKがインストール完了を報告するエンドポイント（BKD-03）。
+
+    1. device_id がエンロール済みであることを確認
+    2. campaign_id が存在することを確認
+    3. 同一（device_id, package_name, campaign_id）の24時間以内の重複を検出
+    4. InstallEventDB を INSERT（billing_status=pending）
+    5. S2Sポストバックをバックグラウンドタスクで送信（BKD-04）
+    """
+    # 1. デバイス確認
+    device = await db.scalar(
+        select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == body.device_id)
+    )
+    if device is None:
+        raise HTTPException(status_code=404, detail="device_id not enrolled")
+
+    # 2. キャンペーン確認
+    campaign = await db.get(AffiliateCampaignDB, body.campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="campaign_id not found")
+
+    # 3. 冪等性チェック: 同一(device_id, package_name, campaign_id)で24h以内の重複
+    from datetime import timedelta
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+    window_start_ts = int(window_start.timestamp() * 1000)
+
+    existing_event = await db.scalar(
+        select(InstallEventDB).where(
+            InstallEventDB.device_id == body.device_id,
+            InstallEventDB.package_name == body.package_name,
+            InstallEventDB.campaign_id == body.campaign_id,
+            InstallEventDB.install_ts >= window_start_ts,
+        )
+    )
+    if existing_event:
+        logger.info(
+            f"install_confirmed duplicate | device={body.device_id[:8]}... "
+            f"| pkg={body.package_name} | campaign={body.campaign_id}"
+        )
+        return {
+            "status": "recorded",
+            "install_event_id": existing_event.id,
+            "already_recorded": True,
+        }
+
+    # 4. 新規 InstallEvent を記録
+    install_event = InstallEventDB(
+        device_id=body.device_id,
+        package_name=body.package_name,
+        campaign_id=body.campaign_id,
+        install_ts=body.install_ts,
+        apk_sha256=body.apk_sha256,
+        billing_status="pending",
+        postback_status="pending",
+        cpi_amount=campaign.reward_amount,
+    )
+    db.add(install_event)
+    await db.flush()  # id を確定させる
+    install_event_id = install_event.id
+    await db.commit()
+
+    logger.info(
+        f"install_confirmed recorded | id={install_event_id} "
+        f"| device={body.device_id[:8]}... | pkg={body.package_name}"
+    )
+
+    # 5. S2Sポストバック（バックグラウンドで実行）
+    background_tasks.add_task(trigger_postbacks, install_event_id, db)
+
+    return {
+        "status": "recorded",
+        "install_event_id": install_event_id,
+        "already_recorded": False,
+    }
+
+
 # ── Android MDM API ───────────────────────────────────────────
 
 
@@ -1154,6 +1251,181 @@ async def lockscreen_content(
             "category": campaign.category,
         },
     }
+
+
+# ── プリフェッチ定数 ────────────────────────────────────────────
+_PREFETCH_TTL = 14400       # 4h — individual impression_id TTL
+_PREFETCH_CACHE_TTL = 300   # 5min — per-device response cache
+_PREFETCH_COUNT = 3         # 返却クリエイティブ数
+
+
+@router.get("/prefetch/{device_id}", summary="コンテンツプリフェッチ（eCPM上位3件）")
+async def content_prefetch(
+    device_id: str,
+    hour: Optional[int] = Query(None, description="ターゲティング用時刻（0-23）"),
+    carrier: Optional[str] = Query(None, description="ターゲティング用キャリアコード"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    端末がバックグラウンドで次表示する広告を先読みする。
+    eCPM降順の上位3件を返し、各クリエイティブに impression_id を事前払い出す。
+    - impression_id は Redis に TTL=4h で保存（key: prefetch:{impression_id}）
+    - デバイス単位で5分間レスポンスをキャッシュ（key: device_prefetch:{device_id}）
+    - Redis 未接続時はインメモリフォールバックを使用
+    """
+    cache_key = f"device_prefetch:{device_id}"
+
+    # ── キャッシュヒット確認 ──────────────────────────────────────
+    r = await get_redis()
+    try:
+        cached_raw = await r.get(cache_key) if r else _mem_get(cache_key)
+        if cached_raw:
+            return json.loads(cached_raw)
+    except Exception:
+        pass  # キャッシュ読み取り失敗は無視して続行
+
+    # ── クリエイティブ選択（最大 _PREFETCH_COUNT 件） ─────────────
+    # select_creative は1件選択 + impression 記録を行うが、prefetch では
+    # DB 書き込みを自前で行うため、ここでは selector の内部ロジックを
+    # 直接呼び出さず、同等のクエリを組む。
+    # ただし、フリークエンシーキャップは selector と共通ロジックを使うため
+    # select_creative を _PREFETCH_COUNT 回呼ぶとcap消費が起きてしまう。
+    # → 候補一覧取得・ソートのみ行い、impression は status="prefetched" で
+    #   一括 insert する専用パスを実装する。
+
+    from datetime import date
+    from sqlalchemy import Integer, func as sqlfunc
+    from db_models import AffiliateCampaignDB as _CampaignDB, CreativeExperimentDB
+    from mdm.creative.selector import FREQ_CAP_DAILY, DEFAULT_CTR, _get_creative_ctrs
+
+    # スロット定義取得
+    slot = await db.scalar(
+        select(MdmAdSlotDB)
+        .where(MdmAdSlotDB.slot_type == "lockscreen", MdmAdSlotDB.status == "active")
+        .order_by(MdmAdSlotDB.created_at)
+        .limit(1)
+    )
+    floor_cpm = slot.floor_price_cpm if slot else 0.0
+
+    # アクティブなクリエイティブ一覧
+    q = (
+        select(CreativeDB, _CampaignDB)
+        .join(_CampaignDB, CreativeDB.campaign_id == _CampaignDB.id)
+        .where(
+            CreativeDB.status == "active",
+            _CampaignDB.status == "active",
+        )
+    )
+    rows = await db.execute(q)
+    candidates = rows.all()
+
+    if not candidates:
+        return {"slots": [], "prefetched_at": datetime.now(timezone.utc).isoformat()}
+
+    # フリークエンシーキャップ（本日分）
+    today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    freq_rows = await db.execute(
+        select(
+            MdmImpressionDB.creative_id,
+            sqlfunc.count(MdmImpressionDB.id).label("count"),
+        )
+        .where(
+            MdmImpressionDB.device_id == device_id,
+            MdmImpressionDB.created_at >= today_start,
+        )
+        .group_by(MdmImpressionDB.creative_id)
+    )
+    capped_ids = {row.creative_id for row in freq_rows.all() if row.count >= FREQ_CAP_DAILY}
+    candidates = [r for r in candidates if r[0].id not in capped_ids]
+
+    if not candidates:
+        logger.info(f"MDM prefetch: frequency cap reached for device_id={device_id}")
+        payload = {"slots": [], "prefetched_at": datetime.now(timezone.utc).isoformat()}
+        return payload
+
+    # eCPM スコア降順ソート
+    creative_ids = [r[0].id for r in candidates]
+    ctrs = await _get_creative_ctrs(db, creative_ids, "lockscreen")
+
+    def _ecpm(row) -> float:
+        creative, campaign = row
+        ctr = ctrs.get(creative.id, DEFAULT_CTR)
+        return campaign.reward_amount * ctr * 1000
+
+    candidates.sort(key=_ecpm, reverse=True)
+    top = candidates[:_PREFETCH_COUNT]
+
+    # ── impression_id 払い出し & DB + Redis 保存 ─────────────────
+    slots_out = []
+    for creative, campaign in top:
+        imp_id = str(uuid.uuid4())
+
+        # DB に status="prefetched" で事前登録
+        imp = MdmImpressionDB(
+            id=imp_id,
+            slot_id=slot.id if slot else None,
+            creative_id=creative.id,
+            device_id=device_id,
+            platform="android",
+            cpm_price=floor_cpm,
+            status="prefetched",
+        )
+        db.add(imp)
+
+        # Redis / インメモリに TTL=4h でメタデータ保存
+        prefetch_meta = json.dumps({
+            "device_id": device_id,
+            "creative_id": creative.id,
+            "campaign_id": campaign.id,
+            "hour": hour,
+            "carrier": carrier,
+        })
+        prefetch_redis_key = f"prefetch:{imp_id}"
+        try:
+            if r:
+                await r.setex(prefetch_redis_key, _PREFETCH_TTL, prefetch_meta)
+            else:
+                _mem_set(prefetch_redis_key, prefetch_meta, _PREFETCH_TTL)
+        except Exception as exc:
+            logger.warning(f"Redis prefetch set failed for {imp_id}: {exc}")
+            _mem_set(prefetch_redis_key, prefetch_meta, _PREFETCH_TTL)
+
+        slots_out.append({
+            "impression_id": imp_id,
+            "title": creative.title,
+            "cta_url": creative.click_url,
+            "image_url": creative.image_url,
+            "campaign_id": campaign.id,
+            "creative_id": creative.id,
+            "ttl_seconds": _PREFETCH_TTL,
+        })
+
+    try:
+        await db.commit()
+    except Exception as exc:
+        logger.error(f"MDM prefetch DB commit failed: {exc}")
+        await db.rollback()
+        return {"slots": [], "prefetched_at": datetime.now(timezone.utc).isoformat()}
+
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload = {"slots": slots_out, "prefetched_at": now_iso}
+
+    # ── デバイス単位レスポンスキャッシュ（5分） ──────────────────
+    payload_raw = json.dumps(payload)
+    try:
+        if r:
+            await r.setex(cache_key, _PREFETCH_CACHE_TTL, payload_raw)
+        else:
+            _mem_set(cache_key, payload_raw, _PREFETCH_CACHE_TTL)
+    except Exception as exc:
+        logger.warning(f"Redis device prefetch cache set failed: {exc}")
+        _mem_set(cache_key, payload_raw, _PREFETCH_CACHE_TTL)
+
+    logger.info(
+        f"MDM prefetch | device_id={device_id} | slots={len(slots_out)} "
+        f"| hour={hour} | carrier={carrier}"
+    )
+    return payload
 
 
 @router.get("/android/widget/content", summary="ホーム画面ウィジェットコンテンツ取得")

@@ -156,6 +156,28 @@ object MdmApiClient {
         }
     }
 
+    // ── プリフェッチ（DPC-06）─────────────────────────────────
+
+    /**
+     * 次の広告スロットを最大3件プリフェッチする（BKD-01連携）。
+     * バックグラウンドスレッドから呼ぶこと。
+     */
+    fun prefetchAdSlots(deviceId: String): org.json.JSONArray? {
+        return try {
+            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            val request = Request.Builder()
+                .url("$serverUrl/mdm/prefetch/$deviceId?hour=$hour")
+                .get()
+                .build()
+            val response = http.newCall(request).execute()
+            if (!response.isSuccessful) return null
+            JSONObject(response.body!!.string()).optJSONArray("slots")
+        } catch (e: Exception) {
+            android.util.Log.w("MdmApiClient", "prefetchAdSlots failed: $e")
+            null
+        }
+    }
+
     /**
      * ロック画面コンテンツを取得する。
      * impression_id を含むレスポンス全体を返す（CTR計測用）。
