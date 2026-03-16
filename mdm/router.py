@@ -2496,3 +2496,240 @@ async def impression_analytics(
         "overall_ctr": round(total_clicks / total_imp, 4) if total_imp > 0 else 0.0,
         "by_slot": by_slot,
     }
+
+
+# ── iOS Widget / WebClip 配信強化 ──────────────────────────────
+
+
+@router.get("/ios/widget/content", summary="iOS ウィジェット広告コンテンツ取得")
+async def ios_widget_content(
+    token: Optional[str] = Query(None, description="enrollment_token"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    iOS ホーム画面ウィジェット / WebClip アプリが起動時に呼び出す。
+    eCPM エンジンで最適なクリエイティブを選択し、クリック追跡用リダイレクト URL を生成して返す。
+    """
+    base = settings.ssp_endpoint.rstrip("/")
+
+    items = []
+    for _ in range(3):
+        content = await select_creative(
+            db, slot_type="webclip_ios",
+            enrollment_token=token, platform="ios",
+        )
+        if not content or content in items:
+            break
+        # クリック追跡: /mdm/ios/click?imp=xxx&to=URL へリダイレクト
+        imp_id = content.get("impression_id", "")
+        dest = content.get("click_url", "")
+        tracking_url = f"{base}/mdm/ios/click?imp={imp_id}&to={dest}"
+        items.append({
+            "impression_id": imp_id,
+            "title": content.get("title", ""),
+            "body": content.get("body", ""),
+            "image_url": content.get("image_url"),
+            "tracking_url": tracking_url,
+            "category": content.get("category", ""),
+        })
+
+    if not items:
+        # フォールバック: アクティブ案件からランダム
+        result = await db.execute(
+            select(AffiliateCampaignDB).where(AffiliateCampaignDB.status == "active").limit(3)
+        )
+        for c in result.scalars().all():
+            items.append({
+                "impression_id": None,
+                "title": c.name,
+                "body": "",
+                "image_url": None,
+                "tracking_url": build_tracked_url(c.id, token or "anonymous"),
+                "category": c.category,
+            })
+
+    return {"items": items}
+
+
+@router.get("/ios/click", summary="iOS WebClip クリック追跡リダイレクト")
+async def ios_click_redirect(
+    imp: str = Query(..., description="impression_id"),
+    to: str = Query(..., description="遷移先URL"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    iOS WebClip / ウィジェットのCTAタップ時に呼ばれる。
+    クリックを記録してから広告主URLへ 302 リダイレクトする。
+    """
+    await record_click(db, imp)
+    return RedirectResponse(url=to, status_code=302)
+
+
+@router.post("/admin/ios/push-webclip-ad", summary="iOS デバイスへ広告WebClip配信（管理者）")
+async def push_ios_webclip_ad(
+    udid: str = Query(..., description="iOSデバイスのUDID"),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    eCPMエンジンで最適なクリエイティブを選択し、iOS デバイスへ WebClip として配信する。
+    クリック追跡URLを WebClip の URL に設定して CTR を計測する。
+    """
+    ios_dev = await db.scalar(select(iOSDeviceDB).where(iOSDeviceDB.udid == udid))
+    if not ios_dev:
+        raise HTTPException(status_code=404, detail="iOS device not found")
+
+    creative = await select_creative(
+        db, slot_type="webclip_ios", platform="ios",
+    )
+    if not creative:
+        raise HTTPException(status_code=404, detail="No active creative available")
+
+    base = settings.ssp_endpoint.rstrip("/")
+    imp_id = creative.get("impression_id", "")
+    dest = creative.get("click_url", "")
+    tracking_url = f"{base}/mdm/ios/click?imp={imp_id}&to={dest}"
+
+    # MDM WebClip コマンドを送信
+    cmd_plist = mdm_commands.add_web_clip(
+        url=tracking_url,
+        label=creative.get("title", "広告"),
+    )
+    cmd_sent = await nanomdm_client.push_command(udid, cmd_plist)
+
+    push_sent = False
+    if ios_dev.push_token and ios_dev.push_magic:
+        push_sent = await send_mdm_push(ios_dev.push_token, ios_dev.push_magic)
+
+    return {
+        "udid": udid,
+        "impression_id": imp_id,
+        "creative_title": creative.get("title"),
+        "tracking_url": tracking_url,
+        "cmd_sent": cmd_sent,
+        "push_sent": push_sent,
+    }
+
+
+# ── 全デバイス一括配信 API ──────────────────────────────────────
+
+
+class BroadcastBody(BaseModel):
+    command_type: str          # update_lockscreen / show_notification / add_webclip
+    payload: dict = {}
+    platform: Optional[str] = None    # "android" / "ios" / None（全員）
+    dealer_id: Optional[str] = None
+    age_group: Optional[str] = None
+    send_push: bool = True
+
+
+@router.post("/admin/broadcast", summary="全デバイスへコマンド一括配信（管理者）")
+async def broadcast_command(
+    body: BroadcastBody,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    フィルター条件に一致する全デバイスへ MDM コマンドを一括送信する。
+
+    - platform=android → AndroidDeviceDB を対象、FCM で叩き起こす
+    - platform=ios     → iOSDeviceDB を対象、APNs で叩き起こす
+    - platform=None    → 両プラットフォーム
+
+    update_lockscreen の場合はデバイスごとに eCPM クリエイティブを自動選択して
+    impression_id をペイロードに注入する。
+    """
+    results = {
+        "android_queued": 0,
+        "android_fcm_sent": 0,
+        "ios_queued": 0,
+        "ios_push_sent": 0,
+        "errors": 0,
+    }
+
+    # ── Android ─────────────────────────────────────────────
+    if body.platform in (None, "android"):
+        # DeviceDB でフィルター → AndroidDeviceDB を結合
+        device_q = (
+            select(AndroidDeviceDB)
+            .join(DeviceDB, AndroidDeviceDB.enrollment_token == DeviceDB.enrollment_token)
+        )
+        if body.dealer_id:
+            device_q = device_q.where(DeviceDB.dealer_id == body.dealer_id)
+        if body.age_group:
+            device_q = device_q.where(DeviceDB.age_group == body.age_group)
+
+        android_rows = await db.execute(device_q)
+        android_devices = android_rows.scalars().all()
+
+        for dev in android_devices:
+            try:
+                payload = dict(body.payload)
+                if body.command_type == "update_lockscreen":
+                    creative = await select_creative(
+                        db, slot_type="lockscreen",
+                        device_id=dev.device_id, platform="android",
+                    )
+                    if creative:
+                        payload.setdefault("title", creative.get("title", ""))
+                        payload.setdefault("cta_url", creative.get("click_url", ""))
+                        payload["impression_id"] = creative.get("impression_id")
+
+                cmd = await enqueue_command(db, dev.device_id, body.command_type, payload)
+                results["android_queued"] += 1
+
+                if body.send_push and dev.fcm_token:
+                    ok = await send_command_ping(dev.fcm_token, dev.device_id)
+                    if ok:
+                        results["android_fcm_sent"] += 1
+            except Exception as e:
+                logger.warning(f"broadcast android error | device={dev.device_id[:8]}... | {e}")
+                results["errors"] += 1
+
+    # ── iOS ─────────────────────────────────────────────────
+    if body.platform in (None, "ios"):
+        ios_q = (
+            select(iOSDeviceDB)
+            .join(DeviceDB, iOSDeviceDB.enrollment_token == DeviceDB.enrollment_token)
+        )
+        if body.dealer_id:
+            ios_q = ios_q.where(DeviceDB.dealer_id == body.dealer_id)
+        if body.age_group:
+            ios_q = ios_q.where(DeviceDB.age_group == body.age_group)
+
+        ios_rows = await db.execute(ios_q)
+        ios_devices = ios_rows.scalars().all()
+
+        for dev in ios_devices:
+            try:
+                # iOS は WebClip コマンドを使って広告を配信
+                if body.command_type in ("update_lockscreen", "add_webclip"):
+                    creative = await select_creative(
+                        db, slot_type="webclip_ios", platform="ios",
+                    )
+                    if creative:
+                        base = settings.ssp_endpoint.rstrip("/")
+                        imp_id = creative.get("impression_id", "")
+                        dest = creative.get("click_url", "")
+                        tracking_url = f"{base}/mdm/ios/click?imp={imp_id}&to={dest}"
+                        cmd_plist = mdm_commands.add_web_clip(
+                            url=tracking_url,
+                            label=creative.get("title", "広告"),
+                        )
+                        await nanomdm_client.push_command(dev.udid, cmd_plist)
+                        results["ios_queued"] += 1
+
+                if body.send_push and dev.push_token and dev.push_magic:
+                    ok = await send_mdm_push(dev.push_token, dev.push_magic)
+                    if ok:
+                        results["ios_push_sent"] += 1
+            except Exception as e:
+                logger.warning(f"broadcast ios error | udid={dev.udid[:8]}... | {e}")
+                results["errors"] += 1
+
+    total = results["android_queued"] + results["ios_queued"]
+    logger.info(
+        f"Broadcast complete | type={body.command_type} | total={total} "
+        f"| android={results['android_queued']} | ios={results['ios_queued']}"
+    )
+    return results
