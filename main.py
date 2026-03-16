@@ -39,6 +39,7 @@ from config import settings
 from database import Base, engine, get_db
 from db_models import AdSlotDB, ImpressionDB, PublisherDB
 from dsp.mock_dsp import create_mock_dsps
+from mdm.router import router as mdm_router
 from publisher.router import router as publisher_router
 
 logging.basicConfig(
@@ -81,6 +82,7 @@ app = FastAPI(
 
 templates = Jinja2Templates(directory="dashboard/templates")
 app.include_router(publisher_router)
+app.include_router(mdm_router)
 
 
 # ── ヘッダービディングエンドポイント ───────────────────────────
@@ -328,6 +330,35 @@ async def get_my_ads_txt(
         f"{line}\n"
     )
     return PlainTextResponse(comment)
+
+
+# ── Apple App Site Association（App Clips用）──────────────────
+
+@app.get("/.well-known/apple-app-site-association", summary="AASA（App Clips対応）")
+async def apple_app_site_association():
+    """
+    App ClipsがNFC/QR起動する際にAppleが検証するファイル。
+    app_bundle_id を .env で設定してから App Clipsを公開する。
+    参照: https://developer.apple.com/documentation/xcode/supporting-associated-domains
+    """
+    bundle_id = settings.app_bundle_id or "com.example.ssp"
+    return JSONResponse(
+        content={
+            "applinks": {
+                "apps": [],
+                "details": [
+                    {
+                        "appID": bundle_id,
+                        "paths": ["/appclip/*", "/mdm/appclips/*"],
+                    }
+                ],
+            },
+            "appclips": {
+                "apps": [bundle_id]
+            },
+        },
+        headers={"Content-Type": "application/json"},
+    )
 
 
 # ── ヘルスチェック ─────────────────────────────────────────────
