@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -45,6 +46,10 @@ class LockscreenActivity : Activity() {
     private var currentImpressionId: String? = null
     private var currentDeviceId: String? = null
 
+    // ADT-01: OMID viewability
+    private var omidSession: com.iab.omid.library.platform.dpc.adsession.AdSession? = null
+    private var adRootView: View? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -77,6 +82,11 @@ class LockscreenActivity : Activity() {
 
         buildUi(title, ctaUrl, impressionId)
 
+        // ADT-01: OMID viewability セッション開始
+        OmidAdSessionManager.initialize(this)
+        omidSession = OmidAdSessionManager.createNativeSession(this, adRootView ?: window.decorView)
+        omidSession?.let { OmidAdSessionManager.reportImpression(it) }
+
         // 8秒後に自動解除（DPC-07: dismiss_type = auto_dismiss）
         Handler(Looper.getMainLooper()).postDelayed({
             reportKpi(LockscreenKpiReporter.DISMISS_AUTO)
@@ -92,6 +102,11 @@ class LockscreenActivity : Activity() {
     override fun onBackPressed() {
         reportKpi(LockscreenKpiReporter.DISMISS_SWIPE)
         super.onBackPressed()
+    }
+
+    override fun onDestroy() {
+        OmidAdSessionManager.finishSession(omidSession)
+        super.onDestroy()
     }
 
     private fun reportKpi(dismissType: String) {
@@ -154,6 +169,7 @@ class LockscreenActivity : Activity() {
         })
 
         setContentView(root)
+        adRootView = root
     }
 
     private fun onCtaTapped(ctaUrl: String, impressionId: String?) {

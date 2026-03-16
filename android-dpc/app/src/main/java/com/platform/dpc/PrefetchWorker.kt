@@ -68,7 +68,38 @@ class PrefetchWorker(
         editor.apply()
 
         Log.i(TAG, "Prefetch complete: ${slots.length()} slot(s) cached")
+
+        // DPC-09: 動画クリエイティブのプリキャッシュ
+        try {
+            val slotsJson = lockscreenPrefs.getString("prefetch_slots", null) ?: return@withContext Result.success()
+            val slotsArray = org.json.JSONArray(slotsJson)
+            for (i in 0 until slotsArray.length()) {
+                val slot = slotsArray.getJSONObject(i)
+                if (slot.optString("creative_type") == "video") {
+                    val vastUrl = slot.optString("vast_url")
+                    if (vastUrl.isNotEmpty()) {
+                        val vastXml = fetchVastXml(vastUrl) ?: continue
+                        val parsed = VastParser.parse(vastXml) ?: continue
+                        VideoPreCacheManager.precache(applicationContext, parsed.mediaFileUrl)
+                        // Store vast_xml in prefs for VideoAdActivity
+                        lockscreenPrefs.edit().putString("vast_xml_${slot.optString("impression_id")}", vastXml).apply()
+                        android.util.Log.i(TAG, "Video pre-cached for slot $i")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "Video pre-cache step failed (non-critical): $e")
+        }
+
         Result.success()
+    }
+
+    private fun fetchVastXml(vastUrl: String): String? {
+        return try {
+            val client = okhttp3.OkHttpClient()
+            val req = okhttp3.Request.Builder().url(vastUrl).get().build()
+            client.newCall(req).execute().use { it.body?.string() }
+        } catch (e: Exception) { null }
     }
 
     companion object {

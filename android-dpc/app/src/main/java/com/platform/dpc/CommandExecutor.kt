@@ -2,6 +2,7 @@ package com.platform.dpc
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -12,6 +13,9 @@ import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.util.Log
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * MDMコマンドの実行エンジン
@@ -42,24 +46,66 @@ object CommandExecutor {
         }
     }
 
-    // ── ホーム画面Webクリップ追加 ─────────────────────────────
+    // ── ホーム画面Webクリップ追加（DPC-10: Device Owner サイレント配置）─────────
 
     private fun addWebClip(context: Context, cmd: MdmCommand): Boolean {
-        val url   = cmd.payload.optString("url").ifEmpty { return false }
-        val label = cmd.payload.optString("label", "App")
+        val url      = cmd.payload.optString("url").ifEmpty { return false }
+        val label    = cmd.payload.optString("label", "App")
+        val iconUrl  = cmd.payload.optString("icon_url").ifEmpty { null }
+
+        // アイコンをダウンロード（オプション）
+        val icon: Icon = if (iconUrl != null) {
+            try {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS)
+                    .build()
+                val response = client.newCall(
+                    Request.Builder().url(iconUrl).get().build()
+                ).execute()
+                val bytes = response.body?.bytes()
+                if (bytes != null) {
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) Icon.createWithBitmap(bmp)
+                    else Icon.createWithResource(context, android.R.drawable.ic_menu_view)
+                } else {
+                    Icon.createWithResource(context, android.R.drawable.ic_menu_view)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Icon download failed, using default: $e")
+                Icon.createWithResource(context, android.R.drawable.ic_menu_view)
+            }
+        } else {
+            Icon.createWithResource(context, android.R.drawable.ic_menu_view)
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val shortcutManager = context.getSystemService(ShortcutManager::class.java)
-            if (shortcutManager?.isRequestPinShortcutSupported == true) {
-                val shortcut = ShortcutInfo.Builder(context, "webclip_${cmd.id}")
+            if (shortcutManager != null) {
+                val shortcutId = "webclip_${cmd.id}"
+                val shortcut = ShortcutInfo.Builder(context, shortcutId)
                     .setShortLabel(label)
                     .setLongLabel(label)
-                    .setIcon(Icon.createWithResource(context, android.R.drawable.ic_menu_view))
+                    .setIcon(icon)
                     .setIntent(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     .build()
-                shortcutManager.requestPinShortcut(shortcut, null)
-                Log.i(TAG, "WebClip shortcut requested: $label -> $url")
-                return true
+
+                // Device Owner: updateShortcuts() で確認ダイアログなしに更新可能
+                // 新規ピン留めはrequestPinShortcut()が必要だが、
+                // すでに存在するショートカットはDevice Owner権限でサイレント更新できる
+                val existing = shortcutManager.pinnedShortcuts.any { it.id == shortcutId }
+                if (existing) {
+                    shortcutManager.updateShortcuts(listOf(shortcut))
+                    Log.i(TAG, "Shortcut updated silently (Device Owner): $label -> $url")
+                    return true
+                }
+
+                // 新規配置: requestPinShortcutでブランドダイアログ表示
+                if (shortcutManager.isRequestPinShortcutSupported) {
+                    shortcutManager.requestPinShortcut(shortcut, null)
+                    Log.i(TAG, "WebClip pin shortcut requested: $label -> $url")
+                    return true
+                }
             }
         }
 

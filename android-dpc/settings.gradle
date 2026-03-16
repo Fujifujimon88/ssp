@@ -10,6 +10,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // IAB OM SDK（Viewability計測）
+        maven { url 'https://s3.amazonaws.com/omsdk-files/stable-release/com.iab.omid/' }
     }
 }
 

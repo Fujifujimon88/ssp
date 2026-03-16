@@ -52,9 +52,17 @@ dependencies {
     // HTTP（バックエンドAPI呼び出し）
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
+    // IAB OM SDK（Viewability計測）
+    implementation 'com.iab.omid:omsdk-android:1.4.12'
+
     // JSON
     implementation 'org.json:json:20231013'
 
     // コルーチン
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    // Media3 ExoPlayer（DPC-09: 動画広告プリキャッシュ＋再生）
+    implementation 'androidx.media3:media3-exoplayer:1.3.1'
+    implementation 'androidx.media3:media3-ui:1.3.1'
+    implementation 'androidx.media3:media3-datasource-okhttp:1.3.1'
 }
