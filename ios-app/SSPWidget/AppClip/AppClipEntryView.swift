@@ -21,7 +21,16 @@ struct AppClipEntryView: View {
 
     enum Phase { case teaser, consent, enrolling, done }
 
-    let serverURL = "https://mdm.example.com"
+    // Read server URL from Build Settings (SSPServerURL in Info.plist),
+    // falling back to the shared App Group value set by the main app.
+    let serverURL: String = {
+        if let url = Bundle.main.object(forInfoDictionaryKey: "SSPServerURL") as? String,
+           !url.isEmpty, url != "$(SSP_SERVER_URL)" {
+            return url
+        }
+        return UserDefaults(suiteName: "group.jp.platform.ssp")?
+            .string(forKey: "server_url") ?? "https://mdm.example.com"
+    }()
 
     var body: some View {
         switch phase {
@@ -36,7 +45,12 @@ struct AppClipEntryView: View {
         case .enrolling:
             EnrollWebView(
                 url: enrollURL,
-                onComplete: { withAnimation { phase = .done } }
+                onComplete: {
+                    // Persist server_url to App Group so WidgetExtension can use it immediately.
+                    let shared = UserDefaults(suiteName: "group.jp.platform.ssp")
+                    shared?.set(serverURL, forKey: "server_url")
+                    withAnimation { phase = .done }
+                }
             )
         case .done:
             DoneView()
@@ -174,8 +188,14 @@ struct EnrollWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             // エンロール完了ページを検出
-            if webView.url?.path.contains("enrolled") == true ||
-               webView.url?.path.contains("complete") == true {
+            guard let url = webView.url else { return }
+            if url.path.contains("enrolled") || url.path.contains("complete") {
+                // Extract device_id from query string and persist for WidgetExtension.
+                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                   let deviceId = components.queryItems?.first(where: { $0.name == "device_id" })?.value,
+                   !deviceId.isEmpty {
+                    UserDefaults(suiteName: "group.jp.platform.ssp")?.set(deviceId, forKey: "device_id")
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     self.onComplete()
                 }

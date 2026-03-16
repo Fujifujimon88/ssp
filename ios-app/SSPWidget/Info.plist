@@ -14,6 +14,16 @@
     <array>
         <string>jp.platform.ssp.widget-refresh</string>
     </array>
+    <!-- Server URL injected via Xcode Build Settings (SSP_SERVER_URL).
+         Set this in your .xcconfig or scheme's Build Settings to the
+         production / staging URL before archiving. -->
+    <key>SSPServerURL</key>
+    <string>$(SSP_SERVER_URL)</string>
+    <!-- App Groups: shared UserDefaults between main app and WidgetExtension -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.jp.platform.ssp</string>
+    </array>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
