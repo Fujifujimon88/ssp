@@ -10,7 +10,7 @@ import json
 import logging
 from datetime import date, datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_models import (
@@ -25,6 +25,46 @@ logger = logging.getLogger(__name__)
 
 # Frequency cap: max impressions per creative per device per day
 FREQ_CAP_DAILY = 3
+
+DEFAULT_CTR = 0.03  # コールドスタート: 3%
+
+
+async def _get_creative_ctrs(
+    db: AsyncSession,
+    creative_ids: list[str],
+    slot_type: str,
+    min_impressions: int = 100,
+) -> dict[str, float]:
+    """
+    クリエイティブ×スロットタイプ別の実績CTRを返す。
+    インプレッション数が min_impressions 未満の場合はデフォルト値(0.03=3%)を使用。
+
+    Returns: {creative_id: ctr_float}
+    """
+    if not creative_ids:
+        return {}
+
+    rows = await db.execute(
+        select(
+            MdmImpressionDB.creative_id,
+            func.count(MdmImpressionDB.id).label("impressions"),
+            func.sum(func.cast(MdmImpressionDB.clicked, Integer)).label("clicks"),
+        )
+        .where(MdmImpressionDB.creative_id.in_(creative_ids))
+        .group_by(MdmImpressionDB.creative_id)
+    )
+
+    ctrs: dict[str, float] = {}
+
+    for row in rows.all():
+        if row.impressions >= min_impressions:
+            ctrs[row.creative_id] = (row.clicks or 0) / row.impressions
+        else:
+            # ベイズ平均: 実績データが少ない場合はデフォルトCTRとブレンド
+            alpha = row.impressions / min_impressions
+            ctrs[row.creative_id] = alpha * ((row.clicks or 0) / max(row.impressions, 1)) + (1 - alpha) * DEFAULT_CTR
+
+    return ctrs
 
 
 async def select_creative(
@@ -128,8 +168,16 @@ async def select_creative(
         )
         return None
 
-    # reward_amount（広告主支払い意欲）で降順ソートして最上位を選択
-    candidates.sort(key=lambda r: r[1].reward_amount, reverse=True)
+    # eCPM = reward_amount × predicted_CTR × 1000 で降順ソートして最上位を選択
+    creative_ids = [r[0].id for r in candidates]
+    ctrs = await _get_creative_ctrs(db, creative_ids, slot_type)
+
+    def ecpm(row) -> float:
+        creative, campaign = row
+        ctr = ctrs.get(creative.id, DEFAULT_CTR)
+        return campaign.reward_amount * ctr * 1000
+
+    candidates.sort(key=ecpm, reverse=True)
     creative, campaign = candidates[0]
 
     # インプレッション記録

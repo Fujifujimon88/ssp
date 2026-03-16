@@ -2212,3 +2212,61 @@ async def impression_stats(
             "revenue_est_jpy": round(float(row.revenue_est or 0) / 1000, 2),
         })
     return results
+
+
+@router.get("/admin/creatives/ecpm-stats", summary="クリエイティブ eCPM ランキング（管理者）")
+async def creative_ecpm_stats(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    クリエイティブ別 eCPM ランキング（上位20件）。
+    eCPM = reward_amount × CTR × 1000
+    """
+    from sqlalchemy import Integer, cast, literal
+
+    DEFAULT_CTR = 0.03
+
+    # クリエイティブ×インプレッション集計
+    imp_rows = await db.execute(
+        select(
+            MdmImpressionDB.creative_id,
+            func.count(MdmImpressionDB.id).label("impressions"),
+            func.sum(cast(MdmImpressionDB.clicked, Integer)).label("clicks"),
+        )
+        .where(MdmImpressionDB.creative_id.isnot(None))
+        .group_by(MdmImpressionDB.creative_id)
+    )
+    imp_by_creative: dict[str, dict] = {}
+    for row in imp_rows.all():
+        imp_by_creative[row.creative_id] = {
+            "impressions": row.impressions or 0,
+            "clicks": int(row.clicks or 0),
+        }
+
+    # クリエイティブ + キャンペーン情報を取得
+    creative_rows = await db.execute(
+        select(CreativeDB, AffiliateCampaignDB)
+        .join(AffiliateCampaignDB, CreativeDB.campaign_id == AffiliateCampaignDB.id)
+        .where(CreativeDB.status == "active")
+    )
+
+    results = []
+    for creative, campaign in creative_rows.all():
+        stats = imp_by_creative.get(creative.id, {"impressions": 0, "clicks": 0})
+        imps = stats["impressions"]
+        clicks = stats["clicks"]
+        ctr = (clicks / imps) if imps > 0 else DEFAULT_CTR
+        ecpm_val = campaign.reward_amount * ctr * 1000
+        results.append({
+            "creative_id": creative.id,
+            "title": creative.title,
+            "impressions": imps,
+            "clicks": clicks,
+            "ctr": round(ctr, 4),
+            "reward_amount": campaign.reward_amount,
+            "ecpm": round(ecpm_val, 2),
+        })
+
+    results.sort(key=lambda x: x["ecpm"], reverse=True)
+    return results[:20]
