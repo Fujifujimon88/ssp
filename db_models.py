@@ -41,6 +41,7 @@ class AdSlotDB(Base):
     height: Mapped[int] = mapped_column(Integer, nullable=True)
     floor_price: Mapped[float] = mapped_column(Float, nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=True)
+    sizes: Mapped[str] = mapped_column(Text, default="")  # JSON: [[300,250],[728,90]]
     tag_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

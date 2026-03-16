@@ -394,14 +394,34 @@
           <input name="floor_price" type="number" step="0.1" min="0" placeholder="0.5">
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-field">
-          <label>幅 (px)</label>
-          <input name="width" type="number" placeholder="300">
+      <div class="form-field">
+        <label>広告サイズ（複数選択でマルチサイズ入札）</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px" id="size-presets">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" name="sizes" value="300,250" checked> 300×250 レクタングル
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" name="sizes" value="728,90"> 728×90 リーダーボード
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" name="sizes" value="320,50"> 320×50 モバイルバナー
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" name="sizes" value="300,600"> 300×600 ハーフページ
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" name="sizes" value="160,600"> 160×600 スカイスクレイパー
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" name="sizes" value="320,100"> 320×100 モバイルレクタングル
+          </label>
         </div>
-        <div class="form-field">
-          <label>高さ (px)</label>
-          <input name="height" type="number" placeholder="250">
+        <div style="margin-top:8px;display:flex;align-items:center;gap:6px">
+          <input id="custom-w" type="number" placeholder="幅" style="width:70px;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <span style="color:var(--muted)">×</span>
+          <input id="custom-h" type="number" placeholder="高さ" style="width:70px;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="addCustomSize()">+ カスタム追加</button>
+          <span id="custom-msg" style="font-size:12px;color:var(--green)"></span>
         </div>
       </div>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px">
@@ -581,7 +601,11 @@ async function loadSlots() {
     <tr>
       <td>${s.name}</td>
       <td><span class="mono">${s.format}</span></td>
-      <td class="mono">${s.width || '—'} × ${s.height || '—'}</td>
+      <td class="mono" style="font-size:12px">${
+        s.sizes && s.sizes.length > 0
+          ? s.sizes.map(sz => sz[0]+'×'+sz[1]).join(', ')
+          : (s.width || '—') + ' × ' + (s.height || '—')
+      }</td>
       <td>$${s.floor_price !== null ? s.floor_price : '—'}</td>
       <td>${s.active
         ? '<span class="active-dot">● 配信中</span>'
@@ -617,12 +641,15 @@ document.getElementById('form-create-slot').addEventListener('submit', async (e)
   const msgEl = document.getElementById('create-slot-msg');
   msgEl.innerHTML = '';
 
+  // チェックされたサイズを収集
+  const checkedSizes = Array.from(f.querySelectorAll('input[name="sizes"]:checked'))
+    .map(cb => cb.value.split(',').map(Number));
+
   const payload = {
     publisher_id: pubInfo.id,
     name: f.name.value,
     format: f.format.value,
-    width: f.width.value ? parseInt(f.width.value) : null,
-    height: f.height.value ? parseInt(f.height.value) : null,
+    sizes: checkedSizes.length > 0 ? checkedSizes : [[300, 250]],
     floor_price: f.floor_price.value ? parseFloat(f.floor_price.value) : null,
   };
 
@@ -788,9 +815,35 @@ function copyAdsTxt() {
 }
 
 // ── モーダル ─────────────────────────────────────────────────────
+function addCustomSize() {
+  const w = parseInt(document.getElementById('custom-w').value);
+  const h = parseInt(document.getElementById('custom-h').value);
+  const msg = document.getElementById('custom-msg');
+  if (!w || !h || w < 1 || h < 1) { msg.textContent = '幅と高さを入力してください'; msg.style.color = 'var(--red)'; return; }
+  const val = `${w},${h}`;
+  const container = document.getElementById('size-presets');
+  if (container.querySelector(`input[value="${val}"]`)) {
+    container.querySelector(`input[value="${val}"]`).checked = true;
+    msg.textContent = '既に追加済みです'; msg.style.color = 'var(--yellow)'; return;
+  }
+  const label = document.createElement('label');
+  label.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer';
+  label.innerHTML = `<input type="checkbox" name="sizes" value="${val}" checked> ${w}×${h} カスタム`;
+  container.appendChild(label);
+  document.getElementById('custom-w').value = '';
+  document.getElementById('custom-h').value = '';
+  msg.textContent = `${w}×${h} を追加しました`; msg.style.color = 'var(--green)';
+}
+
 function openCreateSlotModal() {
   document.getElementById('form-create-slot').reset();
   document.getElementById('create-slot-msg').innerHTML = '';
+  document.getElementById('custom-msg').textContent = '';
+  // カスタムサイズ行を削除してプリセットのみに戻す
+  const container = document.getElementById('size-presets');
+  container.querySelectorAll('label').forEach((l, i) => { if (i >= 6) l.remove(); });
+  // 300x250 だけデフォルトチェック
+  container.querySelectorAll('input[name="sizes"]').forEach((cb, i) => { cb.checked = i === 0; });
   document.getElementById('modal-create-slot').classList.add('open');
 }
 function closeModal(id) {

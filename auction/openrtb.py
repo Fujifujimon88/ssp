@@ -10,9 +10,15 @@ import uuid
 
 # ── Bid Request ────────────────────────────────────────────────
 
+class BannerFormat(BaseModel):
+    w: int
+    h: int
+
+
 class Banner(BaseModel):
-    w: Optional[int] = None           # 幅(px)
-    h: Optional[int] = None           # 高さ(px)
+    w: Optional[int] = None           # 幅(px) — primaryサイズ
+    h: Optional[int] = None           # 高さ(px) — primaryサイズ
+    format: Optional[list[BannerFormat]] = None  # マルチサイズリスト
     btype: Optional[list[int]] = None # ブロックするバナータイプ
     battr: Optional[list[int]] = None # ブロックする広告属性
     pos: Optional[int] = None         # 広告掲載位置

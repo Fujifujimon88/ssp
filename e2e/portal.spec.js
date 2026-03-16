@@ -83,8 +83,7 @@ test.describe("スロット作成フロー（UI）", () => {
 
     const slotName = `UIテストスロット_${Date.now()}`;
     await page.locator('[name="name"]').fill(slotName);
-    await page.locator('[name="width"]').fill("300");
-    await page.locator('[name="height"]').fill("250");
+    // 300x250 はデフォルトでチェック済み
     await page.locator('[name="floor_price"]').fill("0.5");
     await page.locator('button[type="submit"]').click();
 

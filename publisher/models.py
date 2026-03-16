@@ -47,6 +47,7 @@ class AdSlotCreate(BaseModel):
     format: AdFormat = AdFormat.BANNER
     width: Optional[int] = None
     height: Optional[int] = None
+    sizes: list[list[int]] = []        # [[300,250],[728,90]] — 複数サイズ対応
     floor_price: Optional[float] = None  # Noneの場合はパブリッシャー設定を使用
     position: Optional[int] = None     # IAB広告位置コード
 
@@ -58,6 +59,13 @@ class AdSlot(AdSlotCreate):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     impressions_today: int = 0
     revenue_today_usd: float = 0.0
+
+    def effective_sizes(self) -> list[list[int]]:
+        """sizes が空の場合は width/height から1サイズを返す"""
+        if self.sizes:
+            return self.sizes
+        w, h = self.width or 300, self.height or 250
+        return [[w, h]]
 
 
 # ── レポート ───────────────────────────────────────────────────

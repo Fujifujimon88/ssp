@@ -55,13 +55,16 @@ googletag.cmd.push(function() {{
 
 def generate_slot_div(slot: AdSlot) -> str:
     """広告スロットに対応する<div>タグを生成する"""
-    w = slot.width or 300
-    h = slot.height or 250
-    return f"""<!-- 広告スロット: {slot.name} -->
+    import json as _json
+    sizes = slot.effective_sizes()
+    primary = sizes[0]
+    w, h = primary[0], primary[1]
+    sizes_json = _json.dumps(sizes)
+    return f"""<!-- 広告スロット: {slot.name} (sizes: {sizes_json}) -->
 <div id='ssp-slot-{slot.tag_id}' style='width:{w}px;height:{h}px;'>
   <script>
   googletag.cmd.push(function() {{
-    googletag.defineSlot('/your-network-code/ssp-{slot.tag_id}', [{w}, {h}], 'ssp-slot-{slot.tag_id}')
+    googletag.defineSlot('/your-network-code/ssp-{slot.tag_id}', {sizes_json}, 'ssp-slot-{slot.tag_id}')
       .addService(googletag.pubads());
     googletag.display('ssp-slot-{slot.tag_id}');
   }});
@@ -71,19 +74,20 @@ def generate_slot_div(slot: AdSlot) -> str:
 
 def _build_ad_units(publisher: Publisher, slots: list[AdSlot]) -> str:
     """Prebid.jsのadUnits配列を文字列で生成"""
+    import json as _json
     units = []
     for slot in slots:
         if not slot.active:
             continue
-        w = slot.width or 300
-        h = slot.height or 250
+        sizes = slot.effective_sizes()
         floor = slot.floor_price or publisher.floor_price
+        sizes_json = _json.dumps(sizes)
 
         unit = f"""  {{
     code: 'ssp-slot-{slot.tag_id}',
     mediaTypes: {{
       banner: {{
-        sizes: [[{w}, {h}]]
+        sizes: {sizes_json}
       }}
     }},
     bids: [{{
@@ -92,6 +96,7 @@ def _build_ad_units(publisher: Publisher, slots: list[AdSlot]) -> str:
         publisherId: '{publisher.id}',
         slotId:      '{slot.tag_id}',
         floorPrice:  {floor},
+        sizes:       {sizes_json},
         endpoint:    '{SSP_ENDPOINT}/v1/bid'
       }}
     }}]

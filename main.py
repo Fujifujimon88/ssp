@@ -30,7 +30,7 @@ from analytics.collector import record_auction, get_daily_stats
 from analytics.report import generate_daily_report
 from auction.engine import AuctionEngine
 from auction.openrtb import (
-    Banner, BidRequest, Impression,
+    Banner, BannerFormat, BidRequest, Impression,
     Publisher as OrtbPublisher, Site,
 )
 from auth import get_current_publisher_id
@@ -105,11 +105,15 @@ async def header_bidding(request: Request, db: AsyncSession = Depends(get_db)):
         floor_price = slot.floor_price
 
     imp_id = str(uuid.uuid4())
+    banner_formats = [BannerFormat(w=s[0], h=s[1]) for s in sizes if len(s) == 2]
     bid_request = BidRequest(
         imp=[
             Impression(
                 id=imp_id,
-                banner=Banner(w=sizes[0][0], h=sizes[0][1]),
+                banner=Banner(
+                    w=sizes[0][0], h=sizes[0][1],
+                    format=banner_formats if len(banner_formats) > 1 else None,
+                ),
                 tagid=slot_id,
                 bidfloor=floor_price,
                 secure=1,
