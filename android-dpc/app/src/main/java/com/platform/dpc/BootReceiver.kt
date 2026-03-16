@@ -13,7 +13,8 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            Log.i(TAG, "Boot completed, scheduling workers")
+            Log.i(TAG, "Boot completed, starting service and scheduling workers")
+            MdmForegroundService.start(context)
             CommandPoller.schedule(context)
             PrefetchWorker.schedule(context)
         }

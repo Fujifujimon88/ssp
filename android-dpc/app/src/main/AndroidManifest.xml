@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:allowBackup="true"
@@ -47,6 +48,17 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- MDM常駐フォアグラウンドサービス（DPC-04） -->
+        <service
+            android:name=".MdmForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
+        <!-- サイレントインストール結果レシーバー（DPC-01） -->
+        <receiver
+            android:name=".PackageInstallStatusReceiver"
+            android:exported="false" />
 
         <!-- インストール検知レシーバー（DPC-03: ユーザー確認後のインストール完了を報告） -->
         <receiver

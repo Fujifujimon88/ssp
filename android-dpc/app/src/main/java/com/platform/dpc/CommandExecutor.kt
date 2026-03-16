@@ -112,9 +112,9 @@ object CommandExecutor {
     // ── APKインストール ───────────────────────────────────────
 
     /**
-     * APKをダウンロードしてインストール画面を開く（ユーザー確認あり）。
-     * キャッシュ済みAPKがあれば事前DL済みのものを使用。
-     * インストール完了後はInstallReporter経由でサーバーへ報告（DPC-03）。
+     * APKインストール（DPC-01: Device Owner権限でサイレント実行）。
+     * キャッシュ済みAPKがあればPackageInstaller.Session APIでサイレントインストール。
+     * キャッシュなしはバックグラウンドDLをキューイングし、完了後に再実行。
      */
     private fun installApk(context: Context, cmd: MdmCommand): Boolean {
         val apkUrl = cmd.payload.optString("apk_url").ifEmpty { return false }
@@ -124,37 +124,24 @@ object CommandExecutor {
 
         // キャッシュ済みAPKを確認（DPC-02のプリDL済みファイル）
         val cachedApk = ApkDownloadManager.getCachedApk(context, apkUrl, apkSha256)
-        val installUri = if (cachedApk != null) {
-            Log.i(TAG, "Using cached APK: ${cachedApk.name}")
-            androidx.core.content.FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                cachedApk,
-            )
+
+        return if (cachedApk != null && packageName.isNotEmpty() && campaignId.isNotEmpty()) {
+            // DPC-01: サイレントインストール（Device Owner権限）
+            Log.i(TAG, "Silent install from cache: pkg=$packageName")
+            SilentInstallManager.install(context, cachedApk, packageName, campaignId)
         } else {
-            // キャッシュなし → URLを直接開く（ブラウザ経由）
-            Uri.parse(apkUrl)
-        }
-
-        val intent = Intent(Intent.ACTION_VIEW, installUri).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (cachedApk != null) {
-                setDataAndType(installUri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // キャッシュなし → DL をキューイングしてURLをブラウザで開く
+            if (packageName.isNotEmpty() && campaignId.isNotEmpty()) {
+                ApkDownloadManager.enqueue(context, apkUrl, apkSha256, campaignId)
+                Log.i(TAG, "APK download enqueued for next silent install: $apkUrl")
             }
+            // フォールバック: ブラウザ経由インストール画面
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
         }
-        context.startActivity(intent)
-        Log.i(TAG, "APK install screen shown: $apkUrl")
-
-        // インストール確認はパッケージマネージャーで監視（PackageInstallReceiver）
-        // campaignIdがあれば後続レポートのためにPrefsに保存
-        if (campaignId.isNotEmpty() && packageName.isNotEmpty()) {
-            val prefs = context.getSharedPreferences("mdm_pending_installs", Context.MODE_PRIVATE)
-            prefs.edit().putString(packageName, campaignId).apply()
-            Log.i(TAG, "Pending install tracked: pkg=$packageName campaign=$campaignId")
-        }
-
-        return true
     }
 
     // ── ロック画面コンテンツ更新 ─────────────────────────────

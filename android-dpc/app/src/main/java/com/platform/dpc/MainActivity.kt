@@ -91,11 +91,13 @@ class MainActivity : AppCompatActivity() {
             appendLog("デバイス管理者: 無効 → 「有効化」ボタンをタップしてください")
         }
 
-        // WorkManagerスケジュール
+        // WorkManagerスケジュール + 常駐サービス起動（DPC-04）
         CommandPoller.schedule(this)
         PrefetchWorker.schedule(this)
+        MdmForegroundService.start(this)
         appendLog("バックグラウンドポーリング: 開始（30分間隔）")
         appendLog("コンテンツプリフェッチ: 開始（30分間隔）")
+        appendLog("常駐サービス: 起動")
 
         // 初回登録
         val isRegistered = prefs.getBoolean("registered", false)
