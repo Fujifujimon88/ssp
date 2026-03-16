@@ -226,6 +226,10 @@ async def test_device_consent_returns_android_apk_url(client: AsyncClient):
     resp = await client.post("/mdm/device/consent", json={
         "age_group": "20s",
         "user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36",
+        "consent_items": [
+            "lockscreen_ads", "push_notifications", "webclip_install",
+            "vpn_setup", "app_install", "data_collection",
+        ],
     })
     assert resp.status_code == 200
     data = resp.json()

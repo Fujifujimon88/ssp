@@ -121,6 +121,15 @@ PORTAL_HTML = """<!DOCTYPE html>
     .consent-icon {{ font-size: 22px; flex-shrink: 0; margin-top: 1px; }}
     .consent-text {{ font-size: 14px; line-height: 1.5; color: #3a3a3c; }}
     .consent-text strong {{ color: #1d1d1f; }}
+    .consent-check {{
+      cursor: pointer; border-radius: 8px; margin: 0 -4px;
+      padding: 10px 4px; transition: background 0.15s;
+    }}
+    .consent-check:hover {{ background: #f5f5f7; }}
+    .consent-check input[type=checkbox] {{
+      width: 20px; height: 20px; flex-shrink: 0; margin-top: 2px;
+      accent-color: #007aff; cursor: pointer;
+    }}
     .age-select {{
       width: 100%; padding: 12px; font-size: 15px; border-radius: 10px;
       border: 1.5px solid #d1d1d6; background: #fff; appearance: none;
@@ -163,22 +172,68 @@ PORTAL_HTML = """<!DOCTYPE html>
     </div>
 
     <div class="card">
-      <h2>📋 このサービスでできること</h2>
-      <div class="consent-item">
-        <span class="consent-icon">🔒</span>
-        <div class="consent-text"><strong>VPN自動設定</strong><br>安全なインターネット接続を自動で設定します</div>
-      </div>
-      <div class="consent-item">
+      <h2>📋 同意事項の確認（全項目必須）</h2>
+      <p style="font-size:13px;color:#6e6e73;margin-bottom:14px;">
+        以下のすべてにチェックを入れてから進んでください。
+      </p>
+
+      <label class="consent-item consent-check" for="cb_lockscreen">
+        <input type="checkbox" id="cb_lockscreen" value="lockscreen_ads" onchange="checkReady()">
+        <span class="consent-icon">🖼️</span>
+        <div class="consent-text">
+          <strong>ロック画面に広告が表示されること</strong><br>
+          スワイプ解除時に広告コンテンツが表示されます。いつでも解除ページ（/mdm/optout）から停止できます。
+        </div>
+      </label>
+
+      <label class="consent-item consent-check" for="cb_push">
+        <input type="checkbox" id="cb_push" value="push_notifications" onchange="checkReady()">
+        <span class="consent-icon">🔔</span>
+        <div class="consent-text">
+          <strong>プッシュ通知でおすすめ情報が届くこと</strong><br>
+          クーポンやサービス情報を通知で受け取ります。端末の通知設定からオフにできます。
+        </div>
+      </label>
+
+      <label class="consent-item consent-check" for="cb_webclip">
+        <input type="checkbox" id="cb_webclip" value="webclip_install" onchange="checkReady()">
         <span class="consent-icon">📱</span>
-        <div class="consent-text"><strong>ホーム画面にショートカット追加</strong><br>便利なサービスへのアクセスを追加します</div>
-      </div>
-      <div class="consent-item">
-        <span class="consent-icon">🎁</span>
-        <div class="consent-text"><strong>クーポン・お得情報の配信</strong><br>おすすめのアプリやサービスをお知らせします</div>
-      </div>
-      <div class="consent-item">
-        <span class="consent-icon">⚙️</span>
-        <div class="consent-text"><strong>設定の遠隔更新</strong><br>VPN設定などを最新状態に自動更新します</div>
+        <div class="consent-text">
+          <strong>ホーム画面にショートカットが追加されること</strong><br>
+          便利なサービスへのアクセスがホーム画面に追加されます。
+        </div>
+      </label>
+
+      <label class="consent-item consent-check" for="cb_vpn">
+        <input type="checkbox" id="cb_vpn" value="vpn_setup" onchange="checkReady()">
+        <span class="consent-icon">🔒</span>
+        <div class="consent-text">
+          <strong>VPNが自動設定されること</strong><br>
+          安全なインターネット接続のためVPNプロファイルがインストールされます。
+        </div>
+      </label>
+
+      <label class="consent-item consent-check" for="cb_app">
+        <input type="checkbox" id="cb_app" value="app_install" onchange="checkReady()">
+        <span class="consent-icon">⬇️</span>
+        <div class="consent-text">
+          <strong>アプリが自動でインストールされることがあること</strong>（Android）<br>
+          おすすめアプリがバックグラウンドで自動インストールされる場合があります。
+        </div>
+      </label>
+
+      <label class="consent-item consent-check" for="cb_data">
+        <input type="checkbox" id="cb_data" value="data_collection" onchange="checkReady()">
+        <span class="consent-icon">📊</span>
+        <div class="consent-text">
+          <strong>デバイス情報・利用状況が収集されること</strong><br>
+          機種・OS・広告の閲覧・クリック状況が記録されます。第三者への販売は行いません。
+        </div>
+      </label>
+
+      <div style="margin-top:14px;padding:12px;background:#fff7ed;border-radius:10px;font-size:12px;color:#92400e;line-height:1.6;">
+        ⚠️ このサービスはデバイス管理権限を使用します。解除は
+        <a href="/mdm/optout" style="color:#92400e;">こちら</a> からいつでも可能です。
       </div>
     </div>
 
@@ -268,11 +323,23 @@ PORTAL_HTML = """<!DOCTYPE html>
       document.getElementById("ios-section").style.display = "block";
     }}
 
+    var REQUIRED_CHECKS = ["cb_lockscreen","cb_push","cb_webclip","cb_vpn","cb_app","cb_data"];
+
+    function getCheckedItems() {{
+      return REQUIRED_CHECKS
+        .filter(function(id) {{ return document.getElementById(id) && document.getElementById(id).checked; }})
+        .map(function(id) {{ return document.getElementById(id).value; }});
+    }}
+
     function checkReady() {{
       var age = document.getElementById("age-group").value;
+      var allChecked = REQUIRED_CHECKS.every(function(id) {{
+        var el = document.getElementById(id); return el && el.checked;
+      }});
+      var ready = age && allChecked;
       var iosBtn = document.getElementById("download-btn");
       var andBtn = document.getElementById("android-btn");
-      if (age) {{
+      if (ready) {{
         if (iosBtn) {{ iosBtn.classList.remove("btn-disabled"); iosBtn.classList.add("btn-primary"); }}
         if (andBtn) {{ andBtn.classList.remove("btn-disabled"); andBtn.classList.add("btn-primary"); }}
       }} else {{
@@ -299,6 +366,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             campaign_id: CAMPAIGN,
             age_group: age,
             user_agent: navigator.userAgent,
+            consent_items: getCheckedItems(),
           }})
         }});
         var data = await res.json();
@@ -336,6 +404,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             campaign_id: CAMPAIGN,
             age_group: age,
             user_agent: navigator.userAgent,
+            consent_items: getCheckedItems(),
           }})
         }});
         var data = await res.json();
@@ -375,6 +444,13 @@ async def enrollment_portal(
     return HTMLResponse(content=html)
 
 
+REQUIRED_CONSENT_ITEMS = {
+    "lockscreen_ads", "push_notifications", "webclip_install",
+    "vpn_setup", "app_install", "data_collection",
+}
+CONSENT_VERSION = "2.0"
+
+
 @router.post("/device/consent", summary="同意登録 → mobileconfig URL返却")
 async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
     body = await request.json()
@@ -382,6 +458,16 @@ async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
     campaign_id = body.get("campaign_id") or None
     age_group = body.get("age_group")
     user_agent = body.get("user_agent", "")
+    consent_items: list = body.get("consent_items", [])
+
+    # 必須同意項目の検証
+    checked = set(consent_items)
+    missing = REQUIRED_CONSENT_ITEMS - checked
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"必須同意項目が未チェックです: {', '.join(sorted(missing))}",
+        )
 
     platform = _detect_platform(user_agent)
     device = DeviceDB(
@@ -399,12 +485,12 @@ async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(device)
 
-    # 同意内容の詳細ログを記録
+    # ユーザーが実際にチェックした項目を記録（consent_version 2.0）
     consent_log = ConsentLogDB(
         enrollment_token=device.enrollment_token,
         dealer_id=dealer_id,
-        consent_version="1.0",
-        consent_items=json.dumps(["lockscreen_ads", "widget_ads", "push_notifications", "data_collection"]),
+        consent_version=CONSENT_VERSION,
+        consent_items=json.dumps(sorted(consent_items)),
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
