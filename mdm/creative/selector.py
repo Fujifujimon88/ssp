@@ -8,9 +8,9 @@
 """
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_models import (
@@ -22,6 +22,9 @@ from db_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Frequency cap: max impressions per creative per device per day
+FREQ_CAP_DAILY = 3
 
 
 async def select_creative(
@@ -88,6 +91,41 @@ async def select_creative(
     candidates = rows.all()
 
     if not candidates:
+        return None
+
+    # フリークエンシーキャップ: 同一デバイスへの同一クリエイティブ配信を1日FREQ_CAP_DAILY回に制限
+    if device_id or enrollment_token:
+        today_start = datetime.combine(date.today(), datetime.min.time()).replace(
+            tzinfo=timezone.utc
+        )
+        filter_col = (
+            MdmImpressionDB.device_id if device_id else MdmImpressionDB.enrollment_token
+        )
+        filter_val = device_id or enrollment_token
+
+        freq_rows = await db.execute(
+            select(
+                MdmImpressionDB.creative_id,
+                func.count(MdmImpressionDB.id).label("count"),
+            )
+            .where(
+                filter_col == filter_val,
+                MdmImpressionDB.created_at >= today_start,
+            )
+            .group_by(MdmImpressionDB.creative_id)
+        )
+        capped_creative_ids = {
+            row.creative_id
+            for row in freq_rows.all()
+            if row.count >= FREQ_CAP_DAILY
+        }
+        candidates = [r for r in candidates if r[0].id not in capped_creative_ids]
+
+    if not candidates:
+        logger.info(
+            f"MDM frequency cap reached | slot={slot_type} | device_id={device_id} "
+            f"| enrollment_token={enrollment_token}"
+        )
         return None
 
     # reward_amount（広告主支払い意欲）で降順ソートして最上位を選択

@@ -124,6 +124,25 @@ class DeviceDB(Base):
     dealer: Mapped["DealerDB"] = relationship("DealerDB", back_populates="devices")
 
 
+# ── 同意ログ ─────────────────────────────────────────────────
+
+
+class ConsentLogDB(Base):
+    """MDMエンロール時の同意内容詳細ログ"""
+    __tablename__ = "consent_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    enrollment_token: Mapped[str] = mapped_column(String(200), index=True)
+    dealer_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    consent_version: Mapped[str] = mapped_column(String(20), default="1.0")
+    consent_items: Mapped[str] = mapped_column(Text, default="[]")  # JSON array of consented items
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    consented_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 # ── アフィリエイト テーブル ────────────────────────────────────
 
 
@@ -356,6 +375,11 @@ class MdmImpressionDB(Base):
     clicked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     served_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
     )
 
     slot: Mapped["MdmAdSlotDB"] = relationship("MdmAdSlotDB", back_populates="impressions")

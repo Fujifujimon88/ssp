@@ -14,8 +14,10 @@ android {
         versionCode 1
         versionName "1.0"
 
-        // ★ ビルド前にサーバーURLを変更する
-        buildConfigField "String", "SERVER_URL", "\"http://192.168.1.100:8000\""
+        // SERVER_URL: gradle.properties または環境変数 SERVER_URL で上書き可能
+        // 例: ./gradlew assembleRelease -PSERVER_URL=https://mdm.example.com
+        def serverUrl = project.hasProperty('SERVER_URL') ? project.SERVER_URL : System.getenv('SERVER_URL') ?: 'https://mdm.example.com'
+        buildConfigField "String", "SERVER_URL", "\"${serverUrl}\""
     }
 
     buildFeatures {

@@ -37,8 +37,9 @@ class Settings(BaseSettings):
     eru_nage_api_url: str = "https://api.eru-nage.example.com"
     eru_nage_api_key: str = ""
 
-    # FCM（Firebase Cloud Messaging）Android Push通知
-    fcm_server_key: str = ""  # Firebase Console > プロジェクト設定 > クラウドメッセージング
+    # FCM（Firebase Cloud Messaging）Android Push通知 - HTTP v1 API
+    fcm_project_id: str = ""           # Firebase プロジェクトID（例: my-project-12345）
+    fcm_service_account_path: str = "" # サービスアカウントJSONファイルのパス
 
     # NanoMDM サーバー設定
     nanomdm_url: str = "http://localhost:9000"        # NanoMDMのURL（FastAPIと別プロセス）

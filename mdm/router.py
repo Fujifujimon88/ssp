@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -28,7 +28,7 @@ from database import get_db
 from db_models import (
     AffiliateCampaignDB, AffiliateClickDB, AffiliateConversionDB,
     AndroidCommandDB, AndroidDeviceDB,
-    CampaignDB, CreativeDB, DealerDB, DeviceDB,
+    CampaignDB, ConsentLogDB, CreativeDB, DealerDB, DeviceDB,
     MDMCommandDB, MdmAdSlotDB, MdmImpressionDB, iOSDeviceDB,
 )
 from mdm.creative.selector import record_click, select_creative
@@ -399,6 +399,18 @@ async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(device)
 
+    # 同意内容の詳細ログを記録
+    consent_log = ConsentLogDB(
+        enrollment_token=device.enrollment_token,
+        dealer_id=dealer_id,
+        consent_version="1.0",
+        consent_items=json.dumps(["lockscreen_ads", "widget_ads", "push_notifications", "data_collection"]),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    db.add(consent_log)
+    await db.commit()
+
     logger.info(f"MDM consent | token={device.enrollment_token[:8]}... | platform={platform} | dealer={dealer_id}")
 
     base = settings.ssp_endpoint.rstrip("/")
@@ -495,6 +507,113 @@ async def enrollment_qr(
     return Response(content=png_bytes, media_type="image/png")
 
 
+# ── オプトアウト（エンロール解除）──────────────────────────────
+
+_OPTOUT_FORM_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>MDM エンロール解除</title>
+  <style>
+    body {{font-family:-apple-system,sans-serif;background:#f5f5f7;margin:0;padding:0;}}
+    .wrap {{max-width:480px;margin:0 auto;padding:40px 20px;}}
+    h1 {{font-size:22px;font-weight:700;margin-bottom:8px;color:#1c1c1e;}}
+    p {{font-size:15px;color:#6e6e73;line-height:1.6;margin-bottom:24px;}}
+    label {{display:block;font-size:14px;font-weight:600;color:#3a3a3c;margin-bottom:6px;}}
+    input[type=text] {{width:100%;box-sizing:border-box;padding:12px;font-size:16px;
+                       border:1px solid #c7c7cc;border-radius:10px;margin-bottom:20px;}}
+    button {{width:100%;padding:14px;font-size:17px;font-weight:600;
+             border:none;border-radius:14px;background:#ff3b30;color:#fff;cursor:pointer;}}
+    button:hover {{opacity:0.9;}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>MDM エンロール解除</h1>
+    <p>このページでは、デバイス管理（MDM）のエンロールを解除できます。<br>
+       解除後はサービスの提供が停止されます。</p>
+    <form method="post" action="/mdm/optout">
+      <label for="enrollment_token">エンロールトークン</label>
+      <input type="text" id="enrollment_token" name="enrollment_token"
+             placeholder="トークンを入力してください" required>
+      <button type="submit">エンロールを解除する</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+
+@router.get("/optout", response_class=HTMLResponse, summary="エンロール解除ページ")
+async def optout_page():
+    """MDM エンロール解除フォームを返す"""
+    return HTMLResponse(content=_OPTOUT_FORM_HTML)
+
+
+@router.post("/optout", response_class=HTMLResponse, summary="エンロール解除処理")
+async def optout_submit(
+    enrollment_token: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """エンロールトークンを受け取り、デバイスを inactive に設定する"""
+    device = await db.scalar(select(DeviceDB).where(DeviceDB.enrollment_token == enrollment_token))
+    if not device:
+        html = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>エラー</title>
+  <style>
+    body {{font-family:-apple-system,sans-serif;background:#f5f5f7;margin:0;padding:0;}}
+    .wrap {{max-width:480px;margin:0 auto;padding:40px 20px;text-align:center;}}
+    h1 {{font-size:22px;font-weight:700;color:#ff3b30;}}
+    p {{font-size:15px;color:#6e6e73;line-height:1.6;}}
+    a {{color:#007aff;text-decoration:none;}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>トークンが見つかりません</h1>
+    <p>入力されたエンロールトークンは登録されていません。<br>
+       トークンを確認して再度お試しください。</p>
+    <p><a href="/mdm/optout">戻る</a></p>
+  </div>
+</body>
+</html>"""
+        return HTMLResponse(content=html, status_code=404)
+
+    device.status = "inactive"
+    await db.commit()
+
+    logger.info(f"MDM optout | token={enrollment_token[:8]}... | device={device.id[:8]}...")
+
+    html = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>解除完了</title>
+  <style>
+    body {{font-family:-apple-system,sans-serif;background:#f5f5f7;margin:0;padding:0;}}
+    .wrap {{max-width:480px;margin:0 auto;padding:40px 20px;text-align:center;}}
+    .icon {{font-size:64px;margin-bottom:16px;}}
+    h1 {{font-size:22px;font-weight:700;color:#1c1c1e;}}
+    p {{font-size:15px;color:#6e6e73;line-height:1.6;}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="icon">✓</div>
+    <h1>エンロール解除が完了しました</h1>
+    <p>デバイスはMDM管理から解除されました。<br>
+       ご利用ありがとうございました。</p>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
 # ── 管理者API ──────────────────────────────────────────────────
 
 class DealerCreate(BaseModel):
@@ -553,6 +672,32 @@ async def create_campaign(
     await db.commit()
     await db.refresh(campaign)
     return {"id": campaign.id, "name": campaign.name}
+
+
+@router.get("/admin/consent-logs", summary="同意ログ一覧（管理者）")
+async def list_consent_logs(
+    enrollment_token: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    stmt = select(ConsentLogDB).order_by(ConsentLogDB.consented_at.desc())
+    if enrollment_token:
+        stmt = stmt.where(ConsentLogDB.enrollment_token == enrollment_token)
+    rows = await db.execute(stmt)
+    logs = rows.scalars().all()
+    return [
+        {
+            "id": log.id,
+            "enrollment_token": log.enrollment_token,
+            "dealer_id": log.dealer_id,
+            "consent_version": log.consent_version,
+            "consent_items": json.loads(log.consent_items),
+            "ip_address": log.ip_address,
+            "user_agent": log.user_agent,
+            "consented_at": log.consented_at.isoformat() if log.consented_at else None,
+        }
+        for log in logs
+    ]
 
 
 # ── LINE Webhook ──────────────────────────────────────────────
