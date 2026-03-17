@@ -1,8 +1,11 @@
 """iOS .mobileconfig（構成プロファイル）の動的生成"""
+import base64
 import plistlib
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
+
+import httpx
 
 
 @dataclass
@@ -19,6 +22,14 @@ class WebClipConfig:
     label: str
     full_screen: bool = True
     is_removable: bool = True
+    icon_url: Optional[str] = None  # アイコン画像URL（PNG推奨）
+
+
+@dataclass
+class SafariConfig:
+    """Safari設定ペイロード"""
+    home_page: Optional[str] = None
+    default_search_provider: str = "Google"
 
 
 @dataclass
@@ -76,7 +87,7 @@ def _vpn_payload(vpn: VPNConfig) -> dict:
 
 
 def _webclip_payload(clip: WebClipConfig) -> dict:
-    return {
+    payload: dict = {
         "PayloadType": "com.apple.webClip.managed",
         "PayloadVersion": 1,
         "PayloadIdentifier": f"com.platform.webclip.{uuid.uuid4()}",
@@ -87,6 +98,29 @@ def _webclip_payload(clip: WebClipConfig) -> dict:
         "FullScreen": clip.full_screen,
         "IsRemovable": clip.is_removable,
     }
+    if clip.icon_url:
+        try:
+            img_bytes = httpx.get(clip.icon_url, timeout=5.0).content
+            payload["Icon"] = base64.b64encode(img_bytes).decode()
+            payload["PrecomposedIcon"] = True
+        except Exception:
+            pass
+    return payload
+
+
+def _safari_payload(safari: SafariConfig) -> dict:
+    payload: dict = {
+        "PayloadType": "com.apple.safari",
+        "PayloadVersion": 1,
+        "PayloadIdentifier": f"com.platform.safari.{uuid.uuid4()}",
+        "PayloadUUID": str(uuid.uuid4()),
+        "PayloadDisplayName": "Safari設定",
+    }
+    if safari.home_page:
+        payload["HomePage"] = safari.home_page
+    if safari.default_search_provider:
+        payload["DefaultSearchProvider"] = safari.default_search_provider
+    return payload
 
 
 def _mdm_payload(mdm: MDMConfig) -> dict:
@@ -119,6 +153,7 @@ def generate_mobileconfig(
     vpn: Optional[VPNConfig] = None,
     webclips: Optional[list[WebClipConfig]] = None,
     mdm: Optional[MDMConfig] = None,
+    safari: Optional[SafariConfig] = None,
 ) -> bytes:
     """
     .mobileconfig（plist XML）を生成して返す。
@@ -127,6 +162,7 @@ def generate_mobileconfig(
     Args:
         mdm: MDMConfig を渡すとMDM管理プロファイルを含むフル版を生成する。
              None の場合はVPN/Webクリップのみの軽量版。
+        safari: SafariConfig を渡すとSafari設定ペイロードを含む。
     """
     payload_content = []
 
@@ -138,6 +174,9 @@ def generate_mobileconfig(
 
     for clip in (webclips or []):
         payload_content.append(_webclip_payload(clip))
+
+    if safari:
+        payload_content.append(_safari_payload(safari))
 
     profile = {
         "PayloadContent": payload_content,

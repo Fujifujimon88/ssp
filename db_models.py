@@ -105,6 +105,8 @@ class CampaignDB(Base):
     line_liff_url: Mapped[str] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    safari_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON: Safari設定
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class DeviceDB(Base):

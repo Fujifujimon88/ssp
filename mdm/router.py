@@ -59,7 +59,7 @@ from mdm.android.commands import (
     acknowledge_command, enqueue_command, get_pending_commands, update_device_last_seen,
 )
 from mdm.android.fcm import send_command_ping, send_notification
-from mdm.enrollment.mobileconfig import MDMConfig, VPNConfig, WebClipConfig, generate_mobileconfig
+from mdm.enrollment.mobileconfig import MDMConfig, SafariConfig, VPNConfig, WebClipConfig, generate_mobileconfig
 from mdm.nanomdm import client as nanomdm_client
 from mdm.nanomdm import commands as mdm_commands
 from mdm.nanomdm.apns import send_mdm_push
@@ -539,6 +539,7 @@ async def download_mobileconfig(
     # キャンペーン設定を取得（なければデフォルト）
     vpn = None
     webclips = []
+    safari = None
     profile_name = "サービス設定"
 
     if device.campaign_id:
@@ -561,12 +562,19 @@ async def download_mobileconfig(
                         full_screen=wc.get("full_screen", True),
                         is_removable=wc.get("is_removable", True),
                     ))
+            if campaign.safari_config:
+                sc = json.loads(campaign.safari_config)
+                safari = SafariConfig(
+                    home_page=sc.get("home_page"),
+                    default_search_provider=sc.get("default_search_provider", "Google"),
+                )
 
     config_bytes = generate_mobileconfig(
         profile_name=profile_name,
         enrollment_token=token,
         vpn=vpn,
         webclips=webclips or None,
+        safari=safari,
     )
 
     # ダウンロード記録
@@ -729,6 +737,7 @@ class CampaignCreate(BaseModel):
     dealer_id: Optional[str] = None
     vpn_config: Optional[dict] = None     # {"server":..., "username":..., "password":...}
     webclips: Optional[list[dict]] = None  # [{"url":..., "label":...}]
+    safari_config: Optional[dict] = None  # {"home_page": "...", "default_search_provider": "Google"}
     eru_nage_scenario_id: Optional[str] = None
     line_liff_url: Optional[str] = None
 
@@ -767,6 +776,7 @@ async def create_campaign(
         dealer_id=body.dealer_id,
         vpn_config=json.dumps(body.vpn_config) if body.vpn_config else None,
         webclips=json.dumps(body.webclips) if body.webclips else None,
+        safari_config=json.dumps(body.safari_config) if body.safari_config else None,
         eru_nage_scenario_id=body.eru_nage_scenario_id,
         line_liff_url=body.line_liff_url,
     )
@@ -774,6 +784,89 @@ async def create_campaign(
     await db.commit()
     await db.refresh(campaign)
     return {"id": campaign.id, "name": campaign.name}
+
+
+class CampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    webclips: Optional[list[dict]] = None
+    safari_config: Optional[dict] = None
+
+
+async def _redeploy_campaign(campaign_id: str, campaign: CampaignDB, db: AsyncSession) -> dict:
+    """キャンペーン更新後、紐づくiOSデバイスへWebClipを自動再配信"""
+    from mdm.nanomdm import commands as mdm_commands
+    from mdm.nanomdm.client import push_command
+    from mdm.nanomdm.apns import send_mdm_push
+
+    devices = (await db.scalars(
+        select(DeviceDB).where(
+            DeviceDB.campaign_id == campaign_id,
+            DeviceDB.platform == "ios",
+            DeviceDB.status == "active",
+        )
+    )).all()
+
+    ios_queued = 0
+    ios_push_sent = 0
+    new_webclips = json.loads(campaign.webclips) if campaign.webclips else []
+
+    for dev in devices:
+        ios_dev = await db.scalar(
+            select(iOSDeviceDB).where(iOSDeviceDB.enrollment_token == dev.enrollment_token)
+        )
+        if not ios_dev or not ios_dev.push_token:
+            continue
+        for wc in new_webclips:
+            cmd_plist = mdm_commands.add_web_clip(
+                url=wc.get("url", ""),
+                label=wc.get("label", ""),
+                icon_url=wc.get("icon_url"),
+            )
+            await push_command(ios_dev.udid, cmd_plist)
+            ios_queued += 1
+        ok = await send_mdm_push(ios_dev.push_token, ios_dev.push_magic)
+        if ok:
+            ios_push_sent += 1
+
+    return {"ios_queued": ios_queued, "ios_push_sent": ios_push_sent}
+
+
+@router.put("/admin/campaigns/{campaign_id}", summary="キャンペーン更新 + 自動再配信（管理者）")
+async def update_campaign(
+    campaign_id: str,
+    body: CampaignUpdate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    キャンペーンの webclips / safari_config を更新し、
+    紐づくiOSデバイスへWebClipをバックグラウンドで自動再配信する。
+    """
+    campaign = await db.get(CampaignDB, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+
+    if body.name is not None:
+        campaign.name = body.name
+    if body.webclips is not None:
+        campaign.webclips = json.dumps(body.webclips)
+    if body.safari_config is not None:
+        campaign.safari_config = json.dumps(body.safari_config)
+    campaign.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(campaign)
+
+    # バックグラウンドで再配信
+    background_tasks.add_task(_redeploy_campaign, campaign_id, campaign, db)
+
+    return {
+        "id": campaign.id,
+        "name": campaign.name,
+        "status": campaign.status,
+        "redeployment": "queued",
+    }
 
 
 @router.get("/admin/consent-logs", summary="同意ログ一覧（管理者）")

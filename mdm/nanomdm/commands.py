@@ -14,6 +14,8 @@ NanoMDMはこのplistをiOSデバイスへ配信する。
   install_enterprise_application - In-Houseアプリインストール
   send_app_clip_invite        - App Clip起動URL送信
 """
+import base64
+import httpx
 import plistlib
 import uuid
 
@@ -25,7 +27,7 @@ def _base_command(request_type: str, command_uuid: str | None = None) -> dict:
     }
 
 
-def add_web_clip(url: str, label: str, full_screen: bool = True, command_uuid: str | None = None) -> bytes:
+def add_web_clip(url: str, label: str, full_screen: bool = True, icon_url: str | None = None, command_uuid: str | None = None) -> bytes:
     """
     ホーム画面にWebクリップを追加するMDMコマンドを生成する。
     MDM管理のWebクリップはユーザーが削除できない（IsRemovable=False）。
@@ -37,23 +39,32 @@ def add_web_clip(url: str, label: str, full_screen: bool = True, command_uuid: s
         url:   WebクリップのURL
         label: ホーム画面に表示するラベル（最大12文字推奨）
         full_screen: フルスクリーン表示（Safariバー非表示）
+        icon_url: アイコン画像のURL（取得失敗時は無視）
 
     Returns:
         plist XML bytes
     """
     profile_uuid = str(uuid.uuid4())
+    webclip_payload = {
+        "PayloadType": "com.apple.webClip.managed",
+        "PayloadVersion": 1,
+        "PayloadIdentifier": f"com.platform.webclip.{uuid.uuid4()}",
+        "PayloadUUID": str(uuid.uuid4()),
+        "PayloadDisplayName": label,
+        "URL": url,
+        "Label": label,
+        "FullScreen": full_screen,
+        "IsRemovable": False,
+    }
+    if icon_url:
+        try:
+            img_bytes = httpx.get(icon_url, timeout=5.0).content
+            webclip_payload["Icon"] = base64.b64encode(img_bytes).decode()
+            webclip_payload["PrecomposedIcon"] = True
+        except Exception:
+            pass
     webclip_profile = {
-        "PayloadContent": [{
-            "PayloadType": "com.apple.webClip.managed",
-            "PayloadVersion": 1,
-            "PayloadIdentifier": f"com.platform.webclip.{uuid.uuid4()}",
-            "PayloadUUID": str(uuid.uuid4()),
-            "PayloadDisplayName": label,
-            "URL": url,
-            "Label": label,
-            "FullScreen": full_screen,
-            "IsRemovable": False,
-        }],
+        "PayloadContent": [webclip_payload],
         "PayloadDisplayName": f"Webクリップ: {label}",
         "PayloadIdentifier": f"com.platform.webclip.profile.{profile_uuid}",
         "PayloadOrganization": "Platform",
