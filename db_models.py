@@ -57,7 +57,7 @@ class ImpressionDB(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     auction_id: Mapped[str] = mapped_column(String(36), index=True)
     imp_id: Mapped[str] = mapped_column(String(36))
-    slot_id: Mapped[str] = mapped_column(String(36), ForeignKey("ad_slots.id"), index=True)
+    slot_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("ad_slots.id"), nullable=True, index=True)
     publisher_id: Mapped[str] = mapped_column(String(36), ForeignKey("publishers.id"), index=True)
     winning_dsp: Mapped[str] = mapped_column(String(100), nullable=True)
     clearing_price: Mapped[float] = mapped_column(Float, default=0.0)
@@ -83,8 +83,13 @@ class DealerDB(Base):
     api_key: Mapped[str] = mapped_column(String(64), unique=True, index=True, default=_uuid)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # 代理店（AgencyDB）との紐付け
+    agency_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agencies.id"), nullable=True, index=True)
+    # 代理店内での店舗番号（1, 2, 3...）
+    store_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     devices: Mapped[list["DeviceDB"]] = relationship("DeviceDB", back_populates="dealer")
+    ad_assignments: Mapped[list["StoreAdAssignmentDB"]] = relationship("StoreAdAssignmentDB", back_populates="dealer")
 
 
 class CampaignDB(Base):
@@ -606,7 +611,7 @@ class InvoiceDB(Base):
     __tablename__ = "invoices"
     id                  = Column(Integer, primary_key=True)
     period_month        = Column(String(7), nullable=False)   # "2026-03"
-    campaign_id         = Column(Integer, ForeignKey("affiliate_campaigns.id"))
+    campaign_id         = Column(String(36), ForeignKey("affiliate_campaigns.id"))
     agency_id           = Column(Integer, ForeignKey("agencies.id"), nullable=True)
     gross_revenue_jpy   = Column(Integer, nullable=False, default=0)
     take_rate           = Column(Float,   nullable=False, default=0.175)
@@ -618,3 +623,29 @@ class InvoiceDB(Base):
     status              = Column(String(16), nullable=False, default="draft")  # draft/sent/paid
     created_at          = Column(DateTime(timezone=True), server_default=func.now())
     sent_at             = Column(DateTime(timezone=True), nullable=True)
+
+
+# ── 店舗別広告配信設定 ──────────────────────────────────────────────
+
+
+class StoreAdAssignmentDB(Base):
+    """
+    店舗（DealerDB）ごとの広告配信設定。
+    どのアフィリエイトキャンペーン（静止画クリエイティブ含む）を配信するかを定義する。
+
+    priority: 小さい値が優先（1が最高優先）
+    status: active / paused
+    """
+    __tablename__ = "store_ad_assignments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    dealer_id: Mapped[str] = mapped_column(String(36), ForeignKey("dealers.id"), index=True)
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_campaigns.id"), index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active / paused
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    dealer: Mapped["DealerDB"] = relationship("DealerDB", back_populates="ad_assignments")
+    campaign: Mapped["AffiliateCampaignDB"] = relationship("AffiliateCampaignDB")

@@ -4656,6 +4656,207 @@ async def agency_broadcast(
     return {"ok": True, "agency": agency.name, "campaign_id": campaign_id, "status": "queued"}
 
 
+# ── 代理店 → 店舗 階層管理・店舗別広告設定 ─────────────────────────────
+
+@router.post("/admin/agencies/{agency_id}/stores", summary="代理店配下に店舗を追加")
+async def create_store_under_agency(
+    agency_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """代理店（AgencyDB）配下に店舗（DealerDB）を作成し、連番を自動付与する"""
+    from db_models import AgencyDB, StoreAdAssignmentDB  # noqa
+    agency = await db.get(AgencyDB, agency_id)
+    if not agency:
+        raise HTTPException(status_code=404, detail="agency not found")
+
+    name = body.get("name", "").strip()
+    store_code = body.get("store_code", "").strip()
+    address = body.get("address")
+    if not name or not store_code:
+        raise HTTPException(status_code=400, detail="name and store_code are required")
+
+    # 同一代理店内の最大store_numberを取得して+1
+    result = await db.execute(
+        select(func.max(DealerDB.store_number)).where(DealerDB.agency_id == agency_id)
+    )
+    max_num = result.scalar() or 0
+    next_num = max_num + 1
+
+    dealer = DealerDB(
+        name=name,
+        store_code=store_code,
+        address=address,
+        agency_id=agency_id,
+        store_number=next_num,
+    )
+    db.add(dealer)
+    await db.commit()
+    await db.refresh(dealer)
+    return {
+        "id": dealer.id,
+        "name": dealer.name,
+        "store_code": dealer.store_code,
+        "store_number": dealer.store_number,
+        "agency_id": agency_id,
+        "api_key": dealer.api_key,
+    }
+
+
+@router.get("/admin/agencies-with-stores", summary="代理店一覧（店舗付き）")
+async def list_agencies_with_stores(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """代理店ごとに配下の店舗リストを返す"""
+    from db_models import AgencyDB  # noqa
+    agencies = (await db.scalars(select(AgencyDB).order_by(AgencyDB.id))).all()
+    result = []
+    for ag in agencies:
+        stores_rows = (await db.scalars(
+            select(DealerDB)
+            .where(DealerDB.agency_id == ag.id)
+            .order_by(DealerDB.store_number)
+        )).all()
+        result.append({
+            "id": ag.id,
+            "name": ag.name,
+            "contact_email": ag.contact_email,
+            "stores": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "store_code": s.store_code,
+                    "store_number": s.store_number,
+                    "address": s.address,
+                    "status": s.status,
+                }
+                for s in stores_rows
+            ],
+        })
+    return {"agencies": result}
+
+
+@router.get("/admin/stores/{dealer_id}/ad-assignments", summary="店舗の広告設定一覧")
+async def get_store_ad_assignments(
+    dealer_id: str,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import StoreAdAssignmentDB  # noqa
+    rows = (await db.scalars(
+        select(StoreAdAssignmentDB)
+        .where(StoreAdAssignmentDB.dealer_id == dealer_id)
+        .order_by(StoreAdAssignmentDB.priority)
+    )).all()
+    result = []
+    for r in rows:
+        # キャンペーン情報を取得
+        campaign = await db.get(AffiliateCampaignDB, r.campaign_id)
+        # クリエイティブ（静止画）を取得
+        creatives_rows = (await db.scalars(
+            select(CreativeDB)
+            .where(CreativeDB.campaign_id == r.campaign_id, CreativeDB.type == "image", CreativeDB.status == "active")
+            .order_by(CreativeDB.created_at.desc())
+            .limit(1)
+        )).all()
+        creative = creatives_rows[0] if creatives_rows else None
+        result.append({
+            "id": r.id,
+            "campaign_id": r.campaign_id,
+            "campaign_name": campaign.name if campaign else None,
+            "priority": r.priority,
+            "status": r.status,
+            "image_url": creative.image_url if creative else None,
+            "click_url": creative.click_url if creative else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {"assignments": result}
+
+
+@router.post("/admin/stores/{dealer_id}/ad-assignments", summary="店舗に広告を割り当て")
+async def create_store_ad_assignment(
+    dealer_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import StoreAdAssignmentDB  # noqa
+    campaign_id = body.get("campaign_id", "").strip()
+    priority = int(body.get("priority", 1))
+    if not campaign_id:
+        raise HTTPException(status_code=400, detail="campaign_id is required")
+
+    # 重複チェック
+    existing = await db.scalar(
+        select(StoreAdAssignmentDB).where(
+            StoreAdAssignmentDB.dealer_id == dealer_id,
+            StoreAdAssignmentDB.campaign_id == campaign_id,
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="already assigned")
+
+    assignment = StoreAdAssignmentDB(
+        dealer_id=dealer_id,
+        campaign_id=campaign_id,
+        priority=priority,
+    )
+    db.add(assignment)
+    await db.commit()
+    await db.refresh(assignment)
+    return {"id": assignment.id, "dealer_id": dealer_id, "campaign_id": campaign_id, "priority": priority}
+
+
+@router.delete("/admin/stores/{dealer_id}/ad-assignments/{assignment_id}", summary="店舗の広告割り当てを削除")
+async def delete_store_ad_assignment(
+    dealer_id: str,
+    assignment_id: str,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import StoreAdAssignmentDB  # noqa
+    row = await db.get(StoreAdAssignmentDB, assignment_id)
+    if not row or row.dealer_id != dealer_id:
+        raise HTTPException(status_code=404, detail="not found")
+    await db.delete(row)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/admin/campaigns-for-assignment", summary="広告割り当て用キャンペーン一覧")
+async def list_campaigns_for_assignment(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """管理画面の広告割り当てUI用：静止画クリエイティブがあるキャンペーンを返す"""
+    rows = (await db.scalars(
+        select(AffiliateCampaignDB)
+        .where(AffiliateCampaignDB.status == "active")
+        .order_by(AffiliateCampaignDB.created_at.desc())
+    )).all()
+    result = []
+    for c in rows:
+        # 静止画クリエイティブの有無を確認
+        creative = await db.scalar(
+            select(CreativeDB).where(
+                CreativeDB.campaign_id == c.id,
+                CreativeDB.type == "image",
+                CreativeDB.status == "active",
+            ).limit(1)
+        )
+        result.append({
+            "id": c.id,
+            "name": c.name,
+            "category": c.category,
+            "reward_amount": c.reward_amount,
+            "has_image": creative is not None,
+            "image_url": creative.image_url if creative else None,
+        })
+    return {"campaigns": result}
+
+
 # ── 代理店管理（管理者用）────────────────────────────────────────────
 
 @router.post("/admin/agencies", summary="代理店登録（管理者）")

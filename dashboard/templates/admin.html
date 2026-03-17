@@ -136,6 +136,7 @@
 
     <div class="section-label" style="margin-top:16px">MDM管理</div>
     <a href="#mdm-stats">📱 MDM概要</a>
+    <a href="#store-ad-delivery">🖼 店舗別広告配信</a>
     <a href="#dealers">🏪 代理店管理</a>
     <a href="#campaigns">📢 キャンペーン管理</a>
 
@@ -257,6 +258,17 @@
           <div class="kpi-value" id="mdm-total-dealers">-</div>
         </div>
       </div>
+    </section>
+
+    <!-- 店舗別広告配信 -->
+    <section id="store-ad-delivery" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">店舗別広告配信設定</h2>
+        <button class="btn btn-ghost" onclick="loadStoreAdDelivery()" style="font-size:12px">更新</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">代理店ごとに店舗をナンバリングし、各店舗に配信する静止画広告を設定します。</p>
+      <div id="store-ad-delivery-loading" class="loading">読み込み中...</div>
+      <div id="store-ad-delivery-content"></div>
     </section>
 
     <!-- 代理店管理 -->
@@ -394,6 +406,50 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">作成する</button>
       <div id="campaign-result" style="font-size:13px;color:var(--green)"></div>
     </form>
+  </div>
+</div>
+
+<!-- 店舗追加モーダル -->
+<div class="modal-overlay" id="add-store-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('add-store-modal')">&times;</span>
+    <h2 id="add-store-modal-title">店舗を追加</h2>
+    <form id="add-store-form" style="display:grid;gap:12px;margin-top:8px">
+      <input type="hidden" name="agency_id" id="add-store-agency-id">
+      <input name="name" placeholder="店舗名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="store_code" placeholder="店舗コード (例: STORE-A-001)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="address" placeholder="住所 (省略可)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">店舗を追加</button>
+      <div id="add-store-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 店舗広告設定モーダル -->
+<div class="modal-overlay" id="store-ad-modal">
+  <div class="modal" style="max-width:700px">
+    <span class="modal-close" onclick="closeModal('store-ad-modal')">&times;</span>
+    <h2 id="store-ad-modal-title">広告設定</h2>
+    <p id="store-ad-modal-sub" style="font-size:12px;color:var(--muted);margin-bottom:16px"></p>
+
+    <!-- 現在の設定 -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">現在の配信広告</div>
+      <div id="store-ad-current" class="loading">読み込み中...</div>
+    </div>
+
+    <!-- 追加フォーム -->
+    <div style="border-top:1px solid var(--border);padding-top:16px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">広告を追加</div>
+      <div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center">
+        <select id="store-ad-campaign-select" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+          <option value="">キャンペーンを選択...</option>
+        </select>
+        <input type="number" id="store-ad-priority" value="1" min="1" max="99" placeholder="優先度" style="width:80px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <button class="btn btn-primary" onclick="addStoreAdAssignment()" style="white-space:nowrap">+ 追加</button>
+      </div>
+      <div id="store-ad-add-result" style="font-size:13px;margin-top:8px"></div>
+    </div>
   </div>
 </div>
 
@@ -787,6 +843,207 @@ async function loadMdmStats() {
   }
 }
 
+// ── 店舗別広告配信 ──────────────────────────────────────────────
+let _campaignsForAssignment = [];
+let _currentDealerId = '';
+
+async function loadStoreAdDelivery() {
+  document.getElementById('store-ad-delivery-loading').style.display = 'block';
+  document.getElementById('store-ad-delivery-content').innerHTML = '';
+  try {
+    const r = await fetch('/mdm/admin/agencies-with-stores', { headers: adminHeaders() });
+    if (!r.ok) {
+      document.getElementById('store-ad-delivery-loading').textContent = 'エラー: ' + r.status;
+      return;
+    }
+    const d = await r.json();
+    document.getElementById('store-ad-delivery-loading').style.display = 'none';
+
+    if (!d.agencies.length) {
+      document.getElementById('store-ad-delivery-content').innerHTML =
+        '<p style="color:var(--muted);font-size:14px;padding:20px 0">代理店が登録されていません。まず「代理店管理」から代理店を登録してください。</p>';
+      return;
+    }
+
+    const html = d.agencies.map(ag => `
+      <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div style="background:rgba(99,102,241,.08);padding:12px 16px;display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <span style="font-weight:600;font-size:14px">${ag.name}</span>
+            <span style="font-size:12px;color:var(--muted);margin-left:8px">代理店ID: ${ag.id}</span>
+          </div>
+          <button class="btn btn-ghost" style="font-size:12px" onclick="showAddStoreModal(${ag.id}, '${ag.name}')">+ 店舗追加</button>
+        </div>
+        ${ag.stores.length === 0
+          ? '<p style="padding:16px;color:var(--muted);font-size:13px">店舗が登録されていません。</p>'
+          : `<table style="width:100%;border-collapse:collapse;font-size:14px">
+              <thead>
+                <tr style="background:rgba(0,0,0,.02)">
+                  <th style="padding:10px 16px;text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);width:60px">No.</th>
+                  <th style="padding:10px 16px;text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border)">店舗名</th>
+                  <th style="padding:10px 16px;text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border)">店舗コード</th>
+                  <th style="padding:10px 16px;text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border)">ステータス</th>
+                  <th style="padding:10px 16px;text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border)">広告設定</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${ag.stores.map(s => `
+                  <tr>
+                    <td style="padding:12px 16px;border-bottom:1px solid var(--border)">
+                      <span style="background:var(--accent);color:#fff;border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600">#${s.store_number ?? '-'}</span>
+                    </td>
+                    <td style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:500">${s.name}</td>
+                    <td style="padding:12px 16px;border-bottom:1px solid var(--border);font-family:monospace;font-size:12px;color:var(--muted)">${s.store_code}</td>
+                    <td style="padding:12px 16px;border-bottom:1px solid var(--border)"><span class="status-${s.status}">${s.status}</span></td>
+                    <td style="padding:12px 16px;border-bottom:1px solid var(--border)">
+                      <button class="btn btn-ghost" style="font-size:12px" onclick="showStoreAdModal('${s.id}', '${s.name}', '#${s.store_number ?? '?'}')">🖼 広告設定</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>`
+        }
+      </div>
+    `).join('');
+    document.getElementById('store-ad-delivery-content').innerHTML = html;
+  } catch(e) {
+    document.getElementById('store-ad-delivery-loading').textContent = 'エラー: ' + e.message;
+  }
+}
+
+function showAddStoreModal(agencyId, agencyName) {
+  document.getElementById('add-store-agency-id').value = agencyId;
+  document.getElementById('add-store-modal-title').textContent = `店舗を追加 — ${agencyName}`;
+  document.getElementById('add-store-result').textContent = '';
+  document.getElementById('add-store-form').reset();
+  document.getElementById('add-store-agency-id').value = agencyId;
+  document.getElementById('add-store-modal').classList.add('open');
+}
+
+document.getElementById('add-store-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const agencyId = document.getElementById('add-store-agency-id').value;
+  const body = { name: f.name.value, store_code: f.store_code.value, address: f.address.value || null };
+  const res = await fetch(`/mdm/admin/agencies/${agencyId}/stores`, {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('add-store-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 追加完了！ No.${d.store_number} — ${d.name}`;
+    loadStoreAdDelivery();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+async function showStoreAdModal(dealerId, storeName, storeNo) {
+  _currentDealerId = dealerId;
+  document.getElementById('store-ad-modal-title').textContent = `広告設定 — ${storeName}`;
+  document.getElementById('store-ad-modal-sub').textContent = `店舗番号 ${storeNo} | ID: ${dealerId}`;
+  document.getElementById('store-ad-current').innerHTML = '<span class="loading">読み込み中...</span>';
+  document.getElementById('store-ad-add-result').textContent = '';
+  document.getElementById('store-ad-modal').classList.add('open');
+
+  // キャンペーン一覧を取得（初回のみ）
+  if (!_campaignsForAssignment.length) {
+    const cr = await fetch('/mdm/admin/campaigns-for-assignment', { headers: adminHeaders() });
+    if (cr.ok) {
+      const cd = await cr.json();
+      _campaignsForAssignment = cd.campaigns;
+      const sel = document.getElementById('store-ad-campaign-select');
+      sel.innerHTML = '<option value="">キャンペーンを選択...</option>' +
+        cd.campaigns.map(c =>
+          `<option value="${c.id}">${c.name}${c.has_image ? ' 🖼' : ''}（${c.category} / ¥${c.reward_amount}）</option>`
+        ).join('');
+    }
+  }
+
+  await refreshStoreAdCurrent(dealerId);
+}
+
+async function refreshStoreAdCurrent(dealerId) {
+  const r = await fetch(`/mdm/admin/stores/${dealerId}/ad-assignments`, { headers: adminHeaders() });
+  const el = document.getElementById('store-ad-current');
+  if (!r.ok) { el.textContent = 'エラー: ' + r.status; return; }
+  const d = await r.json();
+  if (!d.assignments.length) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:13px">まだ広告が設定されていません。</p>';
+    return;
+  }
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr>
+        <th style="padding:8px 12px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">優先</th>
+        <th style="padding:8px 12px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">プレビュー</th>
+        <th style="padding:8px 12px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">キャンペーン名</th>
+        <th style="padding:8px 12px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">状態</th>
+        <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+      </tr>
+    </thead>
+    <tbody>
+      ${d.assignments.map(a => `
+        <tr>
+          <td style="padding:8px 12px;border-bottom:1px solid var(--border)">
+            <span style="background:var(--accent);color:#fff;border-radius:4px;padding:2px 6px;font-size:11px">${a.priority}</span>
+          </td>
+          <td style="padding:8px 12px;border-bottom:1px solid var(--border)">
+            ${a.image_url
+              ? `<img src="${a.image_url}" style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid var(--border)">`
+              : '<span style="color:var(--muted);font-size:11px">画像なし</span>'
+            }
+          </td>
+          <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${a.campaign_name || a.campaign_id}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid var(--border)"><span class="status-${a.status}">${a.status}</span></td>
+          <td style="padding:8px 12px;border-bottom:1px solid var(--border)">
+            <button class="btn btn-ghost" style="font-size:11px;color:var(--red);border-color:var(--red)"
+              onclick="removeStoreAdAssignment('${a.id}')">削除</button>
+          </td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function addStoreAdAssignment() {
+  const campaignId = document.getElementById('store-ad-campaign-select').value;
+  const priority = document.getElementById('store-ad-priority').value;
+  const el = document.getElementById('store-ad-add-result');
+  if (!campaignId) { el.style.color = 'var(--red)'; el.textContent = 'キャンペーンを選択してください'; return; }
+  const res = await fetch(`/mdm/admin/stores/${_currentDealerId}/ad-assignments`, {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ campaign_id: campaignId, priority: parseInt(priority) }),
+  });
+  const d = await res.json();
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = '✓ 追加しました';
+    await refreshStoreAdCurrent(_currentDealerId);
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+}
+
+async function removeStoreAdAssignment(assignmentId) {
+  if (!confirm('この広告設定を削除しますか？')) return;
+  const res = await fetch(`/mdm/admin/stores/${_currentDealerId}/ad-assignments/${assignmentId}`, {
+    method: 'DELETE',
+    headers: adminHeaders(),
+  });
+  if (res.ok) {
+    await refreshStoreAdCurrent(_currentDealerId);
+  } else {
+    alert('削除に失敗しました');
+  }
+}
+
 // 初期化
 checkKeyBanner();
 loadHealth();
@@ -794,6 +1051,7 @@ loadAdminStats();
 loadDealers();
 loadCampaigns();
 loadMdmStats();
+loadStoreAdDelivery();
 setInterval(loadAdminStats, 30000);
 setInterval(loadHealth, 60000);
 </script>
