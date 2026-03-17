@@ -224,16 +224,12 @@ async def dashboard(request: Request):
 
 @app.get("/admin", response_class=HTMLResponse, summary="管理画面")
 async def admin(request: Request, db: AsyncSession = Depends(get_db)):
-    try:
-        result = await db.execute(select(PublisherDB).order_by(PublisherDB.created_at.desc()))
-        publishers = result.scalars().all()
-        return templates.TemplateResponse(
-            "admin.html",
-            {"request": request, "publishers": publishers}
-        )
-    except Exception as e:
-        import traceback
-        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+    result = await db.execute(select(PublisherDB).order_by(PublisherDB.created_at.desc()))
+    publishers = result.scalars().all()
+    return templates.TemplateResponse(
+        "admin.html",
+        {"request": request, "publishers": publishers}
+    )
 
 
 # ── DSP別統計API ───────────────────────────────────────────────
