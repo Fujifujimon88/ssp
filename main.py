@@ -49,7 +49,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 
 auction_engine = AuctionEngine()
 
@@ -152,7 +152,7 @@ async def header_bidding(request: Request, db: AsyncSession = Depends(get_db)):
     })
 
     # DBに記録
-    actual_slot_id = slot.id if slot else slot_id
+    actual_slot_id = slot.id if slot else None
     await record_auction(result, slot_id=actual_slot_id, publisher_id=publisher_id, db=db)
 
     return JSONResponse({
@@ -280,13 +280,11 @@ async def reports_range(
     db: AsyncSession = Depends(get_db),
 ):
     from datetime import date as _date, timedelta
-    import asyncio as _asyncio
-    results = []
-    tasks = [
-        generate_daily_report(publisher_id, db=db, for_date=_date.today() - timedelta(days=i))
-        for i in range(days - 1, -1, -1)
-    ]
-    reports = await _asyncio.gather(*tasks)
+    # 同一セッションを並列使用するとエラーになるため順次実行
+    reports = []
+    for i in range(days - 1, -1, -1):
+        r = await generate_daily_report(publisher_id, db=db, for_date=_date.today() - timedelta(days=i))
+        reports.append(r)
     return [r.model_dump() for r in reports]
 
 
