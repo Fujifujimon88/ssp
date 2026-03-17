@@ -16,11 +16,9 @@ test.describe("管理画面 /admin", () => {
     await expect(page.locator("header h1")).toContainText("SSP Platform");
   });
 
-  test("KPIカードが表示される", async ({ page }) => {
+  test("KPIカードが4つ表示される", async ({ page }) => {
     await page.goto("/admin");
-    // MDM統計カードの追加により8枚構成。4枚以上あることを確認
-    const count = await page.locator(".kpi-grid .card").count();
-    expect(count).toBeGreaterThanOrEqual(4);
+    await expect(page.locator(".kpi-grid .card")).toHaveCount(4);
   });
 
   test("パブリッシャー一覧セクションが表示される", async ({ page }) => {
@@ -87,9 +85,8 @@ test.describe("/api/admin/stats", () => {
   });
 
   test("KPIが管理画面に表示される", async ({ page }) => {
-    const adminKey = process.env.ADMIN_API_KEY || "change-me-admin-key";
     await page.goto("/admin");
-    await page.evaluate((key) => localStorage.setItem("ssp_admin_key", key), adminKey);
+    await page.evaluate(() => localStorage.setItem("ssp_admin_key", "change-me-admin-key"));
     await page.reload();
     await expect(page.locator("#kpi-imp")).not.toHaveText("-", { timeout: 8000 });
     await expect(page.locator("#kpi-rev-val")).not.toHaveText("-", { timeout: 8000 });

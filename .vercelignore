@@ -1,0 +1,12 @@
+*.db
+*.sqlite
+.env
+.env.*
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+tests/
+create_presentation.py
+*.pptx
+tasks/

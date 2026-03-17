@@ -4422,7 +4422,7 @@ async def record_game_event(
     # MdmImpressionDB の video_event フィールドを再利用（game_event として）
     if impression_id:
         imp = await db.scalar(
-            select(MdmImpressionDB).where(MdmImpressionDB.id == impression_id)
+            select(MdmImpressionDB).where(MdmImpressionDB.impression_id == impression_id)
         )
         if imp:
             current = imp.video_event or ""
@@ -4513,7 +4513,7 @@ async def cohort_stats(
         select(
             DeviceProfileDB.cohort_id,
             DeviceProfileDB.cohort_label,
-            func.count(DeviceProfileDB.device_id).label("device_count"),
+            func.count(DeviceProfileDB.id).label("device_count"),
         )
         .where(DeviceProfileDB.cohort_id.isnot(None))
         .group_by(DeviceProfileDB.cohort_id, DeviceProfileDB.cohort_label)
@@ -4569,7 +4569,7 @@ async def agency_devices(
     android_query = select(AndroidDeviceDB)
     if dealer_ids:
         android_query = android_query.where(AndroidDeviceDB.dealer_id.in_(dealer_ids))
-    android_devices = (await db.scalars(android_query.order_by(AndroidDeviceDB.registered_at.desc()).limit(500))).all()
+    android_devices = (await db.scalars(android_query.order_by(AndroidDeviceDB.created_at.desc()).limit(500))).all()
 
     # iOS デバイス
     ios_query = select(iOSDeviceDB)
