@@ -29,29 +29,31 @@ test.describe("MDM管理ダッシュボード /mdm/admin/dashboard", () => {
     // KPIグリッド内に .card 要素が1件以上存在することを確認
     const cards = page.locator(".grid .card");
     await expect(cards.first()).toBeVisible();
-    // 8枚のKPIカードが存在する（総端末、Android、iOS、代理店、案件、クリック、CV、収益）
-    await expect(cards).toHaveCount(8);
+    // 8枚以上のKPIカードが存在する（リアルタイムカードを含む）
+    const count = await cards.count();
+    expect(count).toBeGreaterThanOrEqual(8);
   });
 
   test("代理店 Top 5 テーブルセクションが表示される", async ({ page }) => {
     await page.setExtraHTTPHeaders({ "X-Admin-Key": ADMIN_KEY });
     await page.goto("/mdm/admin/dashboard");
     await expect(page.locator(".section").first()).toBeVisible();
-    await expect(page.locator(".section h2").first()).toContainText("代理店 Top 5");
+    // 最初の .section は リアルタイム枠、代理店Top5は2番目
+    await expect(page.locator(".section h2").nth(1)).toContainText("代理店 Top 5");
   });
 
   test("アフィリエイト案件 Top 5 テーブルセクションが表示される", async ({ page }) => {
     await page.setExtraHTTPHeaders({ "X-Admin-Key": ADMIN_KEY });
     await page.goto("/mdm/admin/dashboard");
     const sections = page.locator(".section h2");
-    await expect(sections.nth(1)).toContainText("アフィリエイト案件 Top 5");
+    await expect(sections.nth(2)).toContainText("アフィリエイト案件 Top 5");
   });
 
   test("主要APIエンドポイント一覧セクションが表示される", async ({ page }) => {
     await page.setExtraHTTPHeaders({ "X-Admin-Key": ADMIN_KEY });
     await page.goto("/mdm/admin/dashboard");
     const sections = page.locator(".section h2");
-    await expect(sections.nth(2)).toContainText("主要APIエンドポイント");
+    await expect(sections.nth(3)).toContainText("主要APIエンドポイント");
   });
 });
 
