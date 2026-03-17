@@ -4514,13 +4514,16 @@ async def record_game_event(
 
     # MdmImpressionDB の video_event フィールドを再利用（game_event として）
     if impression_id:
-        imp = await db.scalar(
-            select(MdmImpressionDB).where(MdmImpressionDB.id == impression_id)
-        )
-        if imp:
-            current = imp.video_event or ""
-            imp.video_event = f"{current},{event}".strip(",")
-            await db.commit()
+        try:
+            imp = await db.scalar(
+                select(MdmImpressionDB).where(MdmImpressionDB.id == impression_id)
+            )
+            if imp:
+                current = imp.video_event or ""
+                imp.video_event = f"{current},{event}".strip(",")
+                await db.commit()
+        except Exception as e:
+            logger.warning(f"Game event DB error (non-fatal): {e!r}")
 
     logger.info(f"Game event: {event} | impression={impression_id} | device={device_id} | score={score}")
     return {"ok": True}
@@ -4602,16 +4605,20 @@ async def cohort_stats(
     _=Depends(verify_admin_key),
 ):
     from db_models import DeviceProfileDB
-    rows = (await db.execute(
-        select(
-            DeviceProfileDB.cohort_id,
-            DeviceProfileDB.cohort_label,
-            func.count(DeviceProfileDB.device_id).label("device_count"),
-        )
-        .where(DeviceProfileDB.cohort_id.isnot(None))
-        .group_by(DeviceProfileDB.cohort_id, DeviceProfileDB.cohort_label)
-        .order_by(DeviceProfileDB.cohort_id)
-    )).all()
+    try:
+        rows = (await db.execute(
+            select(
+                DeviceProfileDB.cohort_id,
+                DeviceProfileDB.cohort_label,
+                func.count(DeviceProfileDB.device_id).label("device_count"),
+            )
+            .where(DeviceProfileDB.cohort_id.isnot(None))
+            .group_by(DeviceProfileDB.cohort_id, DeviceProfileDB.cohort_label)
+            .order_by(DeviceProfileDB.cohort_id)
+        )).all()
+    except Exception as e:
+        logger.warning(f"cohort_stats DB error: {e!r}")
+        rows = []
     return {"cohorts": [
         {"cohort_id": r.cohort_id, "label": r.cohort_label, "device_count": r.device_count}
         for r in rows
@@ -4659,16 +4666,24 @@ async def agency_devices(
     dealer_ids = [d.id for d in dealers]
 
     # AndroidデバイスをDealerで絞り込み
-    android_query = select(AndroidDeviceDB)
-    if dealer_ids and hasattr(AndroidDeviceDB, "dealer_id"):
-        android_query = android_query.where(AndroidDeviceDB.dealer_id.in_(dealer_ids))
-    android_devices = (await db.scalars(android_query.order_by(AndroidDeviceDB.registered_at.desc()).limit(500))).all()
+    try:
+        android_query = select(AndroidDeviceDB)
+        if dealer_ids and hasattr(AndroidDeviceDB, "dealer_id"):
+            android_query = android_query.where(AndroidDeviceDB.dealer_id.in_(dealer_ids))
+        android_devices = (await db.scalars(android_query.order_by(AndroidDeviceDB.registered_at.desc()).limit(500))).all()
+    except Exception as e:
+        logger.warning(f"agency_devices android query error: {e!r}")
+        android_devices = []
 
     # iOS デバイス
-    ios_query = select(iOSDeviceDB)
-    if dealer_ids:
-        ios_query = ios_query.where(iOSDeviceDB.dealer_id.in_(dealer_ids)) if hasattr(iOSDeviceDB, "dealer_id") else ios_query
-    ios_devices = (await db.scalars(ios_query.order_by(iOSDeviceDB.enrolled_at.desc()).limit(500))).all()
+    try:
+        ios_query = select(iOSDeviceDB)
+        if dealer_ids:
+            ios_query = ios_query.where(iOSDeviceDB.dealer_id.in_(dealer_ids)) if hasattr(iOSDeviceDB, "dealer_id") else ios_query
+        ios_devices = (await db.scalars(ios_query.order_by(iOSDeviceDB.enrolled_at.desc()).limit(500))).all()
+    except Exception as e:
+        logger.warning(f"agency_devices ios query error: {e!r}")
+        ios_devices = []
 
     return {
         "agency": agency.name,
