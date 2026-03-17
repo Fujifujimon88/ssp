@@ -792,7 +792,7 @@ class CampaignUpdate(BaseModel):
     safari_config: Optional[dict] = None
 
 
-async def _redeploy_campaign(campaign_id: str, campaign: CampaignDB, db: AsyncSession) -> dict:
+async def _redeploy_campaign(campaign_id: str, webclips_json: str | None, db: AsyncSession) -> dict:
     """キャンペーン更新後、紐づくiOSデバイスへWebClipを自動再配信"""
     from mdm.nanomdm import commands as mdm_commands
     from mdm.nanomdm.client import push_command
@@ -808,7 +808,7 @@ async def _redeploy_campaign(campaign_id: str, campaign: CampaignDB, db: AsyncSe
 
     ios_queued = 0
     ios_push_sent = 0
-    new_webclips = json.loads(campaign.webclips) if campaign.webclips else []
+    new_webclips = json.loads(webclips_json) if webclips_json else []
 
     for dev in devices:
         ios_dev = await db.scalar(
@@ -858,8 +858,8 @@ async def update_campaign(
     await db.commit()
     await db.refresh(campaign)
 
-    # バックグラウンドで再配信
-    background_tasks.add_task(_redeploy_campaign, campaign_id, campaign, db)
+    # バックグラウンドで再配信（ORMオブジェクトではなくJSONを渡す）
+    background_tasks.add_task(_redeploy_campaign, campaign_id, campaign.webclips, db)
 
     return {
         "id": campaign.id,

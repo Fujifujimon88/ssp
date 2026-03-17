@@ -16,8 +16,11 @@ NanoMDMはこのplistをiOSデバイスへ配信する。
 """
 import base64
 import httpx
+import logging
 import plistlib
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 def _base_command(request_type: str, command_uuid: str | None = None) -> dict:
@@ -61,8 +64,8 @@ def add_web_clip(url: str, label: str, full_screen: bool = True, icon_url: str |
             img_bytes = httpx.get(icon_url, timeout=5.0).content
             webclip_payload["Icon"] = base64.b64encode(img_bytes).decode()
             webclip_payload["PrecomposedIcon"] = True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("icon fetch failed for %s: %s", icon_url, e)
     webclip_profile = {
         "PayloadContent": [webclip_payload],
         "PayloadDisplayName": f"Webクリップ: {label}",

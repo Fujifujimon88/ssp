@@ -1,11 +1,14 @@
 """iOS .mobileconfig（構成プロファイル）の動的生成"""
 import base64
+import logging
 import plistlib
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -103,8 +106,8 @@ def _webclip_payload(clip: WebClipConfig) -> dict:
             img_bytes = httpx.get(clip.icon_url, timeout=5.0).content
             payload["Icon"] = base64.b64encode(img_bytes).decode()
             payload["PrecomposedIcon"] = True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("icon fetch failed for %s: %s", clip.icon_url, e)
     return payload
 
 
