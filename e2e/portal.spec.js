@@ -60,6 +60,8 @@ test.describe("パブリッシャーポータル", () => {
 
   test("「プロフィール」セクションにAPIキーが表示される", async ({ page }) => {
     await loginAndGo(page);
+    // pubInfo が読み込まれるまで待機
+    await expect(page.locator("#pub-name")).not.toHaveText("読み込み中...", { timeout: 8000 });
     await page.locator("#nav-profile").click();
     await expect(page.locator("#api-key")).not.toHaveText("—", {
       timeout: 5000,
@@ -77,6 +79,8 @@ test.describe("パブリッシャーポータル", () => {
 test.describe("スロット作成フロー（UI）", () => {
   test("スロット作成モーダルを開いて作成できる", async ({ page }) => {
     await loginAndGo(page, "/dashboard");
+    // pubInfo が読み込まれるまで待機
+    await expect(page.locator("#pub-name")).not.toHaveText("読み込み中...", { timeout: 8000 });
     await page.locator("#nav-slots").click();
     await page.getByText("+ 新規スロット").click();
     await expect(page.locator("#modal-create-slot")).toHaveClass(/open/);

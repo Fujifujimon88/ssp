@@ -4,6 +4,7 @@
  */
 const { test, expect } = require("@playwright/test");
 const { adminGet } = require("./helpers/auth");
+const ADMIN_KEY = process.env.ADMIN_API_KEY || "change-me-admin-key";
 
 test.describe("管理画面 /admin", () => {
   test("ページが表示される", async ({ page }) => {
@@ -18,7 +19,7 @@ test.describe("管理画面 /admin", () => {
 
   test("KPIカードが4つ表示される", async ({ page }) => {
     await page.goto("/admin");
-    await expect(page.locator(".kpi-grid .card")).toHaveCount(4);
+    await expect(page.locator(".kpi-grid").first().locator(".card")).toHaveCount(4);
   });
 
   test("パブリッシャー一覧セクションが表示される", async ({ page }) => {
@@ -86,7 +87,7 @@ test.describe("/api/admin/stats", () => {
 
   test("KPIが管理画面に表示される", async ({ page }) => {
     await page.goto("/admin");
-    await page.evaluate(() => localStorage.setItem("ssp_admin_key", "change-me-admin-key"));
+    await page.evaluate((key) => localStorage.setItem("ssp_admin_key", key), ADMIN_KEY);
     await page.reload();
     await expect(page.locator("#kpi-imp")).not.toHaveText("-", { timeout: 8000 });
     await expect(page.locator("#kpi-rev-val")).not.toHaveText("-", { timeout: 8000 });
