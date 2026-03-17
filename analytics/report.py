@@ -23,10 +23,9 @@ async def generate_daily_report(
     if cached:
         return DailyReport(**cached)
 
-    stats, top_dsp = await asyncio.gather(
-        get_daily_stats(publisher_id, target_date, db),
-        get_top_dsp(publisher_id, target_date, db),
-    )
+    # 同一セッションを並列使用するとエラーになるため順次実行
+    stats = await get_daily_stats(publisher_id, target_date, db)
+    top_dsp = await get_top_dsp(publisher_id, target_date, db)
 
     report = DailyReport(
         publisher_id=publisher_id,

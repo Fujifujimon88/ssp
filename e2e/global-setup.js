@@ -12,12 +12,22 @@ const TEST_DOMAIN = process.env.TEST_DOMAIN || "e2e-test.example.com";
 const TEST_PASSWORD = process.env.TEST_PASSWORD || "e2eTestPass123";
 const AUTH_FILE = path.join(__dirname, ".auth", "user.json");
 
+async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 2000) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(url, options);
+    if (res.status !== 500 && res.status !== 502 && res.status !== 503) return res;
+    console.log(`[global-setup] ${res.status} → リトライ ${i + 1}/${retries}`);
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return fetch(url, options);
+}
+
 async function globalSetup() {
   // --- 既存のテスト用パブリッシャーにログイン試行 ---
   let token = null;
   let publisherId = null;
 
-  const loginRes = await fetch(`${BASE_URL}/auth/token`, {
+  const loginRes = await fetchWithRetry(`${BASE_URL}/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -32,7 +42,7 @@ async function globalSetup() {
     console.log("[global-setup] 既存パブリッシャーでログイン成功");
   } else {
     // --- 存在しなければ新規登録 ---
-    const registerRes = await fetch(
+    const registerRes = await fetchWithRetry(
       `${BASE_URL}/auth/register?password=${encodeURIComponent(TEST_PASSWORD)}`,
       {
         method: "POST",
