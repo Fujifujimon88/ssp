@@ -627,6 +627,24 @@ class InvoiceDB(Base):
     sent_at             = Column(DateTime(timezone=True), nullable=True)
 
 
+# ── 店舗プッシュ通知ログ ─────────────────────────────────────────────
+
+
+class DealerPushLogDB(Base):
+    """店舗からAndroidデバイスへのプッシュ通知送信ログ（月3回制限）"""
+    __tablename__ = "dealer_push_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dealer_id: Mapped[str] = mapped_column(String(36), ForeignKey("dealers.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    android_sent: Mapped[int] = mapped_column(Integer, default=0)
+    ios_sent: Mapped[int] = mapped_column(Integer, default=0)
+    total_devices: Mapped[int] = mapped_column(Integer, default=0)
+
+
 # ── 店舗別広告配信設定 ──────────────────────────────────────────────
 
 

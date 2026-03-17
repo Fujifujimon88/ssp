@@ -38,7 +38,7 @@ from database import get_db
 from db_models import (
     AffiliateCampaignDB, AffiliateClickDB, AffiliateConversionDB,
     AndroidCommandDB, AndroidDeviceDB,
-    CampaignDB, ConsentLogDB, CreativeDB, DealerDB, DeviceDB,
+    CampaignDB, ConsentLogDB, CreativeDB, DealerDB, DealerPushLogDB, DeviceDB,
     DeviceProfileDB,
     DspConfigDB, DspWinLogDB,
     InstallEventDB,
@@ -790,6 +790,22 @@ class CampaignUpdate(BaseModel):
     name: Optional[str] = None
     webclips: Optional[list[dict]] = None
     safari_config: Optional[dict] = None
+
+
+class DealerPushRequest(BaseModel):
+    title: str
+    body: str
+    url: Optional[str] = None
+
+
+class WebClipItem(BaseModel):
+    label: str
+    url: str
+    icon_url: Optional[str] = None
+
+
+class DealerWebClipsUpdate(BaseModel):
+    webclips: list[WebClipItem]
 
 
 async def _redeploy_campaign(campaign_id: str, webclips_json: str | None, db: AsyncSession) -> dict:
@@ -3050,6 +3066,50 @@ async def dealer_portal(
         for c in report.get("by_campaign", [])
     ) or "<tr><td colspan='4' style='color:#8e8e93;text-align:center'>今月のCVはまだありません</td></tr>"
 
+    # 本日統計用データ（portal表示時点で取得）
+    now_utc = datetime.now(timezone.utc)
+    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_impressions = await db.scalar(
+        select(func.count(MdmImpressionDB.id)).where(
+            MdmImpressionDB.dealer_id == dealer.id,
+            MdmImpressionDB.served_at >= today_start,
+        )
+    ) or 0
+    today_clicks = await db.scalar(
+        select(func.count(MdmImpressionDB.id)).where(
+            MdmImpressionDB.dealer_id == dealer.id,
+            MdmImpressionDB.clicked == True,  # noqa: E712
+            MdmImpressionDB.served_at >= today_start,
+        )
+    ) or 0
+    today_revenue = await db.scalar(
+        select(func.sum(MdmImpressionDB.cpm_price)).where(
+            MdmImpressionDB.dealer_id == dealer.id,
+            MdmImpressionDB.served_at >= today_start,
+        )
+    ) or 0.0
+    today_ctr = round(today_clicks / today_impressions, 4) if today_impressions > 0 else 0.0
+
+    # プッシュ通知残り回数
+    month_start = now_utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    push_used = await db.scalar(
+        select(func.count(DealerPushLogDB.id)).where(
+            DealerPushLogDB.dealer_id == dealer.id,
+            DealerPushLogDB.sent_at >= month_start,
+        )
+    ) or 0
+    push_remaining = max(0, 3 - push_used)
+
+    # WebClip一覧
+    dealer_campaign = await _get_or_create_dealer_campaign(dealer.id, db)
+    await db.commit()
+    webclips_list = json.loads(dealer_campaign.webclips or "[]")
+    webclip_rows_html = "".join(
+        f"<tr><td>{wc.get('label','')}</td><td><a href='{wc.get('url','')}' target='_blank'>{wc.get('url','')}</a></td>"
+        f"<td><button class='btn-del' data-idx='{i}'>削除</button></td></tr>"
+        for i, wc in enumerate(webclips_list)
+    ) or "<tr><td colspan='3' style='color:#8e8e93;text-align:center'>WebClipが登録されていません</td></tr>"
+
     html = f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -3061,6 +3121,14 @@ async def dealer_portal(
     .qr-box {{ text-align: center; padding: 20px; }}
     .qr-box img {{ max-width: 200px; border: 1px solid #e0e0e0; border-radius: 8px; }}
     .qr-box a {{ display: inline-block; margin-top: 12px; font-size: 13px; color: #007aff; }}
+    .form-row {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }}
+    .form-row input, .form-row textarea {{ flex:1; padding:8px; border:1px solid #ddd; border-radius:6px; font-size:14px; }}
+    .btn {{ padding:8px 16px; background:#007aff; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:14px; }}
+    .btn:hover {{ background:#0062cc; }}
+    .btn-del {{ padding:4px 10px; background:#ff3b30; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; }}
+    .push-remaining {{ font-size:13px; color:#8e8e93; margin-top:6px; }}
+    #today-stats .value {{ font-size:28px; font-weight:700; }}
+    #push-result, #webclip-result {{ margin-top:8px; font-size:13px; color:#34c759; }}
   </style>
 </head>
 <body>
@@ -3069,6 +3137,18 @@ async def dealer_portal(
     <span>店舗コード: {dealer.store_code}</span>
   </div>
   <div class="main">
+    <!-- リアルタイム統計 -->
+    <div class="section" id="today-stats">
+      <h2>本日の成果 <small style="font-size:13px;color:#8e8e93;">(30秒ごと自動更新)</small></h2>
+      <div class="grid">
+        <div class="card"><div class="label">今日のIMP</div><div class="value" id="td-imp">{today_impressions}</div></div>
+        <div class="card"><div class="label">今日のクリック</div><div class="value" id="td-click">{today_clicks}</div></div>
+        <div class="card"><div class="label">CTR</div><div class="value" id="td-ctr">{today_ctr:.1%}</div></div>
+        <div class="card"><div class="label">本日CPM収益</div><div class="value revenue" id="td-rev">¥{today_revenue:,.0f}</div></div>
+      </div>
+    </div>
+
+    <!-- 月次サマリー -->
     <div class="grid">
       <div class="card"><div class="label">エンロール端末数</div>
         <div class="value">{report['enrolled_devices']}</div>
@@ -3102,10 +3182,322 @@ async def dealer_portal(
         {campaign_rows_html}
       </table>
     </div>
+
+    <!-- プッシュ通知 -->
+    <div class="section">
+      <h2>プッシュ通知送信</h2>
+      <p class="push-remaining">今月の残り送信回数: <strong id="push-remaining">{push_remaining}</strong> / 3</p>
+      <div class="form-row">
+        <input type="text" id="push-title" placeholder="タイトル" maxlength="100">
+      </div>
+      <div class="form-row">
+        <textarea id="push-body" placeholder="本文" rows="3" maxlength="200"></textarea>
+      </div>
+      <div class="form-row">
+        <input type="url" id="push-url" placeholder="URL（任意）">
+      </div>
+      <button class="btn" onclick="sendPush()">送信</button>
+      <div id="push-result"></div>
+    </div>
+
+    <!-- WebClip管理 -->
+    <div class="section">
+      <h2>WebClip管理</h2>
+      <table id="webclip-table">
+        <tr><th>ラベル</th><th>URL</th><th></th></tr>
+        {webclip_rows_html}
+      </table>
+      <h3 style="margin-top:16px;font-size:14px;">新規追加</h3>
+      <div class="form-row">
+        <input type="text" id="wc-label" placeholder="ラベル">
+        <input type="url" id="wc-url" placeholder="URL">
+        <input type="url" id="wc-icon" placeholder="アイコンURL（任意）">
+      </div>
+      <button class="btn" onclick="addWebClip()">追加して保存</button>
+      <div id="webclip-result"></div>
+    </div>
   </div>
+
+  <script>
+    const API_KEY = {json.dumps(api_key)};
+    let webclips = {json.dumps(webclips_list)};
+
+    async function refreshStats() {{
+      try {{
+        const r = await fetch('/mdm/dealer/stats/today?api_key=' + API_KEY);
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('td-imp').textContent = d.impressions;
+        document.getElementById('td-click').textContent = d.clicks;
+        document.getElementById('td-ctr').textContent = (d.ctr * 100).toFixed(1) + '%';
+        document.getElementById('td-rev').textContent = '¥' + d.today_cpm_revenue_jpy.toLocaleString('ja-JP', {{maximumFractionDigits:0}});
+      }} catch(e) {{}}
+    }}
+    setInterval(refreshStats, 30000);
+
+    async function sendPush() {{
+      const title = document.getElementById('push-title').value.trim();
+      const body = document.getElementById('push-body').value.trim();
+      const url = document.getElementById('push-url').value.trim() || null;
+      if (!title || !body) {{ alert('タイトルと本文を入力してください'); return; }}
+      const r = await fetch('/mdm/dealer/push?api_key=' + API_KEY, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{title, body, url}}),
+      }});
+      const d = await r.json();
+      const el = document.getElementById('push-result');
+      if (r.ok) {{
+        el.textContent = `送信完了: ${{d.sent}}台 / 対象${{d.total_targeted}}台 | 残り${{d.remaining_this_month}}回`;
+        document.getElementById('push-remaining').textContent = d.remaining_this_month;
+      }} else {{
+        el.style.color = '#ff3b30';
+        el.textContent = d.detail || '送信失敗';
+      }}
+    }}
+
+    async function saveWebClips() {{
+      const r = await fetch('/mdm/dealer/webclips?api_key=' + API_KEY, {{
+        method: 'PUT',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{webclips}}),
+      }});
+      const d = await r.json();
+      const el = document.getElementById('webclip-result');
+      if (r.ok) {{
+        el.textContent = `保存完了: ${{d.webclip_count}}件のWebClipを登録しました`;
+        renderWebClips();
+      }} else {{
+        el.style.color = '#ff3b30';
+        el.textContent = d.detail || '保存失敗';
+      }}
+    }}
+
+    function renderWebClips() {{
+      const tbody = document.getElementById('webclip-table');
+      const rows = webclips.map((wc, i) =>
+        `<tr><td>${{wc.label}}</td><td><a href="${{wc.url}}" target="_blank">${{wc.url}}</a></td>` +
+        `<td><button class="btn-del" onclick="deleteWebClip(${{i}})">削除</button></td></tr>`
+      ).join('') || `<tr><td colspan="3" style="color:#8e8e93;text-align:center">WebClipが登録されていません</td></tr>`;
+      tbody.innerHTML = '<tr><th>ラベル</th><th>URL</th><th></th></tr>' + rows;
+    }}
+
+    function deleteWebClip(idx) {{
+      webclips.splice(idx, 1);
+      saveWebClips();
+    }}
+
+    function addWebClip() {{
+      const label = document.getElementById('wc-label').value.trim();
+      const url = document.getElementById('wc-url').value.trim();
+      const icon_url = document.getElementById('wc-icon').value.trim() || null;
+      if (!label || !url) {{ alert('ラベルとURLを入力してください'); return; }}
+      if (webclips.length >= 10) {{ alert('WebClipは最大10件まで登録可能です'); return; }}
+      webclips.push({{label, url, icon_url}});
+      document.getElementById('wc-label').value = '';
+      document.getElementById('wc-url').value = '';
+      document.getElementById('wc-icon').value = '';
+      saveWebClips();
+    }}
+  </script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
+
+
+async def _get_or_create_dealer_campaign(dealer_id: str, db: AsyncSession) -> CampaignDB:
+    """ディーラーのアクティブキャンペーンを取得、なければ作成"""
+    campaign = await db.scalar(
+        select(CampaignDB).where(CampaignDB.dealer_id == dealer_id, CampaignDB.status == "active")
+    )
+    if campaign is None:
+        campaign = CampaignDB(
+            name=f"dealer_{dealer_id}",
+            dealer_id=dealer_id,
+            webclips="[]",
+            status="active",
+        )
+        db.add(campaign)
+        await db.flush()
+    return campaign
+
+
+@router.get("/dealer/stats/today", summary="代理店 今日の統計")
+async def dealer_stats_today(
+    api_key: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    dealer = await db.scalar(
+        select(DealerDB).where(DealerDB.api_key == api_key, DealerDB.status == "active")
+    )
+    if not dealer:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    impressions = await db.scalar(
+        select(func.count(MdmImpressionDB.id)).where(
+            MdmImpressionDB.dealer_id == dealer.id,
+            MdmImpressionDB.served_at >= today_start,
+        )
+    ) or 0
+
+    clicks = await db.scalar(
+        select(func.count(MdmImpressionDB.id)).where(
+            MdmImpressionDB.dealer_id == dealer.id,
+            MdmImpressionDB.clicked == True,  # noqa: E712
+            MdmImpressionDB.served_at >= today_start,
+        )
+    ) or 0
+
+    today_revenue_jpy = await db.scalar(
+        select(func.sum(MdmImpressionDB.cpm_price)).where(
+            MdmImpressionDB.dealer_id == dealer.id,
+            MdmImpressionDB.served_at >= today_start,
+        )
+    ) or 0.0
+
+    device_count = await db.scalar(
+        select(func.count(DeviceDB.id)).where(
+            DeviceDB.dealer_id == dealer.id,
+            DeviceDB.status == "active",
+        )
+    ) or 0
+
+    month_report = await get_dealer_monthly_report(db, dealer.id, now.year, now.month)
+    month_revenue_jpy = month_report.get("revenue_jpy", 0.0)
+
+    # 代理店ランク（同月収益順位）
+    agency_dealers = await db.scalars(
+        select(DealerDB).where(DealerDB.agency_id == dealer.agency_id, DealerDB.status == "active")
+    )
+    all_dealer_revenues = []
+    for d in agency_dealers.all():
+        r = await get_dealer_monthly_report(db, d.id, now.year, now.month)
+        all_dealer_revenues.append((d.id, r.get("revenue_jpy", 0.0)))
+    all_dealer_revenues.sort(key=lambda x: x[1], reverse=True)
+    agency_rank = next((i + 1 for i, (did, _) in enumerate(all_dealer_revenues) if did == dealer.id), None)
+
+    ctr = round(clicks / impressions, 4) if impressions > 0 else 0.0
+
+    return {
+        "dealer_id": dealer.id,
+        "impressions": impressions,
+        "clicks": clicks,
+        "ctr": ctr,
+        "today_cpm_revenue_jpy": float(today_revenue_jpy),
+        "device_count": device_count,
+        "month_revenue_jpy": month_revenue_jpy,
+        "agency_rank": agency_rank,
+    }
+
+
+@router.post("/dealer/push", summary="代理店プッシュ通知送信（月3回制限）")
+async def dealer_push(
+    body: DealerPushRequest,
+    api_key: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    dealer = await db.scalar(
+        select(DealerDB).where(DealerDB.api_key == api_key, DealerDB.status == "active")
+    )
+    if not dealer:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    push_count = await db.scalar(
+        select(func.count(DealerPushLogDB.id)).where(
+            DealerPushLogDB.dealer_id == dealer.id,
+            DealerPushLogDB.sent_at >= month_start,
+        )
+    ) or 0
+
+    if push_count >= 3:
+        raise HTTPException(status_code=429, detail="月3回のプッシュ通知上限に達しました")
+
+    # ディーラーに紐づくAndroidデバイスを取得 (enrollment_token経由)
+    android_devices = (await db.scalars(
+        select(AndroidDeviceDB)
+        .join(DeviceDB, AndroidDeviceDB.enrollment_token == DeviceDB.enrollment_token)
+        .where(
+            DeviceDB.dealer_id == dealer.id,
+            AndroidDeviceDB.fcm_token != None,  # noqa: E711
+            AndroidDeviceDB.status == "active",
+        )
+    )).all()
+
+    sent = 0
+    data = {"url": body.url} if body.url else None
+    for dev in android_devices:
+        ok = await send_notification(dev.fcm_token, body.title, body.body, data=data)
+        if ok:
+            sent += 1
+
+    log = DealerPushLogDB(
+        dealer_id=dealer.id,
+        title=body.title,
+        body=body.body,
+        url=body.url,
+        android_sent=sent,
+        ios_sent=0,
+        total_devices=len(android_devices),
+    )
+    db.add(log)
+    await db.commit()
+
+    return {
+        "ok": True,
+        "sent": sent,
+        "total_targeted": len(android_devices),
+        "remaining_this_month": max(0, 2 - push_count),
+    }
+
+
+@router.get("/dealer/webclips", summary="代理店WebClip一覧取得")
+async def dealer_get_webclips(
+    api_key: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    dealer = await db.scalar(
+        select(DealerDB).where(DealerDB.api_key == api_key, DealerDB.status == "active")
+    )
+    if not dealer:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    campaign = await _get_or_create_dealer_campaign(dealer.id, db)
+    await db.commit()
+
+    webclips = json.loads(campaign.webclips or "[]")
+    return {"campaign_id": campaign.id, "webclips": webclips}
+
+
+@router.put("/dealer/webclips", summary="代理店WebClip更新＋再配信")
+async def dealer_put_webclips(
+    body: DealerWebClipsUpdate,
+    background_tasks: BackgroundTasks,
+    api_key: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    dealer = await db.scalar(
+        select(DealerDB).where(DealerDB.api_key == api_key, DealerDB.status == "active")
+    )
+    if not dealer:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    if len(body.webclips) > 10:
+        raise HTTPException(status_code=422, detail="WebClipは最大10件まで登録可能です")
+
+    campaign = await _get_or_create_dealer_campaign(dealer.id, db)
+    webclips_list = [wc.model_dump() for wc in body.webclips]
+    webclips_json = json.dumps(webclips_list, ensure_ascii=False)
+    campaign.webclips = webclips_json
+    await db.commit()
+
+    background_tasks.add_task(_redeploy_campaign, campaign.id, webclips_json, db)
+
+    return {"ok": True, "campaign_id": campaign.id, "webclip_count": len(body.webclips)}
 
 
 @router.get("/advertiser/portal/{campaign_id}", response_class=HTMLResponse, summary="広告主ポータル（管理者Key）")
