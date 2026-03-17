@@ -21,7 +21,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,6 +81,13 @@ templates = Jinja2Templates(directory="dashboard/templates")
 app.include_router(publisher_router)
 app.include_router(mdm_router)
 app.include_router(openrtb_router)
+
+
+# ── ルートリダイレクト ──────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse(url="/admin")
 
 
 # ── ヘッダービディングエンドポイント ───────────────────────────
