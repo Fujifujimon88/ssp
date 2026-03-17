@@ -8,9 +8,10 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0f172a; --surface: #1e293b; --border: #334155;
-      --text: #e2e8f0; --muted: #94a3b8; --accent: #6366f1;
-      --green: #22c55e; --yellow: #f59e0b; --red: #ef4444;
+      --bg: #ffffff; --surface: #f8fafc; --border: #e2e8f0;
+      --text: #1e293b; --muted: #64748b; --accent: #6366f1;
+      --green: #16a34a; --yellow: #d97706; --red: #dc2626;
+      --nav-bg: #f0fdf4; --nav-border: #bbf7d0;
     }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
            background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -30,11 +31,11 @@
 
     /* レイアウト */
     .layout { display: flex; min-height: calc(100vh - 56px); }
-    nav { width: 220px; background: var(--surface); border-right: 1px solid var(--border);
+    nav { width: 220px; background: var(--nav-bg); border-right: 1px solid var(--nav-border);
           padding: 16px 0; flex-shrink: 0; }
     nav a { display: flex; align-items: center; gap: 10px; padding: 10px 20px;
             font-size: 14px; color: var(--muted); transition: all .15s; }
-    nav a:hover, nav a.active { color: var(--text); background: rgba(99,102,241,.15); }
+    nav a:hover, nav a.active { color: var(--accent); background: rgba(22,163,74,.1); }
     nav .section-label { padding: 16px 20px 6px; font-size: 11px; color: var(--muted);
                           text-transform: uppercase; letter-spacing: .05em; }
     main { flex: 1; padding: 24px; overflow-x: hidden; }
@@ -58,11 +59,11 @@
     /* テーブル */
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th { padding: 10px 14px; text-align: left; background: rgba(255,255,255,.03);
+    th { padding: 10px 14px; text-align: left; background: rgba(0,0,0,.02);
          color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
-    td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.04); }
+    td { padding: 12px 14px; border-bottom: 1px solid var(--border); }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(255,255,255,.02); }
+    tr:hover td { background: rgba(0,0,0,.02); }
     .status-active   { color: var(--green); font-weight: 600; }
     .status-pending  { color: var(--yellow); font-weight: 600; }
     .status-suspended{ color: var(--red); font-weight: 600; }
