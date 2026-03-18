@@ -2381,7 +2381,10 @@ async def ios_mdm_checkin(request: Request, db: AsyncSession = Depends(get_db)):
     NanoMDMのWebhookから呼ばれる（NanoMDMの -webhook-url オプション）。
     デバイスのUDID・PushMagic・PushTokenをDBに保存する。
     """
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
     event = body.get("topic", "")
     params = body.get("checkin", body)
 
