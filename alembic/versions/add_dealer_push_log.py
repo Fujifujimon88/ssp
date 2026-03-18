@@ -1,6 +1,6 @@
 """add dealer_push_logs table
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: f495c04833bf
 Revises: 6b4cf98a0c79
 Create Date: 2026-03-18 00:00:00.000000
 
@@ -8,7 +8,7 @@ Create Date: 2026-03-18 00:00:00.000000
 from alembic import op
 import sqlalchemy as sa
 
-revision = 'a1b2c3d4e5f6'
+revision = 'f495c04833bf'
 down_revision = '6b4cf98a0c79'
 branch_labels = None
 depends_on = None
