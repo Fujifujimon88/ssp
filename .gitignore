@@ -18,3 +18,13 @@ ssp.db
 
 # iOS xcconfig (production secrets)
 ios-app/Config/Production.xcconfig
+
+# Claude Code ローカル設定（個人環境依存）
+.claude/settings.local.json
+.claude/settings.json
+.claude/worktrees/
+
+# 作業用スクリプト・バイナリ
+create_dealer_deck.py
+create_presentation.py
+*.pptx
