@@ -23,6 +23,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,6 +82,9 @@ templates = Jinja2Templates(directory="dashboard/templates")
 app.include_router(publisher_router)
 app.include_router(mdm_router)
 app.include_router(openrtb_router)
+
+# Vercel の X-Forwarded-Proto ヘッダーを信頼し request.base_url が https:// を返すようにする
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 
 @app.get("/", include_in_schema=False)
@@ -217,7 +221,7 @@ async def login_page(request: Request):
 
 @app.get("/dashboard", response_class=HTMLResponse, summary="パブリッシャーポータル")
 async def dashboard(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    return templates.TemplateResponse("dashboard.html", {"request": request, "version": APP_VERSION})
 
 
 # ── 管理画面（全パブリッシャー一覧）──────────────────────────
@@ -228,7 +232,7 @@ async def admin(request: Request, db: AsyncSession = Depends(get_db)):
     publishers = result.scalars().all()
     return templates.TemplateResponse(
         "admin.html",
-        {"request": request, "publishers": publishers}
+        {"request": request, "publishers": publishers, "version": APP_VERSION}
     )
 
 
@@ -316,6 +320,7 @@ async def sellers_json(db: AsyncSession = Depends(get_db)):
 
 @app.get("/api/publishers/me/ads-txt", response_class=PlainTextResponse, summary="自分のads.txtライン取得")
 async def get_my_ads_txt(
+    request: Request,
     publisher_id: str = Depends(get_current_publisher_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -323,7 +328,7 @@ async def get_my_ads_txt(
     pub = await db.get(PublisherDB, publisher_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Publisher not found")
-    host = settings.ssp_endpoint.replace("https://", "").replace("http://", "").rstrip("/")
+    host = str(request.base_url).replace("https://", "").replace("http://", "").rstrip("/")
     line = f"{host}, {pub.id}, DIRECT, ssp-platform"
     comment = (
         f"# {pub.domain} の ads.txt に以下の1行を追加してください\n"

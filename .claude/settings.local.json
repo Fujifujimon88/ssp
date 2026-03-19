@@ -6,7 +6,19 @@
       "Bash(git add:*)",
       "WebFetch(domain:prtimes.jp)",
       "WebFetch(domain:terms.line.me)",
-      "WebFetch(domain:developers.line.biz)"
+      "WebFetch(domain:developers.line.biz)",
+      "Bash(supabase --version)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(python3:*)",
+      "Bash(vercel --prod)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
+    ],
+    "defaultMode": "auto",
+    "additionalDirectories": [
+      "C:\\Users\\yui9oi\\.claude"
     ]
-  }
+  },
+  "skipAutoPermissionPrompt": true
 }

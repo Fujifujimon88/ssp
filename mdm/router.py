@@ -392,7 +392,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           btn.textContent = "ダウンロード中...";
           window.location.href = data.mobileconfig_url;
           setTimeout(function() {{
-            window.location.href = data.line_add_friend_url || "/";
+            if (data.line_add_friend_url) window.location.href = data.line_add_friend_url;
           }}, 2500);
         }}
       }} catch(err) {{
@@ -431,7 +431,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           // DPC APKダウンロード開始
           window.location.href = data.android_apk_url;
           setTimeout(function() {{
-            window.location.href = data.line_add_friend_url || "/";
+            if (data.line_add_friend_url) window.location.href = data.line_add_friend_url;
           }}, 3000);
         }}
       }} catch(err) {{
@@ -451,13 +451,14 @@ PORTAL_HTML = """<!DOCTYPE html>
 
 @router.get("/portal", response_class=HTMLResponse, summary="エンロールポータル")
 async def enrollment_portal(
+    request: Request,
     dealer: Optional[str] = Query(None),
     campaign: Optional[str] = Query(None),
 ):
     html = PORTAL_HTML.format(
         dealer_id=dealer or "",
         campaign_id=campaign or "",
-        base_url=settings.ssp_endpoint.rstrip("/"),
+        base_url=str(request.base_url).rstrip("/"),
     )
     return HTMLResponse(content=html)
 
@@ -517,7 +518,7 @@ async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
 
     logger.info(f"MDM consent | token={device.enrollment_token[:8]}... | platform={platform} | dealer={dealer_id}")
 
-    base = settings.ssp_endpoint.rstrip("/")
+    base = str(request.base_url).rstrip("/")
     token = device.enrollment_token
     return {
         "enrollment_token": token,
@@ -529,6 +530,7 @@ async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/ios/mobileconfig", summary="iOS .mobileconfig ダウンロード")
 async def download_mobileconfig(
+    request: Request,
     token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
@@ -587,7 +589,7 @@ async def download_mobileconfig(
     logger.info(f"MDM mobileconfig downloaded | token={token[:8]}...")
 
     # LINE友だち追加URLをX-Next-Urlヘッダーで返す（JSがリダイレクト）
-    base = settings.ssp_endpoint.rstrip("/")
+    base = str(request.base_url).rstrip("/")
     next_url = f"{base}/mdm/line/add-friend?token={token}"
 
     return Response(
@@ -603,6 +605,7 @@ async def download_mobileconfig(
 @router.get("/qr/{store_code}", summary="店舗別エンロールQRコード（PNG）")
 async def enrollment_qr(
     store_code: str,
+    request: Request,
     campaign: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -610,7 +613,8 @@ async def enrollment_qr(
     if not dealer:
         raise HTTPException(status_code=404, detail="Dealer not found")
 
-    base = settings.ssp_endpoint.rstrip("/")
+    # リクエストの origin を使う（settings.ssp_endpoint が localhost のままでも正しく動作）
+    base = str(request.base_url).rstrip("/")
     url = f"{base}/mdm/portal?dealer={dealer.id}"
     if campaign:
         url += f"&campaign={campaign}"
@@ -1143,6 +1147,7 @@ class AffiliateCampaignCreate(BaseModel):
 
 @router.post("/admin/affiliate/campaigns", summary="アフィリエイト案件登録（管理者）")
 async def create_affiliate_campaign(
+    request: Request,
     body: AffiliateCampaignCreate,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_admin_key),
@@ -1151,7 +1156,8 @@ async def create_affiliate_campaign(
     db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
-    return {"id": campaign.id, "name": campaign.name, "tracked_url_example": build_tracked_url(campaign.id, "EXAMPLE_TOKEN")}
+    base = str(request.base_url).rstrip("/")
+    return {"id": campaign.id, "name": campaign.name, "tracked_url_example": build_tracked_url(campaign.id, "EXAMPLE_TOKEN", base)}
 
 
 @router.get("/admin/affiliate/campaigns", summary="アフィリエイト案件一覧（管理者）")
@@ -1911,6 +1917,7 @@ async def android_wifi_checkin(
 
 @router.get("/android/lockscreen/content", summary="ロック画面広告コンテンツ取得")
 async def lockscreen_content(
+    request: Request,
     device_id: Optional[str] = Query(None),
     token: Optional[str] = Query(None),
     hour: Optional[int] = Query(None),
@@ -1945,13 +1952,14 @@ async def lockscreen_content(
 
     import random
     campaign = random.choice(campaigns)
+    base = str(request.base_url).rstrip("/")
     return {
         "impression_id": None,
         "content": {
             "campaign_id": campaign.id,
             "type": "text",
             "title": campaign.name,
-            "click_url": build_tracked_url(campaign.id, device_id or "anonymous"),
+            "click_url": build_tracked_url(campaign.id, device_id or "anonymous", base),
             "category": campaign.category,
         },
     }
@@ -2243,6 +2251,7 @@ async def content_prefetch(
 
 @router.get("/android/widget/content", summary="ホーム画面ウィジェットコンテンツ取得")
 async def widget_content(
+    request: Request,
     device_id: Optional[str] = Query(None),
     token: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -2268,13 +2277,14 @@ async def widget_content(
         .limit(3)
     )
     campaigns = list(result.scalars().all())
+    base = str(request.base_url).rstrip("/")
     return {
         "items": [
             {
                 "campaign_id": c.id,
                 "type": "text",
                 "title": c.name,
-                "click_url": build_tracked_url(c.id, device_id or "anonymous"),
+                "click_url": build_tracked_url(c.id, device_id or "anonymous", base),
             }
             for c in campaigns
         ]
@@ -2335,9 +2345,8 @@ async def download_dpc_apk(token: Optional[str] = Query(None)):
     実際のAPKはビルド後に静的ファイルとして配置する。
     現時点ではインストール手順ページへリダイレクト。
     """
-    base = settings.ssp_endpoint.rstrip("/")
     return RedirectResponse(
-        url=f"{base}/mdm/android/install-guide?token={token or ''}",
+        url=f"/mdm/android/install-guide?token={token or ''}",
         status_code=302,
     )
 
@@ -2612,6 +2621,7 @@ async def ios_mdm_checkin(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/appclips/content", summary="App Clipsコンテンツ取得")
 async def appclips_content(
+    request: Request,
     udid: Optional[str] = Query(None),
     dealer: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -2632,7 +2642,8 @@ async def appclips_content(
 
     import random
     campaign = random.choice(campaigns)
-    tracked_url = build_tracked_url(campaign.id, udid or "appclip-anonymous")
+    base = str(request.base_url).rstrip("/")
+    tracked_url = build_tracked_url(campaign.id, udid or "appclip-anonymous", base)
 
     return {
         "offer": {
@@ -3204,6 +3215,7 @@ async def admin_dashboard(
 
 @router.get("/dealer/portal", response_class=HTMLResponse, summary="代理店ポータル")
 async def dealer_portal(
+    request: Request,
     api_key: str = Query(..., description="代理店API Key（DealerDB.api_key）"),
     year: int = Query(default=None),
     month: int = Query(default=None),
@@ -3225,7 +3237,7 @@ async def dealer_portal(
     m = month or now.month
     report = await get_dealer_monthly_report(db, dealer.id, y, m)
 
-    base = settings.ssp_endpoint.rstrip("/")
+    base = str(request.base_url).rstrip("/")
     qr_url = f"{base}/mdm/qr/{dealer.store_code}"
     portal_url = f"{base}/mdm/portal?dealer={dealer.id}"
 
@@ -3673,6 +3685,7 @@ async def dealer_put_webclips(
 
 @router.get("/advertiser/portal/{campaign_id}", response_class=HTMLResponse, summary="広告主ポータル（管理者Key）")
 async def advertiser_portal(
+    request: Request,
     campaign_id: str,
     year: int = Query(default=None),
     month: int = Query(default=None),
@@ -3735,8 +3748,8 @@ async def advertiser_portal(
         for c in cv_list
     ) or "<tr><td colspan='4' style='color:#8e8e93;text-align:center'>CVはまだありません</td></tr>"
 
-    base = settings.ssp_endpoint.rstrip("/")
-    tracked_url = build_tracked_url(campaign_id, "DEVICE_TOKEN")
+    base = str(request.base_url).rstrip("/")
+    tracked_url = build_tracked_url(campaign_id, "DEVICE_TOKEN", base)
     gtm_status = f"設定済み: {campaign.gtm_container_id}" if campaign.gtm_container_id else "未設定"
     appsflyer_status = "設定済み" if campaign.appsflyer_dev_key else "未設定"
     adjust_status = "設定済み" if campaign.adjust_app_token else "未設定"
@@ -4161,6 +4174,7 @@ async def impression_analytics(
 
 @router.get("/ios/widget/content", summary="iOS ウィジェット広告コンテンツ取得")
 async def ios_widget_content(
+    request: Request,
     token: Optional[str] = Query(None, description="enrollment_token"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -4168,7 +4182,7 @@ async def ios_widget_content(
     iOS ホーム画面ウィジェット / WebClip アプリが起動時に呼び出す。
     eCPM エンジンで最適なクリエイティブを選択し、クリック追跡用リダイレクト URL を生成して返す。
     """
-    base = settings.ssp_endpoint.rstrip("/")
+    base = str(request.base_url).rstrip("/")
 
     items = []
     for _ in range(3):
@@ -4202,7 +4216,7 @@ async def ios_widget_content(
                 "title": c.name,
                 "body": "",
                 "image_url": None,
-                "tracking_url": build_tracked_url(c.id, token or "anonymous"),
+                "tracking_url": build_tracked_url(c.id, token or "anonymous", base),
                 "category": c.category,
             })
 
@@ -4225,6 +4239,7 @@ async def ios_click_redirect(
 
 @router.post("/admin/ios/push-webclip-ad", summary="iOS デバイスへ広告WebClip配信（管理者）")
 async def push_ios_webclip_ad(
+    request: Request,
     udid: str = Query(..., description="iOSデバイスのUDID"),
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_admin_key),
@@ -4243,7 +4258,7 @@ async def push_ios_webclip_ad(
     if not creative:
         raise HTTPException(status_code=404, detail="No active creative available")
 
-    base = settings.ssp_endpoint.rstrip("/")
+    base = str(request.base_url).rstrip("/")
     imp_id = creative.get("impression_id", "")
     dest = creative.get("click_url", "")
     tracking_url = f"{base}/mdm/ios/click?imp={imp_id}&to={dest}"
@@ -4283,6 +4298,7 @@ class BroadcastBody(BaseModel):
 
 @router.post("/admin/broadcast", summary="全デバイスへコマンド一括配信（管理者）")
 async def broadcast_command(
+    request: Request,
     body: BroadcastBody,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_admin_key),
@@ -4366,10 +4382,10 @@ async def broadcast_command(
                         db, slot_type="webclip_ios", platform="ios",
                     )
                     if creative:
-                        base = settings.ssp_endpoint.rstrip("/")
+                        _base = str(request.base_url).rstrip("/")
                         imp_id = creative.get("impression_id", "")
                         dest = creative.get("click_url", "")
-                        tracking_url = f"{base}/mdm/ios/click?imp={imp_id}&to={dest}"
+                        tracking_url = f"{_base}/mdm/ios/click?imp={imp_id}&to={dest}"
                         cmd_plist = mdm_commands.add_web_clip(
                             url=tracking_url,
                             label=creative.get("title", "広告"),
@@ -4765,7 +4781,7 @@ _VALID_VIDEO_EVENTS = {"start", "q1", "midpoint", "q3", "complete", "skip"}
 
 
 @router.get("/ad/vast/{impression_id}", summary="VAST 3.0 動画広告XML取得")
-async def get_vast(impression_id: str, db: AsyncSession = Depends(get_db)):
+async def get_vast(impression_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     """
     VAST 3.0 XML を返す。
 
@@ -4781,7 +4797,7 @@ async def get_vast(impression_id: str, db: AsyncSession = Depends(get_db)):
     if creative is None or not creative.video_url:
         raise HTTPException(status_code=404, detail="video creative not found")
 
-    base_url = settings.ssp_endpoint.rstrip("/")
+    base_url = str(request.base_url).rstrip("/")
     duration = creative.video_duration_sec or 30
     skip_after = creative.skip_after_sec if creative.skip_after_sec is not None else 5
 

@@ -20,12 +20,12 @@ APPSFLYER_S2S_URL = "https://s2s.appsflyer.com/api/v2/installs"
 ADJUST_S2S_URL = "https://s2s.adjust.com/event"
 
 
-def build_tracked_url(campaign_id: str, enrollment_token: str) -> str:
+def build_tracked_url(campaign_id: str, enrollment_token: str, base: str) -> str:
     """
     アフィリエイトクリック追跡URL を生成する。
     ユーザーがタップ → /mdm/affiliate/click/{campaign_id} → リダイレクト → 実際の広告主URL
+    base: リクエストの origin (例: "https://ssp-platform.vercel.app")
     """
-    base = settings.ssp_endpoint.rstrip("/")
     params = urlencode({"token": enrollment_token})
     return f"{base}/mdm/affiliate/click/{campaign_id}?{params}"
 

@@ -99,6 +99,13 @@
       .kpi-grid { grid-template-columns: repeat(2,1fr); }
       .chart-row { grid-template-columns: 1fr; }
     }
+    @media(max-width:640px) {
+      header { padding: 0 12px; gap: 8px; }
+      .header-right { gap: 6px; }
+      .status-label { display: none; }
+      .header-right a.btn { display: none; }
+      .btn-text { display: none; }
+    }
 
     /* ローダー */
     .loading { color: var(--muted); font-size: 13px; padding: 20px 0; }
@@ -111,13 +118,13 @@
 
 <header>
   <h1>SSP Platform</h1>
-  <span class="badge">v0.2</span>
+  <span class="badge">v{{ version }}</span>
   <div class="header-right">
     <span class="status-dot"></span>
     <span class="status-label" id="dsp-count">DSP接続中...</span>
     <a href="/login" class="btn btn-ghost" style="text-decoration:none">パブリッシャーログイン</a>
-    <button class="btn btn-ghost" onclick="showKeyModal()" id="admin-key-btn" title="管理者キー設定">🔑 管理者キー</button>
-    <button class="btn btn-primary" onclick="showRegisterModal()">+ パブリッシャー登録</button>
+    <button class="btn btn-ghost" onclick="showKeyModal()" id="admin-key-btn" title="管理者キー設定">🔑 <span class="btn-text">管理者キー</span></button>
+    <button class="btn btn-primary" onclick="showRegisterModal()">+ <span class="btn-text">パブリッシャー登録</span></button>
   </div>
 </header>
 
@@ -745,7 +752,7 @@ async function loadDealers() {
         <td>${d.name}</td>
         <td><code style="background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px;font-size:12px">${d.store_code}</code></td>
         <td><span class="status-${d.status}">${d.status}</span></td>
-        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showQrModal('${d.store_code}','${d.name}')">📱 QR表示</button></td>
+        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showQrModal('${d.store_code}','${d.name}','${d.id}')">📱 QR表示</button></td>
       </tr>`
     ).join('');
     document.getElementById('dealers-table').style.display = 'table';
@@ -787,10 +794,10 @@ document.getElementById('dealer-form').addEventListener('submit', async (e) => {
 });
 
 // ── QRコード表示 ──────────────────────────────────────────────
-function showQrModal(storeCode, dealerName) {
+function showQrModal(storeCode, dealerName, dealerId) {
   const base = location.origin;
   const qrUrl = `${base}/mdm/qr/${storeCode}`;
-  const portalUrl = `${base}/mdm/portal?dealer=${storeCode}`;
+  const portalUrl = `${base}/mdm/portal?dealer=${dealerId}`;
 
   document.getElementById('qr-modal-title').textContent = `📱 ${dealerName}`;
   document.getElementById('qr-modal-store').textContent = `店舗コード: ${storeCode}`;
