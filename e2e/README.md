@@ -238,6 +238,40 @@ npx playwright test e2e/dashboard.spec.js
 | コホートが存在する場合は各フィールドを持つ | ML-03: フィールド確認 |
 | 管理者キーなしで401 | ML-03: 認証確認 |
 
+### store_lockscreen.spec.js（12テスト）- Feature 4: 店舗ロック画面専用枠
+| テスト | 概要 |
+|--------|------|
+| 管理者キーで店舗クリエイティブを登録できる | POST /mdm/admin/stores/:id/lockscreen-creative |
+| 管理者キーなしで登録すると 401 | 認証必須確認 |
+| 存在しないdealer_idは 404 | dealer存在確認 |
+| slot_type=notification は 422 | バリデーション確認 |
+| 一覧取得で登録済みクリエイティブが返る | GET /mdm/admin/stores/:id/lockscreen-creatives |
+| 別の dealer_id では creatives が空配列 | 店舗分離確認 |
+| クリエイティブを paused に変更できる | PATCH .../status |
+| クリエイティブを active に戻せる | ステータス往復確認 |
+| 無効な status 値は 422 | バリデーション確認 |
+| lockscreen/content でコンテンツが返る | 配信エンドポイント確認 |
+| ad-assignment を削除できる | DELETE /mdm/admin/stores/:id/ad-assignments/:id |
+| 削除後に一覧から消えている | 削除後確認 |
+
+### ios_widget_admin.spec.js（14テスト）- Feature 6: iOS ウィジェット広告管理
+| テスト | 概要 |
+|--------|------|
+| 管理者キーで iOS ウィジェットクリエイティブを登録できる | POST /mdm/admin/ios/widget/creative |
+| 管理者キーなしで登録すると 401 | 認証必須確認 |
+| 必須フィールド欠落で 422 | バリデーション確認 |
+| 登録後 DB に category=ios_widget が存在する | 作成確認 |
+| iOS ウィジェット統計が正しいフィールドを返す | GET /mdm/admin/ios/widget/stats |
+| days=7 を指定すると period_days=7 が返る | クエリパラメータ確認 |
+| days=91（範囲外）は 422 | バリデーション確認 |
+| days=0 は 422 | バリデーション確認 |
+| 認証なしで stats に 401 | 認証必須確認 |
+| プレビューがドライラン応答を返す | GET /mdm/admin/ios/widget/preview |
+| enrollment_token 付きプレビューも 200 | token パラメータ確認 |
+| 認証なしでプレビューに 401 | 認証必須確認 |
+| WidgetKit エンドポイントが正しい構造を返す | GET /mdm/ios/widget_content/:udid |
+| iOS ウィジェットコンテンツエンドポイントが items 配列を返す | GET /mdm/ios/widget/content |
+
 ## グローバルセットアップについて
 
 `global-setup.js` が自動的に以下を行います：

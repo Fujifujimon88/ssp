@@ -23,6 +23,7 @@ from db_models import (
     DeviceDB,
     MdmAdSlotDB,
     MdmImpressionDB,
+    StoreAdAssignmentDB,
     TimeSlotMultiplierDB,
 )
 
@@ -215,10 +216,92 @@ async def select_creative(
         dealer = await db.get(DealerDB, dealer_id)
         region = dealer.region if dealer else None
 
+    # フリークエンシーキャップ計算（店舗枠・通常枠で共用）
+    capped_creative_ids: set[str] = set()
+    if device_id or enrollment_token:
+        today_start = datetime.combine(date.today(), datetime.min.time()).replace(
+            tzinfo=timezone.utc
+        )
+        filter_col = (
+            MdmImpressionDB.device_id if device_id else MdmImpressionDB.enrollment_token
+        )
+        filter_val = device_id or enrollment_token
+
+        freq_rows = await db.execute(
+            select(
+                MdmImpressionDB.creative_id,
+                func.count(MdmImpressionDB.id).label("count"),
+            )
+            .where(
+                filter_col == filter_val,
+                MdmImpressionDB.created_at >= today_start,
+            )
+            .group_by(MdmImpressionDB.creative_id)
+        )
+        capped_creative_ids = {
+            row.creative_id
+            for row in freq_rows.all()
+            if row.count >= FREQ_CAP_DAILY
+        }
+
+    # 店舗専用枠 優先選択（lockscreen / widget のみ）
+    # dealer_id が判明している場合、StoreAdAssignmentDB を先に確認して最優先配信する
+    if dealer_id and slot_type in ("lockscreen", "widget"):
+        store_rows = await db.execute(
+            select(CreativeDB, AffiliateCampaignDB)
+            .join(AffiliateCampaignDB, CreativeDB.campaign_id == AffiliateCampaignDB.id)
+            .join(StoreAdAssignmentDB, StoreAdAssignmentDB.campaign_id == AffiliateCampaignDB.id)
+            .where(
+                StoreAdAssignmentDB.dealer_id == dealer_id,
+                StoreAdAssignmentDB.status == "active",
+                CreativeDB.status == "active",
+                AffiliateCampaignDB.status == "active",
+            )
+            .order_by(StoreAdAssignmentDB.priority)
+        )
+        store_candidates = store_rows.all()
+
+        # フリークエンシーキャップ適用
+        store_candidates = [r for r in store_candidates if r[0].id not in capped_creative_ids]
+
+        if store_candidates:
+            creative, campaign = store_candidates[0]
+            imp = MdmImpressionDB(
+                slot_id=slot.id if slot else None,
+                creative_id=creative.id,
+                device_id=device_id,
+                enrollment_token=enrollment_token,
+                dealer_id=dealer_id,
+                platform=platform,
+                age_group=age_group,
+                cpm_price=floor_cpm,
+            )
+            db.add(imp)
+            await db.commit()
+            await db.refresh(imp)
+            logger.info(
+                f"MDM store priority impression | slot={slot_type} "
+                f"| creative={creative.id[:8]}... | dealer={dealer_id[:8]}..."
+            )
+            return {
+                "impression_id": imp.id,
+                "creative_id": creative.id,
+                "campaign_id": campaign.id,
+                "type": creative.type,
+                "title": creative.title,
+                "body": creative.body,
+                "image_url": creative.image_url,
+                "click_url": creative.click_url,
+                "width": creative.width,
+                "height": creative.height,
+                "category": campaign.category,
+                "is_store_creative": True,
+            }
+
     # アクティブなクリエイティブを取得（slot_typeに対応するcampaign）
     # slot_typeとcampaign.categoryのマッピング
     category_map = {
-        "lockscreen": None,    # 全カテゴリ
+        "lockscreen": None,    # 全カテゴリ（store カテゴリは除外）
         "widget": "app",       # アプリ案件のみ
         "notification": None,
         "webclip_ios": None,
@@ -231,6 +314,7 @@ async def select_creative(
         .where(
             CreativeDB.status == "active",
             AffiliateCampaignDB.status == "active",
+            AffiliateCampaignDB.category != "store",  # 店舗専用枠は通常オークション対象外
         )
     )
     if target_category:
@@ -259,33 +343,8 @@ async def select_creative(
     if not candidates:
         return None
 
-    # フリークエンシーキャップ: 同一デバイスへの同一クリエイティブ配信を1日FREQ_CAP_DAILY回に制限
-    if device_id or enrollment_token:
-        today_start = datetime.combine(date.today(), datetime.min.time()).replace(
-            tzinfo=timezone.utc
-        )
-        filter_col = (
-            MdmImpressionDB.device_id if device_id else MdmImpressionDB.enrollment_token
-        )
-        filter_val = device_id or enrollment_token
-
-        freq_rows = await db.execute(
-            select(
-                MdmImpressionDB.creative_id,
-                func.count(MdmImpressionDB.id).label("count"),
-            )
-            .where(
-                filter_col == filter_val,
-                MdmImpressionDB.created_at >= today_start,
-            )
-            .group_by(MdmImpressionDB.creative_id)
-        )
-        capped_creative_ids = {
-            row.creative_id
-            for row in freq_rows.all()
-            if row.count >= FREQ_CAP_DAILY
-        }
-        candidates = [r for r in candidates if r[0].id not in capped_creative_ids]
+    # フリークエンシーキャップ適用
+    candidates = [r for r in candidates if r[0].id not in capped_creative_ids]
 
     if not candidates:
         logger.info(
