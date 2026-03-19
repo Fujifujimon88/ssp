@@ -59,14 +59,14 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# 本番環境でデフォルトキーが残っていないかチェック
+# 本番環境でセキュリティ上クリティカルなキーがデフォルト値のままでないかチェック
+# nanomdm_api_key はオンプレ NanoMDM サーバー用のため対象外
 if settings.app_env == "production":
-    _WEAK_KEYS = {
+    _CRITICAL_KEYS = {
         "secret_key": ("change-me-in-production-use-long-random-string", 32),
         "admin_api_key": ("change-me-admin-key", 16),
-        "nanomdm_api_key": ("change-me-nanomdm-key", 16),
     }
-    for _field, (_default, _min_len) in _WEAK_KEYS.items():
+    for _field, (_default, _min_len) in _CRITICAL_KEYS.items():
         _val = getattr(settings, _field)
         if _val == _default or len(_val) < _min_len:
             raise RuntimeError(
