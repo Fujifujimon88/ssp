@@ -389,11 +389,17 @@ PORTAL_HTML = """<!DOCTYPE html>
         }});
         var data = await res.json();
         if (data.mobileconfig_url) {{
-          btn.textContent = "ダウンロード中...";
-          window.location.href = data.mobileconfig_url;
-          setTimeout(function() {{
-            if (data.line_add_friend_url) window.location.href = data.line_add_friend_url;
-          }}, 2500);
+          // ページ遷移せずにインライン完了UIを表示（window.location.href = mobileconfig_url だと
+          // Safariがページ遷移し /admin に飛んでしまう問題を防ぐ）
+          document.body.innerHTML =
+            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f7;font-family:-apple-system,sans-serif;padding:20px">' +
+            '<div style="text-align:center;max-width:400px;width:100%">' +
+            '<div style="font-size:64px;margin-bottom:16px">&#x2705;</div>' +
+            '<h1 style="font-size:22px;font-weight:700;margin-bottom:12px">同意が完了しました</h1>' +
+            '<p style="color:#6e6e73;font-size:15px;line-height:1.6;margin-bottom:32px">プロファイルをダウンロードして、設定アプリでインストールしてください。</p>' +
+            '<a href="' + data.mobileconfig_url + '" style="display:block;padding:16px;background:#007aff;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600;margin-bottom:12px">&#x1F4E5; プロファイルをダウンロード</a>' +
+            (data.line_add_friend_url ? '<a href="' + data.line_add_friend_url + '" style="display:block;padding:16px;background:#06c755;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600">&#x1F4F2; LINEで友だち追加</a>' : '') +
+            '</div></div>';
         }}
       }} catch(err) {{
         btn.textContent = "同意してダウンロード";
@@ -427,12 +433,15 @@ PORTAL_HTML = """<!DOCTYPE html>
         }});
         var data = await res.json();
         if (data.android_apk_url) {{
-          btn.textContent = "ダウンロード中...";
-          // DPC APKダウンロード開始
-          window.location.href = data.android_apk_url;
-          setTimeout(function() {{
-            if (data.line_add_friend_url) window.location.href = data.line_add_friend_url;
-          }}, 3000);
+          document.body.innerHTML =
+            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f7;font-family:-apple-system,sans-serif;padding:20px">' +
+            '<div style="text-align:center;max-width:400px;width:100%">' +
+            '<div style="font-size:64px;margin-bottom:16px">&#x2705;</div>' +
+            '<h1 style="font-size:22px;font-weight:700;margin-bottom:12px">同意が完了しました</h1>' +
+            '<p style="color:#6e6e73;font-size:15px;line-height:1.6;margin-bottom:32px">アプリをダウンロードしてインストールしてください。</p>' +
+            '<a href="' + data.android_apk_url + '" style="display:block;padding:16px;background:#34c759;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600;margin-bottom:12px">&#x1F4F1; アプリをダウンロード</a>' +
+            (data.line_add_friend_url ? '<a href="' + data.line_add_friend_url + '" style="display:block;padding:16px;background:#06c755;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600">&#x1F4F2; LINEで友だち追加</a>' : '') +
+            '</div></div>';
         }}
       }} catch(err) {{
         btn.textContent = "同意してセットアップ";
@@ -1037,7 +1046,6 @@ async def line_add_friend(token: str = Query(...)):
     <p>設定アプリを開いて「プロファイルがダウンロード済み」からインストールを完了してください。</p>
     <p>完了後、LINEで友だち追加するとクーポンやお得情報が届きます。</p>
     <a href="{line_url}" class="btn btn-line">📲 LINEで友だち追加（無料）</a>
-    <a href="/" class="btn btn-skip">スキップ</a>
   </div>
 </body>
 </html>"""
@@ -2405,7 +2413,6 @@ async def android_install_guide(token: Optional[str] = Query(None)):
       </div>
     </div>
     <a href="{line_url}" class="btn btn-line">📲 LINEで友だち追加（無料）</a>
-    <a href="/" class="btn btn-skip">スキップ</a>
     <p class="note">設定はいつでも「設定 → デバイス管理アプリ」から解除できます。</p>
   </div>
 </body>
