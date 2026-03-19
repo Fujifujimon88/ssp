@@ -142,8 +142,12 @@
       margin-top: 4px;
     }
 
-    /* アンカーリンクが固定ヘッダーに隠れないようにオフセット */
-    section[id], div[id] { scroll-margin-top: 72px; }
+    /* セクション表示制御 — サイドバーで1セクションずつ切り替え */
+    main > section { display: none; }
+    main > section.active { display: block; }
+    /* ページ遷移アニメーション */
+    main > section.active { animation: fadeIn .15s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body>
@@ -173,31 +177,31 @@
     </div>
 
     <div class="section-label">MDM管理</div>
-    <a href="#mdm-dashboard" class="active">📊 MDMダッシュボード</a>
-    <a href="#lockscreen-analytics">🔒 ロック画面CTR</a>
-    <a href="#store-ad-delivery">🏪 店舗別広告配信</a>
-    <a href="#dealers">🏬 代理店・店舗管理</a>
-    <a href="#campaigns">📣 キャンペーン管理</a>
-    <a href="#affiliate-campaigns">🤝 アフィリエイトキャンペーン</a>
-    <a href="#creatives">🎨 クリエイティブ</a>
-    <a href="#devices">📲 デバイス管理</a>
-    <a href="#billing">💰 収益・請求</a>
-    <a href="#wifi-triggers">🌐 Wi-Fiトリガー</a>
-    <a href="#time-slots">⏱ 時間帯単価</a>
-    <a href="#experiments">🧪 A/Bテスト</a>
-    <a href="#ad-slots">📦 広告枠管理</a>
-    <a href="#analytics">📈 アナリティクス</a>
-    <a href="#consent-logs">📋 同意ログ</a>
-    <a href="#invoices">🧾 精算一覧</a>
-    <a href="#ml-pipeline">🤖 ML管理</a>
-    <a href="#dsp-configs">🔌 DSP設定</a>
-    <a href="#ios-widget">📱 iOSウィジェット</a>
+    <a href="#mdm-dashboard" data-section="mdm-dashboard" class="active" onclick="showSection('mdm-dashboard'); return false;">📊 MDMダッシュボード</a>
+    <a href="#lockscreen-analytics" data-section="lockscreen-analytics" onclick="showSection('lockscreen-analytics'); return false;">🔒 ロック画面CTR</a>
+    <a href="#store-ad-delivery" data-section="store-ad-delivery" onclick="showSection('store-ad-delivery'); return false;">🏪 店舗別広告配信</a>
+    <a href="#dealers" data-section="dealers" onclick="showSection('dealers'); return false;">🏬 代理店・店舗管理</a>
+    <a href="#campaigns" data-section="campaigns" onclick="showSection('campaigns'); return false;">📣 キャンペーン管理</a>
+    <a href="#affiliate-campaigns" data-section="affiliate-campaigns" onclick="showSection('affiliate-campaigns'); return false;">🤝 アフィリエイトキャンペーン</a>
+    <a href="#creatives" data-section="creatives" onclick="showSection('creatives'); return false;">🎨 クリエイティブ</a>
+    <a href="#devices" data-section="devices" onclick="showSection('devices'); return false;">📲 デバイス管理</a>
+    <a href="#billing" data-section="billing" onclick="showSection('billing'); return false;">💰 収益・請求</a>
+    <a href="#wifi-triggers" data-section="wifi-triggers" onclick="showSection('wifi-triggers'); return false;">🌐 Wi-Fiトリガー</a>
+    <a href="#time-slots" data-section="time-slots" onclick="showSection('time-slots'); return false;">⏱ 時間帯単価</a>
+    <a href="#experiments" data-section="experiments" onclick="showSection('experiments'); return false;">🧪 A/Bテスト</a>
+    <a href="#ad-slots" data-section="ad-slots" onclick="showSection('ad-slots'); return false;">📦 広告枠管理</a>
+    <a href="#analytics" data-section="analytics" onclick="showSection('analytics'); return false;">📈 アナリティクス</a>
+    <a href="#consent-logs" data-section="consent-logs" onclick="showSection('consent-logs'); return false;">📋 同意ログ</a>
+    <a href="#invoices" data-section="invoices" onclick="showSection('invoices'); return false;">🧾 精算一覧</a>
+    <a href="#ml-pipeline" data-section="ml-pipeline" onclick="showSection('ml-pipeline'); return false;">🤖 ML管理</a>
+    <a href="#dsp-configs" data-section="dsp-configs" onclick="showSection('dsp-configs'); return false;">🔌 DSP設定</a>
+    <a href="#ios-widget" data-section="ios-widget" onclick="showSection('ios-widget'); return false;">📱 iOSウィジェット</a>
 
     <details style="margin-top:16px">
       <summary class="section-label" style="cursor:pointer;list-style:none">SSP管理 ▸</summary>
-      <a href="#overview">📈 RTB概要</a>
-      <a href="#publishers">📰 パブリッシャー</a>
-      <a href="#api-guide">🔗 API連携</a>
+      <a href="#overview" data-section="overview" onclick="showSection('overview'); return false;">📈 RTB概要</a>
+      <a href="#publishers" data-section="publishers" onclick="showSection('publishers'); return false;">📰 パブリッシャー</a>
+      <a href="#api-guide" data-section="api-guide" onclick="showSection('api-guide'); return false;">🔗 API連携</a>
     </details>
 
     <div class="section-label" style="margin-top:16px">DSP状況</div>
@@ -779,19 +783,19 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
           <div class="kpi-value" id="kpi-ecpm">$<span id="kpi-ecpm-val">-</span></div>
         </div>
       </div>
-    </section>
 
-    <!-- SSP グラフ -->
-    <div class="chart-row">
-      <div class="card">
-        <div class="card-title">時間帯別インプレッション（直近24h）</div>
-        <div class="chart-wrap"><canvas id="chart-imp"></canvas></div>
+      <!-- SSP グラフ -->
+      <div class="chart-row" style="margin-top:24px">
+        <div class="card">
+          <div class="card-title">時間帯別インプレッション（直近24h）</div>
+          <div class="chart-wrap"><canvas id="chart-imp"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-title">DSP別落札シェア</div>
+          <div class="chart-wrap"><canvas id="chart-dsp"></canvas></div>
+        </div>
       </div>
-      <div class="card">
-        <div class="card-title">DSP別落札シェア</div>
-        <div class="chart-wrap"><canvas id="chart-dsp"></canvas></div>
-      </div>
-    </div>
+    </section>
 
     <!-- パブリッシャー一覧 -->
     <section id="publishers" class="card" style="margin-bottom:24px">
@@ -1300,6 +1304,21 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
 </div>
 
 <script>
+// ── セクション切り替え ─────────────────────────────────────
+function showSection(id) {
+  // 全セクション非表示
+  document.querySelectorAll('main > section').forEach(s => s.classList.remove('active'));
+  // 対象セクションを表示
+  const target = document.getElementById(id);
+  if (target) target.classList.add('active');
+  // サイドバーのアクティブ状態を更新
+  document.querySelectorAll('nav a[data-section]').forEach(a => a.classList.remove('active'));
+  const navLink = document.querySelector(`nav a[data-section="${id}"]`);
+  if (navLink) navLink.classList.add('active');
+  // ハッシュを更新（スクロールなし）
+  history.replaceState(null, '', '#' + id);
+}
+
 // ── 管理者キー管理 ─────────────────────────────────────────
 const ADMIN_KEY_STORAGE = 'ssp_admin_key';
 
@@ -3212,7 +3231,16 @@ async function triggerMlTrain() {
   }
 }
 
-// 初期化
+// 初期化 — ハッシュに対応するセクションを表示（デフォルト: mdm-dashboard）
+const _initSection = (location.hash.slice(1)) || 'mdm-dashboard';
+showSection(_initSection);
+
+// ブラウザの戻る/進むに対応
+window.addEventListener('popstate', () => {
+  const s = location.hash.slice(1) || 'mdm-dashboard';
+  showSection(s);
+});
+
 checkKeyBanner();
 loadHealth();
 loadAdminStats();
