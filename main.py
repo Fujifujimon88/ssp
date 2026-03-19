@@ -49,7 +49,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 
 auction_engine = AuctionEngine()
 
