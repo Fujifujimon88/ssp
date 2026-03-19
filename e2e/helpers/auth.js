@@ -59,4 +59,14 @@ async function adminPut(request, endpoint, options = {}) {
   });
 }
 
-module.exports = { loadAuth, apiGet, apiPost, adminGet, adminPut };
+/**
+ * 管理者キーをブラウザのlocalStorageにセットしてページをリロードする。
+ * @param {import('@playwright/test').Page} page
+ */
+async function setAdminKeyInBrowser(page) {
+  await page.evaluate((key) => localStorage.setItem("ssp_admin_key", key), ADMIN_KEY);
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+}
+
+module.exports = { loadAuth, apiGet, apiPost, adminGet, adminPut, setAdminKeyInBrowser };

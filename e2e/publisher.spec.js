@@ -3,7 +3,7 @@
  * パブリッシャー認証・情報取得のE2Eテスト（JWT API経由）
  */
 const { test, expect } = require("@playwright/test");
-const { loadAuth, apiGet } = require("./helpers/auth");
+const { loadAuth, apiGet, setAdminKeyInBrowser } = require("./helpers/auth");
 
 test.describe("パブリッシャー認証", () => {
   test("正しい認証情報でJWTトークンを取得できる", async ({ request }) => {
@@ -78,11 +78,8 @@ test.describe("パブリッシャー登録（UIモーダル）", () => {
 
   test("新しいドメインでパブリッシャーを登録できる", async ({ page }) => {
     const uniqueDomain = `e2e-new-${Date.now()}.example.com`;
-    const ADMIN_KEY = process.env.ADMIN_API_KEY || "change-me-admin-key";
     await page.goto("/admin");
-    await page.evaluate((key) => { localStorage.setItem("ssp_admin_key", key); }, ADMIN_KEY);
-    await page.reload();
-    await page.waitForLoadState("networkidle");
+    await setAdminKeyInBrowser(page);
     await page.getByText("+ パブリッシャー登録").first().click();
 
     const form = page.locator("#register-form");

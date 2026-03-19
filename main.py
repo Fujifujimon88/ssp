@@ -227,12 +227,11 @@ async def dashboard(request: Request):
 # ── 管理画面（全パブリッシャー一覧）──────────────────────────
 
 @app.get("/admin", response_class=HTMLResponse, summary="管理画面")
-async def admin(request: Request, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(PublisherDB).order_by(PublisherDB.created_at.desc()))
-    publishers = result.scalars().all()
+async def admin(request: Request):
+    # publisher一覧はクライアント側JSが認証付きAPIで取得するため、SSRでは渡さない
     return templates.TemplateResponse(
         "admin.html",
-        {"request": request, "publishers": publishers, "version": APP_VERSION}
+        {"request": request, "version": APP_VERSION}
     )
 
 

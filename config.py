@@ -58,3 +58,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# 本番環境でデフォルトキーが残っていないかチェック
+if settings.app_env == "production":
+    _WEAK_KEYS = {
+        "secret_key": ("change-me-in-production-use-long-random-string", 32),
+        "admin_api_key": ("change-me-admin-key", 16),
+        "nanomdm_api_key": ("change-me-nanomdm-key", 16),
+    }
+    for _field, (_default, _min_len) in _WEAK_KEYS.items():
+        _val = getattr(settings, _field)
+        if _val == _default or len(_val) < _min_len:
+            raise RuntimeError(
+                f"[config] 本番環境で {_field} がデフォルト値または短すぎます。"
+                f".env で {_min_len}文字以上のランダム値を設定してください。"
+            )

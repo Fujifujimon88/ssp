@@ -27,7 +27,9 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from pydantic import BaseModel
+import ipaddress
+from urllib.parse import urlparse
+from pydantic import BaseModel, field_validator
 from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1089,6 +1091,18 @@ async def appsflyer_postback(request: Request, db: AsyncSession = Depends(get_db
     click_token = body.get("af_customer_user_id") or body.get("customer_user_id")
     app_id = body.get("app_id", "")
 
+    # 冪等性チェック: 同一 click_token + source の重複受信を防ぐ
+    if click_token:
+        existing = await db.scalar(
+            select(AffiliateConversionDB).where(
+                AffiliateConversionDB.click_token == click_token,
+                AffiliateConversionDB.source == "appsflyer",
+            )
+        )
+        if existing:
+            logger.info(f"AppsFlyer CV duplicate skipped | token={str(click_token)[:8]}...")
+            return {"status": "ok"}
+
     campaign = await db.scalar(
         select(AffiliateCampaignDB)
         .where(AffiliateCampaignDB.appsflyer_dev_key != None)
@@ -1122,6 +1136,18 @@ async def adjust_postback(request: Request, db: AsyncSession = Depends(get_db)):
     """AdjustからのCV通知を受信して記録する"""
     body = await request.json()
     click_token = body.get("partner_params", {}).get("enrollment_token")
+
+    # 冪等性チェック: 同一 click_token + source の重複受信を防ぐ
+    if click_token:
+        existing = await db.scalar(
+            select(AffiliateConversionDB).where(
+                AffiliateConversionDB.click_token == click_token,
+                AffiliateConversionDB.source == "adjust",
+            )
+        )
+        if existing:
+            logger.info(f"Adjust CV duplicate skipped | token={str(click_token)[:8]}...")
+            return {"status": "ok"}
 
     conversion = AffiliateConversionDB(
         click_token=click_token,
@@ -2701,7 +2727,7 @@ async def admin_ios_command(
         raise HTTPException(status_code=404, detail="iOS device not found")
 
     # コマンドplist生成
-    cmd_uuid = str(__import__("uuid").uuid4())
+    cmd_uuid = str(uuid.uuid4())
     rt = body.request_type
     p = body.params
 
@@ -4888,6 +4914,28 @@ class _DspConfigIn(BaseModel):
     active: bool = False
     take_rate: float = 0.15
 
+    @field_validator("endpoint_url")
+    @classmethod
+    def _validate_endpoint_url(cls, v: str) -> str:
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("endpoint_url は http または https のみ使用できます")
+        hostname = parsed.hostname or ""
+        # プライベートIP・ループバック・リンクローカルをブロック（SSRF対策）
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local:
+                raise ValueError("endpoint_url にプライベートIPは使用できません")
+        except ValueError as exc:
+            if "プライベートIP" in str(exc):
+                raise
+            # ホスト名の場合はIPではないので通過（DNS解決時のSSRF対策はnetwork層で行う）
+        # クラウドメタデータエンドポイントをブロック
+        _BLOCKED = {"169.254.169.254", "169.254.170.2", "metadata.google.internal"}
+        if hostname in _BLOCKED:
+            raise ValueError(f"endpoint_url に使用できないホスト: {hostname}")
+        return v
+
 
 @router.get(
     "/admin/dsp/configs",
@@ -6430,16 +6478,28 @@ async def agency_create_store(
 
 @router.get("/agency/revenue", summary="代理店月次収益レポート")
 async def agency_revenue(
-    api_key: str = Query(...),
-    period: str = Query(..., description="YYYY-MM"),
+    api_key: Optional[str] = Query(None),
+    x_agency_key: Optional[str] = Header(None, alias="X-Agency-Key"),
+    period: Optional[str] = Query(None, description="YYYY-MM"),
+    month: Optional[str] = Query(None, description="YYYY-MM (alias for period)"),
     db: AsyncSession = Depends(get_db),
 ):
     import re as _re
     import calendar
-    if not _re.match(r'^\d{4}-\d{2}$', period):
+    # Support X-Agency-Key header as well as api_key query param
+    resolved_key = api_key or x_agency_key
+    if not resolved_key:
+        raise HTTPException(status_code=401, detail="api_key required")
+    # Support 'month' as alias for 'period'; default to current month
+    resolved_period = period or month
+    if not resolved_period:
+        now = datetime.now(timezone.utc)
+        resolved_period = now.strftime("%Y-%m")
+    if not _re.match(r'^\d{4}-\d{2}$', resolved_period):
         raise HTTPException(status_code=400, detail="period must be YYYY-MM")
+    period = resolved_period
 
-    agency = await _verify_agency_key_query(api_key, db)
+    agency = await _verify_agency_key_query(resolved_key, db)
 
     dealers = (await db.execute(
         select(DealerDB).where(DealerDB.agency_id == agency.id)
@@ -6472,7 +6532,17 @@ async def agency_revenue(
             "revenue_jpy": int((r.revenue or 0) / 1000),
         })
 
-    return {"period": period, "stores": result}
+    gross = sum(r["revenue_jpy"] for r in result)
+    take_rate = getattr(agency, "take_rate", 0.3) or 0.3
+    net = int(gross * (1 - take_rate))
+    return {
+        "agency": agency.name,
+        "period_month": period,
+        "period": period,
+        "stores": result,
+        "gross_revenue_jpy": gross,
+        "net_payable_jpy": net,
+    }
 
 
 _AGENCY_PORTAL_HTML = """\

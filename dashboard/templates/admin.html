@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MDM管理 – SSP Platform</title>
+  <title>管理画面 – SSP Platform</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -562,7 +562,7 @@
       <!-- 24時間サマリー -->
       <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">過去24時間サマリー</div>
       <div id="analytics-24h-loading" class="loading">読み込み中...</div>
-      <div id="analytics-24h-cards" style="display:none;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px">
+      <div id="analytics-24h-cards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px;display:none">
         <div class="card" style="text-align:center"><div class="card-title">総Imp (24h)</div><div class="kpi-value" id="a24-imp">-</div></div>
         <div class="card" style="text-align:center"><div class="card-title">総Click (24h)</div><div class="kpi-value" id="a24-click">-</div></div>
         <div class="card" style="text-align:center"><div class="card-title">CTR (24h)</div><div class="kpi-value" id="a24-ctr">-</div></div>
@@ -646,7 +646,7 @@
         <button class="btn btn-ghost" style="font-size:11px" onclick="triggerComputeFeatures()">▶ 特徴量計算</button>
       </div>
       <div id="ml-features-loading" class="loading">読み込み中...</div>
-      <div id="ml-features-cards" style="display:none;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+      <div id="ml-features-cards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;display:none">
         <div class="card" style="text-align:center"><div class="card-title">特徴量計算済デバイス</div><div class="kpi-value" id="feat-devices">-</div></div>
         <div class="card" style="text-align:center"><div class="card-title">平均30日CTR</div><div class="kpi-value" id="feat-ctr">-</div></div>
         <div class="card" style="text-align:center"><div class="card-title">平均Dwell(ms)</div><div class="kpi-value" id="feat-dwell">-</div></div>
@@ -3231,8 +3231,7 @@ loadConsentLogs();
 loadMlModels();
 loadMlFeatureStats();
 loadCohortStats();
-loadDspConfigs();
-loadDspPerformance();
+Promise.all([loadDspConfigs(), loadDspPerformance()]);
 loadIosWidgetStats();
 setInterval(loadAdminStats, 30000);
 setInterval(loadHealth, 60000);
