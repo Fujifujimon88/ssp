@@ -3558,16 +3558,18 @@ async def dealer_stats_today(
     month_report = await get_dealer_monthly_report(db, dealer.id, now.year, now.month)
     month_revenue_jpy = month_report.get("revenue_jpy", 0.0)
 
-    # 代理店ランク（同月収益順位）
-    agency_dealers = await db.scalars(
-        select(DealerDB).where(DealerDB.agency_id == dealer.agency_id, DealerDB.status == "active")
-    )
-    all_dealer_revenues = []
-    for d in agency_dealers.all():
-        r = await get_dealer_monthly_report(db, d.id, now.year, now.month)
-        all_dealer_revenues.append((d.id, r.get("revenue_jpy", 0.0)))
-    all_dealer_revenues.sort(key=lambda x: x[1], reverse=True)
-    agency_rank = next((i + 1 for i, (did, _) in enumerate(all_dealer_revenues) if did == dealer.id), None)
+    # 代理店ランク（同月収益順位）— agency_id がある場合のみ計算
+    agency_rank = None
+    if dealer.agency_id is not None:
+        agency_dealers = await db.scalars(
+            select(DealerDB).where(DealerDB.agency_id == dealer.agency_id, DealerDB.status == "active")
+        )
+        all_dealer_revenues = []
+        for d in agency_dealers.all():
+            r = await get_dealer_monthly_report(db, d.id, now.year, now.month)
+            all_dealer_revenues.append((d.id, r.get("revenue_jpy", 0.0)))
+        all_dealer_revenues.sort(key=lambda x: x[1], reverse=True)
+        agency_rank = next((i + 1 for i, (did, _) in enumerate(all_dealer_revenues) if did == dealer.id), None)
 
     ctr = round(clicks / impressions, 4) if impressions > 0 else 0.0
 
