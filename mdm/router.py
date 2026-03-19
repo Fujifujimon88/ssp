@@ -1555,6 +1555,91 @@ async def mdm_stats(
 # ── CPI インストール確認 (BKD-03 / BKD-04) ────────────────────
 
 
+async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
+    """
+    インストール確認後にCPI課金を確定させる（BKD-billing-01）。
+
+    遷移ルール:
+    - postback_status == "success" → billing_status = "billable"
+    - postback_status != "success" かつ created_at が 48h 以上前 → billing_status = "billable"（失敗でも課金は発生）
+    - それ以外 → pending のまま（ポストバック完了を待つ）
+
+    billing_status が既に "billable" または "paid" なら何もしない（冪等）。
+    billable に遷移した場合、InvoiceDB の当月集計を upsert する。
+    """
+    from datetime import timedelta
+
+    event = await db.get(InstallEventDB, install_event_id)
+    if event is None:
+        logger.warning(f"finalize_billing: install_event_id={install_event_id} not found")
+        return
+
+    # 既に確定済み → 冪等
+    if event.billing_status in ("billable", "paid"):
+        return
+
+    now = datetime.now(timezone.utc)
+    should_bill = False
+
+    if event.postback_status == "success":
+        should_bill = True
+    else:
+        # 48時間経過している場合はポストバック失敗でも課金確定
+        created = event.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if (now - created) >= timedelta(hours=48):
+            should_bill = True
+
+    if not should_bill:
+        return
+
+    # billing_status を billable に遷移
+    event.billing_status = "billable"
+
+    # InvoiceDB の当月レコードを upsert
+    from db_models import InvoiceDB
+    period_month = now.strftime("%Y-%m")
+
+    invoice = await db.scalar(
+        select(InvoiceDB).where(
+            InvoiceDB.campaign_id == event.campaign_id,
+            InvoiceDB.period_month == period_month,
+        )
+    )
+
+    if invoice is None:
+        # 当月の初回 → 新規作成
+        campaign = await db.get(AffiliateCampaignDB, event.campaign_id)
+        agency_id = campaign.agency_id if campaign else None
+        invoice = InvoiceDB(
+            period_month=period_month,
+            campaign_id=event.campaign_id,
+            agency_id=agency_id,
+            gross_revenue_jpy=int(event.cpi_amount),
+            take_rate=0.175,
+            platform_fee_jpy=int(event.cpi_amount * 0.175),
+            net_payable_jpy=int(event.cpi_amount * (1 - 0.175)),
+            cpi_count=1,
+            impression_count=0,
+            video_complete_count=0,
+            status="draft",
+        )
+        db.add(invoice)
+    else:
+        # 既存レコードに加算
+        invoice.gross_revenue_jpy = (invoice.gross_revenue_jpy or 0) + int(event.cpi_amount)
+        invoice.cpi_count = (invoice.cpi_count or 0) + 1
+        invoice.platform_fee_jpy = int(invoice.gross_revenue_jpy * invoice.take_rate)
+        invoice.net_payable_jpy = invoice.gross_revenue_jpy - invoice.platform_fee_jpy
+
+    await db.commit()
+    logger.info(
+        f"finalize_billing: event={install_event_id[:8]}... → billable "
+        f"| campaign={event.campaign_id[:8]}... | cpi={event.cpi_amount}円 | period={period_month}"
+    )
+
+
 class InstallConfirmedBody(BaseModel):
     device_id: str
     package_name: str
@@ -1647,6 +1732,9 @@ async def install_confirmed(
         install_event_id,
         db,
     )
+
+    # 7. CPI課金確定タスク（ポストバック後に実行、冪等）
+    background_tasks.add_task(finalize_billing, install_event_id, db)
 
     return {
         "status": "recorded",
@@ -1754,6 +1842,8 @@ async def android_command_ack(
 async def lockscreen_content(
     device_id: Optional[str] = Query(None),
     token: Optional[str] = Query(None),
+    hour: Optional[int] = Query(None),
+    screen_on_count: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1764,6 +1854,8 @@ async def lockscreen_content(
     content = await select_creative(
         db, slot_type="lockscreen",
         device_id=device_id, enrollment_token=token, platform="android",
+        hour=hour if hour is not None else -1,
+        screen_on_count=screen_on_count,
     )
     if content:
         # impression_id をトップレベルに露出してDPCがクリック報告に使えるようにする
@@ -1825,6 +1917,11 @@ async def report_lockscreen_kpi(
     # served 状態に更新（prefetched → served）
     if impression.status == "prefetched":
         impression.status = "served"
+    impression.dwell_time_ms = body.dwell_time_ms
+    impression.dismiss_type = body.dismiss_type
+    impression.hour_of_day = body.hour_of_day
+    if body.screen_on_count_today is not None:
+        impression.screen_on_count_today = body.screen_on_count_today
     await db.commit()
 
     logger.info(
@@ -3757,6 +3854,7 @@ async def list_mdm_slots(
             "slot_type": s.slot_type,
             "floor_price_cpm": s.floor_price_cpm,
             "status": s.status,
+            "targeting_json": s.targeting_json,
         }
         for s in rows.scalars().all()
     ]
@@ -5553,3 +5651,182 @@ async def list_invoices(
         }
         for r in rows
     ]}
+
+
+# ── Lock Screen KPI / 5軸ターゲティング 管理エンドポイント ──────────────
+
+
+class SlotTargetingUpdate(BaseModel):
+    targeting_json: str
+
+
+@router.put("/admin/slots/{slot_id}/targeting", summary="広告枠ターゲティング更新")
+async def update_slot_targeting(
+    slot_id: str,
+    body: SlotTargetingUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    try:
+        json.loads(body.targeting_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="targeting_json must be valid JSON")
+    slot = await db.get(MdmAdSlotDB, slot_id)
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+    slot.targeting_json = body.targeting_json
+    await db.commit()
+    return {"id": slot_id, "targeting_json": slot.targeting_json}
+
+
+class DealerRegionUpdate(BaseModel):
+    region: str
+
+
+@router.put("/admin/dealer/{dealer_id}/region", summary="代理店リージョン設定")
+async def set_dealer_region(
+    dealer_id: str,
+    body: DealerRegionUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    dealer = await db.get(DealerDB, dealer_id)
+    if not dealer:
+        raise HTTPException(status_code=404, detail="Dealer not found")
+    dealer.region = body.region
+    await db.commit()
+    return {"id": dealer_id, "region": dealer.region}
+
+
+@router.get("/admin/lockscreen/analytics", summary="ロック画面時間帯CTR分析")
+async def lockscreen_analytics(
+    days: int = Query(7, description="集計期間（日数）"),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    from datetime import timedelta
+    from sqlalchemy import Integer as _Int, cast as _cast
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    rows = await db.execute(
+        select(
+            MdmImpressionDB.hour_of_day,
+            func.count(MdmImpressionDB.id).label("impressions"),
+            func.sum(_cast(MdmImpressionDB.clicked, _Int)).label("clicks"),
+        )
+        .where(
+            MdmImpressionDB.hour_of_day.isnot(None),
+            MdmImpressionDB.created_at >= cutoff,
+        )
+        .group_by(MdmImpressionDB.hour_of_day)
+        .order_by(MdmImpressionDB.hour_of_day)
+    )
+
+    hourly: dict[int, dict] = {h: {"impressions": 0, "clicks": 0} for h in range(24)}
+    for row in rows.all():
+        h = row.hour_of_day
+        hourly[h] = {"impressions": row.impressions or 0, "clicks": int(row.clicks or 0)}
+
+    return {
+        "period_days": days,
+        "hours": [
+            {
+                "hour": h,
+                "impressions": hourly[h]["impressions"],
+                "clicks": hourly[h]["clicks"],
+                "ctr": round(hourly[h]["clicks"] / hourly[h]["impressions"] * 100, 2)
+                       if hourly[h]["impressions"] > 0 else 0.0,
+            }
+            for h in range(24)
+        ],
+    }
+
+
+# ── CPI課金管理エンドポイント (BKD-billing-01) ─────────────────
+
+
+@router.get("/admin/billing/pending", summary="CPI課金pending一覧（管理者）")
+async def list_billing_pending(
+    limit: int = Query(50, le=200),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    rows = await db.execute(
+        select(InstallEventDB)
+        .where(InstallEventDB.billing_status == "pending")
+        .order_by(InstallEventDB.created_at.desc())
+        .limit(limit)
+    )
+    events = rows.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "device_id": e.device_id[:8] + "...",
+            "package_name": e.package_name,
+            "campaign_id": e.campaign_id,
+            "cpi_amount": e.cpi_amount,
+            "postback_status": e.postback_status,
+            "billing_status": e.billing_status,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]
+
+
+@router.get("/admin/billing/invoice/{period}", summary="月次請求書（管理者）")
+async def get_billing_invoice(
+    period: str,  # "2026-03"
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    # period フォーマット検証
+    import re
+    if not re.match(r'^\d{4}-\d{2}$', period):
+        raise HTTPException(status_code=400, detail="period must be YYYY-MM format")
+
+    from db_models import InvoiceDB
+    rows = await db.execute(
+        select(InvoiceDB).where(InvoiceDB.period_month == period)
+    )
+    invoices = rows.scalars().all()
+
+    return {
+        "period": period,
+        "invoices": [
+            {
+                "id": inv.id,
+                "campaign_id": inv.campaign_id,
+                "agency_id": inv.agency_id,
+                "gross_revenue_jpy": inv.gross_revenue_jpy,
+                "take_rate": inv.take_rate,
+                "platform_fee_jpy": inv.platform_fee_jpy,
+                "net_payable_jpy": inv.net_payable_jpy,
+                "cpi_count": inv.cpi_count,
+                "impression_count": inv.impression_count,
+                "status": inv.status,
+                "created_at": inv.created_at.isoformat() if inv.created_at else None,
+            }
+            for inv in invoices
+        ],
+        "total_gross_jpy": sum(inv.gross_revenue_jpy or 0 for inv in invoices),
+        "total_cpi_count": sum(inv.cpi_count or 0 for inv in invoices),
+    }
+
+
+@router.post("/admin/billing/mark-paid/{install_event_id}", summary="CPI課金をpaidに変更（管理者）")
+async def mark_install_paid(
+    install_event_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    event = await db.get(InstallEventDB, install_event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="install_event not found")
+    if event.billing_status not in ("billable", "paid"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"billing_status is '{event.billing_status}', must be 'billable' to mark as paid"
+        )
+    event.billing_status = "paid"
+    await db.commit()
+    return {"id": install_event_id, "billing_status": "paid"}

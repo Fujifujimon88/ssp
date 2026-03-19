@@ -19,6 +19,7 @@ from db_models import (
     AffiliateCampaignDB,
     CreativeDB,
     CreativeExperimentDB,
+    DealerDB,
     DeviceDB,
     MdmAdSlotDB,
     MdmImpressionDB,
@@ -84,6 +85,43 @@ async def get_time_slot_multiplier(hour: int, dow: int, db: AsyncSession) -> flo
     return multiplier
 
 
+def _matches_targeting(
+    targeting: dict,
+    *,
+    platform: str | None,
+    age_group: str | None,
+    region: str | None,
+    hour: int,
+    screen_on_count: int | None,
+) -> bool:
+    """
+    全軸AND論理。axis が absent = 制限なし（デフォルト全配信）。
+    hour=-1 は未知扱いでtime_slots軸をスキップ。
+    screen_on_count=None は未知扱いでscreen_on_count_max軸をスキップ。
+    """
+    ts = targeting.get("time_slots")
+    if ts and hour >= 0 and hour not in ts:
+        return False
+
+    p = targeting.get("platform")
+    if p and platform and platform != p:
+        return False
+
+    ag = targeting.get("age_groups")
+    if ag and age_group and age_group not in ag:
+        return False
+
+    rg = targeting.get("regions")
+    if rg and region and region not in rg:
+        return False
+
+    soc_max = targeting.get("screen_on_count_max")
+    if soc_max is not None and screen_on_count is not None and screen_on_count > soc_max:
+        return False
+
+    return True
+
+
 async def _get_creative_ctrs(
     db: AsyncSession,
     creative_ids: list[str],
@@ -129,6 +167,7 @@ async def select_creative(
     enrollment_token: str | None = None,
     platform: str = "android",
     hour: int = -1,
+    screen_on_count: int | None = None,
 ) -> dict | None:
     """
     指定スロットタイプに最適なクリエイティブを選択してインプレッションを記録する。
@@ -152,6 +191,14 @@ async def select_creative(
     )
     floor_cpm = slot.floor_price_cpm if slot else 0.0
 
+    # targeting_jsonを解析
+    targeting: dict = {}
+    if slot and slot.targeting_json:
+        try:
+            targeting = json.loads(slot.targeting_json)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     # デバイス情報を取得（セグメントターゲティング用）
     age_group = None
     dealer_id = None
@@ -162,6 +209,11 @@ async def select_creative(
         if device:
             age_group = device.age_group
             dealer_id = device.dealer_id
+
+    region = None
+    if dealer_id:
+        dealer = await db.get(DealerDB, dealer_id)
+        region = dealer.region if dealer else None
 
     # アクティブなクリエイティブを取得（slot_typeに対応するcampaign）
     # slot_typeとcampaign.categoryのマッピング
@@ -186,6 +238,23 @@ async def select_creative(
 
     rows = await db.execute(q)
     candidates = rows.all()
+
+    if not candidates:
+        return None
+
+    # ターゲティングフィルタ（5軸AND論理）
+    if targeting:
+        candidates = [
+            row for row in candidates
+            if _matches_targeting(
+                targeting,
+                platform=platform,
+                age_group=age_group,
+                region=region,
+                hour=hour,
+                screen_on_count=screen_on_count,
+            )
+        ]
 
     if not candidates:
         return None

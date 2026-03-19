@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, SmallInteger, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -87,6 +87,8 @@ class DealerDB(Base):
     agency_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agencies.id"), nullable=True, index=True)
     # 代理店内での店舗番号（1, 2, 3...）
     store_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    region: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     devices: Mapped[list["DeviceDB"]] = relationship("DeviceDB", back_populates="dealer")
     ad_assignments: Mapped[list["StoreAdAssignmentDB"]] = relationship("StoreAdAssignmentDB", back_populates="dealer")
@@ -395,6 +397,10 @@ class MdmImpressionDB(Base):
     clicked: Mapped[bool] = mapped_column(Boolean, default=False)
     clicked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     video_event: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # start|q1|midpoint|q3|complete|skip
+    dwell_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    screen_on_count_today: Mapped[Optional[int]] = mapped_column(SmallInteger(), nullable=True)
+    dismiss_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    hour_of_day: Mapped[Optional[int]] = mapped_column(SmallInteger(), nullable=True)
     served_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )

@@ -260,6 +260,17 @@
       </div>
     </section>
 
+    <!-- ロック画面 時間帯CTRチャート -->
+    <section id="lockscreen-analytics" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">ロック画面 時間帯CTR（過去7日）</h2>
+        <button class="btn btn-ghost" onclick="loadLockscreenAnalytics()" style="font-size:12px">更新</button>
+      </div>
+      <div style="position:relative;height:220px">
+        <canvas id="lockscreen-ctr-chart"></canvas>
+      </div>
+    </section>
+
     <!-- 店舗別広告配信 -->
     <section id="store-ad-delivery" class="card" style="margin-bottom:24px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
@@ -462,6 +473,51 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       読み込み中...
     </div>
     <button class="btn btn-ghost" style="margin-top:12px" onclick="copyTag()">コピー</button>
+  </div>
+</div>
+
+<!-- 広告枠ターゲティング設定モーダル -->
+<div class="modal-overlay" id="slot-targeting-modal">
+  <div class="modal" style="max-width:560px">
+    <span class="modal-close" onclick="closeModal('slot-targeting-modal')">&times;</span>
+    <h2 id="slot-targeting-title" style="font-size:16px;margin-bottom:16px">広告枠ターゲティング設定</h2>
+    <form id="slot-targeting-form" style="display:grid;gap:14px">
+      <div>
+        <label style="font-size:13px;color:var(--muted)">配信時間帯（カンマ区切り 例: 7,8,9,17,18）</label>
+        <input id="t-time_slots" placeholder="空欄=全時間帯"
+               style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;margin-top:4px;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:13px;color:var(--muted)">プラットフォーム</label>
+        <select id="t-platform"
+                style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;margin-top:4px">
+          <option value="">指定なし</option>
+          <option value="android">Android</option>
+          <option value="ios">iOS</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:13px;color:var(--muted)">年齢層（複数選択可）</label>
+        <div style="display:flex;gap:16px;margin-top:6px;font-size:14px">
+          <label><input type="checkbox" value="10s" class="t-age"> 10代</label>
+          <label><input type="checkbox" value="20s" class="t-age"> 20代</label>
+          <label><input type="checkbox" value="30s" class="t-age"> 30代</label>
+          <label><input type="checkbox" value="40s" class="t-age"> 40代以上</label>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:13px;color:var(--muted)">リージョン（カンマ区切り 例: tokyo,osaka）</label>
+        <input id="t-regions" placeholder="空欄=全リージョン"
+               style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;margin-top:4px;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:13px;color:var(--muted)">最大スクリーンオン回数（例: 3）</label>
+        <input id="t-screen_on_max" type="number" min="1" placeholder="空欄=制限なし"
+               style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;margin-top:4px;box-sizing:border-box">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">保存する</button>
+      <div id="slot-targeting-result" style="font-size:13px"></div>
+    </form>
   </div>
 </div>
 
@@ -1044,6 +1100,96 @@ async function removeStoreAdAssignment(assignmentId) {
   }
 }
 
+// ── ロック画面 時間帯CTR チャート ─────────────────────────────
+let _lockscreenCtrChart = null;
+let _currentSlotId = null;
+
+async function loadLockscreenAnalytics() {
+  try {
+    const r = await fetch('/mdm/admin/lockscreen/analytics?days=7', { headers: adminHeaders() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const labels = d.hours.map(h => `${h.hour}時`);
+    const ctrs   = d.hours.map(h => h.ctr);
+    const imps   = d.hours.map(h => h.impressions);
+    const ctx = document.getElementById('lockscreen-ctr-chart').getContext('2d');
+    if (_lockscreenCtrChart) _lockscreenCtrChart.destroy();
+    _lockscreenCtrChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'CTR (%)',
+          data: ctrs,
+          backgroundColor: 'rgba(99,102,241,0.6)',
+          yAxisID: 'y',
+        }, {
+          label: 'インプレッション数',
+          data: imps,
+          type: 'line',
+          borderColor: '#16a34a',
+          backgroundColor: 'transparent',
+          yAxisID: 'y2',
+          tension: 0.3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: 'var(--text)' } } },
+        scales: {
+          y:  { type: 'linear', position: 'left',  title: { display: true, text: 'CTR (%)', color: 'var(--muted)' }, ticks: { color: 'var(--muted)' } },
+          y2: { type: 'linear', position: 'right', title: { display: true, text: 'Impressions', color: 'var(--muted)' }, ticks: { color: 'var(--muted)' }, grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+  } catch(e) { console.error('lockscreen analytics error', e); }
+}
+
+function showSlotTargetingModal(slotId, slotName) {
+  _currentSlotId = slotId;
+  document.getElementById('slot-targeting-title').textContent = `ターゲティング設定 — ${slotName}`;
+  document.getElementById('slot-targeting-result').textContent = '';
+  // フォームリセット
+  document.getElementById('t-time_slots').value = '';
+  document.getElementById('t-platform').value = '';
+  document.querySelectorAll('.t-age').forEach(c => c.checked = false);
+  document.getElementById('t-regions').value = '';
+  document.getElementById('t-screen_on_max').value = '';
+  document.getElementById('slot-targeting-modal').classList.add('open');
+}
+
+document.getElementById('slot-targeting-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const ts = document.getElementById('t-time_slots').value.trim();
+  const plat = document.getElementById('t-platform').value;
+  const ages = [...document.querySelectorAll('.t-age:checked')].map(c => c.value);
+  const rg = document.getElementById('t-regions').value.trim();
+  const socMax = document.getElementById('t-screen_on_max').value;
+
+  const targeting = {};
+  if (ts) targeting.time_slots = ts.split(',').map(x => parseInt(x.trim())).filter(n => !isNaN(n));
+  if (plat) targeting.platform = plat;
+  if (ages.length) targeting.age_groups = ages;
+  if (rg) targeting.regions = rg.split(',').map(x => x.trim()).filter(Boolean);
+  if (socMax) targeting.screen_on_count_max = parseInt(socMax);
+
+  const res = await fetch(`/mdm/admin/slots/${_currentSlotId}/targeting`, {
+    method: 'PUT',
+    headers: adminHeaders({'Content-Type': 'application/json'}),
+    body: JSON.stringify({ targeting_json: JSON.stringify(targeting) }),
+  });
+  const el = document.getElementById('slot-targeting-result');
+  if (res.ok) {
+    el.style.color = 'var(--green, #16a34a)';
+    el.textContent = '✓ 保存しました';
+  } else {
+    el.style.color = '#ef4444';
+    const d = await res.json().catch(() => ({}));
+    el.textContent = d.detail || 'エラーが発生しました';
+  }
+});
+
 // 初期化
 checkKeyBanner();
 loadHealth();
@@ -1052,6 +1198,7 @@ loadDealers();
 loadCampaigns();
 loadMdmStats();
 loadStoreAdDelivery();
+loadLockscreenAnalytics();
 setInterval(loadAdminStats, 30000);
 setInterval(loadHealth, 60000);
 </script>
