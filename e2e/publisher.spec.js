@@ -78,7 +78,11 @@ test.describe("パブリッシャー登録（UIモーダル）", () => {
 
   test("新しいドメインでパブリッシャーを登録できる", async ({ page }) => {
     const uniqueDomain = `e2e-new-${Date.now()}.example.com`;
+    const ADMIN_KEY = process.env.ADMIN_API_KEY || "change-me-admin-key";
     await page.goto("/admin");
+    await page.evaluate((key) => { localStorage.setItem("ssp_admin_key", key); }, ADMIN_KEY);
+    await page.reload();
+    await page.waitForLoadState("networkidle");
     await page.getByText("+ パブリッシャー登録").first().click();
 
     const form = page.locator("#register-form");
@@ -87,12 +91,22 @@ test.describe("パブリッシャー登録（UIモーダル）", () => {
     await form.locator('[name="email"]').fill(`e2e-${Date.now()}@example.com`);
     await form.locator('[name="floor"]').fill("0.8");
     await form.locator('[name="password"]').fill("NewPass123");
-    await form.locator('[type="submit"]').click();
 
-    // 登録完了メッセージ
+    // ネットワークレスポンスを待ってからアサート（Vercelコールドスタート対策）
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes("/auth/register"),
+        { timeout: 20000 }
+      ),
+      form.locator('[type="submit"]').click(),
+    ]);
+
+    expect(response.ok()).toBeTruthy();
+
+    // 登録完了メッセージ（3秒でリロードされる前にキャプチャ）
     await expect(page.locator("#register-result")).toContainText(
       /登録完了|API Key/i,
-      { timeout: 5000 }
+      { timeout: 3000 }
     );
   });
 });

@@ -178,7 +178,7 @@
     <a href="#store-ad-delivery">🏪 店舗別広告配信</a>
     <a href="#dealers">🏬 代理店・店舗管理</a>
     <a href="#campaigns">📣 キャンペーン管理</a>
-    <a href="#affiliate-campaigns">🤝 アフィリエイト案件</a>
+    <a href="#affiliate-campaigns">🤝 アフィリエイトキャンペーン</a>
     <a href="#creatives">🎨 クリエイティブ</a>
     <a href="#devices">📲 デバイス管理</a>
     <a href="#billing">💰 収益・請求</a>
@@ -190,6 +190,8 @@
     <a href="#consent-logs">📋 同意ログ</a>
     <a href="#invoices">🧾 精算一覧</a>
     <a href="#ml-pipeline">🤖 ML管理</a>
+    <a href="#dsp-configs">🔌 DSP設定</a>
+    <a href="#ios-widget">📱 iOSウィジェット</a>
 
     <details style="margin-top:16px">
       <summary class="section-label" style="cursor:pointer;list-style:none">SSP管理 ▸</summary>
@@ -288,7 +290,7 @@
         <div id="dealers-loading" class="loading">読み込み中...</div>
         <table id="dealers-table" style="display:none">
           <thead>
-            <tr><th>代理店名</th><th>店舗コード</th><th>ステータス</th><th>操作</th></tr>
+            <tr><th>代理店名</th><th>店舗コード</th><th>ステータス</th><th>リージョン</th><th>操作</th></tr>
           </thead>
           <tbody id="dealers-tbody"></tbody>
         </table>
@@ -308,7 +310,7 @@
         <div id="campaigns-loading" class="loading">読み込み中...</div>
         <table id="campaigns-table" style="display:none">
           <thead>
-            <tr><th>ID</th><th>キャンペーン名</th><th>代理店</th></tr>
+            <tr><th>ID</th><th>キャンペーン名</th><th>代理店</th><th>操作</th></tr>
           </thead>
           <tbody id="campaigns-tbody"></tbody>
         </table>
@@ -398,7 +400,7 @@
       <div id="devices-ios" style="display:none">
         <div id="ios-loading" class="loading">読み込み中...</div>
         <table id="ios-table" style="display:none">
-          <thead><tr><th>UDID</th><th>デバイス名</th><th>モデル</th><th>iOS</th><th>Pushトークン</th><th>最終接続</th></tr></thead>
+          <thead><tr><th>UDID</th><th>デバイス名</th><th>モデル</th><th>iOS</th><th>Pushトークン</th><th>最終接続</th><th>操作</th></tr></thead>
           <tbody id="ios-tbody"></tbody>
         </table>
         <div id="ios-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">iOSデバイスが登録されていません。</div>
@@ -416,6 +418,16 @@
           <button class="btn btn-ghost" style="font-size:13px;color:var(--red);border-color:var(--red)" onclick="runSettlement()">⚡ 精算実行</button>
         </div>
       </div>
+
+      <!-- 代理店別レポート -->
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">代理店別 月次レポート</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <select id="dealer-report-select" style="flex:1;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          <option value="">代理店を選択...</option>
+        </select>
+        <button class="btn btn-ghost" style="font-size:13px" onclick="loadDealerReport()">📋 取得</button>
+      </div>
+      <div id="dealer-report-content" style="margin-bottom:24px"></div>
 
       <!-- 全代理店サマリー -->
       <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">全代理店 月次サマリー</div>
@@ -455,7 +467,7 @@
       <div class="table-wrap">
         <div id="pending-loading" class="loading">読み込み中...</div>
         <table id="pending-table" style="display:none">
-          <thead><tr><th>パッケージ名</th><th>CPI単価(円)</th><th>Postbackステータス</th><th>課金ステータス</th><th>登録日時</th></tr></thead>
+          <thead><tr><th>パッケージ名</th><th>CPI単価(円)</th><th>Postbackステータス</th><th>課金ステータス</th><th>登録日時</th><th>操作</th></tr></thead>
           <tbody id="pending-tbody"></tbody>
         </table>
         <div id="pending-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">保留中のCPI課金はありません。</div>
@@ -547,6 +559,14 @@
         <h2 style="font-size:15px">アナリティクス</h2>
         <button class="btn btn-ghost" onclick="loadAnalytics()" style="font-size:12px">更新</button>
       </div>
+      <!-- 24時間サマリー -->
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">過去24時間サマリー</div>
+      <div id="analytics-24h-loading" class="loading">読み込み中...</div>
+      <div id="analytics-24h-cards" style="display:none;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px">
+        <div class="card" style="text-align:center"><div class="card-title">総Imp (24h)</div><div class="kpi-value" id="a24-imp">-</div></div>
+        <div class="card" style="text-align:center"><div class="card-title">総Click (24h)</div><div class="kpi-value" id="a24-click">-</div></div>
+        <div class="card" style="text-align:center"><div class="card-title">CTR (24h)</div><div class="kpi-value" id="a24-ctr">-</div></div>
+      </div>
       <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">スロット別インプレッション統計</div>
       <div id="imp-stats-loading" class="loading">読み込み中...</div>
       <div class="table-wrap" style="margin-bottom:24px">
@@ -611,6 +631,7 @@
       </div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Two-Tower 推薦モデルの学習と管理。学習はバックグラウンドで数分かかります。</p>
       <div id="ml-train-result" style="font-size:13px;margin-bottom:12px"></div>
+      <!-- MLモデル一覧 -->
       <div id="ml-models-loading" class="loading">読み込み中...</div>
       <div class="table-wrap">
         <table id="ml-models-table" style="display:none">
@@ -618,6 +639,91 @@
           <tbody id="ml-models-tbody"></tbody>
         </table>
         <div id="ml-models-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">学習済みモデルがありません。</div>
+      </div>
+      <!-- 特徴量統計 -->
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between">
+        <span>ユーザー特徴量統計</span>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="triggerComputeFeatures()">▶ 特徴量計算</button>
+      </div>
+      <div id="ml-features-loading" class="loading">読み込み中...</div>
+      <div id="ml-features-cards" style="display:none;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+        <div class="card" style="text-align:center"><div class="card-title">特徴量計算済デバイス</div><div class="kpi-value" id="feat-devices">-</div></div>
+        <div class="card" style="text-align:center"><div class="card-title">平均30日CTR</div><div class="kpi-value" id="feat-ctr">-</div></div>
+        <div class="card" style="text-align:center"><div class="card-title">平均Dwell(ms)</div><div class="kpi-value" id="feat-dwell">-</div></div>
+      </div>
+      <!-- コホート統計 -->
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between">
+        <span>コホートセグメント統計</span>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="triggerComputeCohorts()">▶ コホート計算</button>
+      </div>
+      <div id="ml-cohorts-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="ml-cohorts-table" style="display:none">
+          <thead><tr><th>コホートID</th><th>ラベル</th><th>デバイス数</th></tr></thead>
+          <tbody id="ml-cohorts-tbody"></tbody>
+        </table>
+        <div id="ml-cohorts-empty" style="display:none;text-align:center;padding:16px;color:var(--muted);font-size:14px">コホートデータなし。「コホート計算」で生成してください。</div>
+      </div>
+    </section>
+
+    <!-- DSP設定管理 -->
+    <section id="dsp-configs" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">DSP設定管理</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadDspConfigs()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="showDspModal()">+ DSP追加・更新</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">RTBオークションに参加するDSP接続先を管理します。同名のDSPは上書き更新されます。</p>
+      <div id="dsp-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap" style="margin-bottom:24px">
+        <table id="dsp-table" style="display:none">
+          <thead><tr><th>DSP名</th><th>エンドポイントURL</th><th>Timeout(ms)</th><th>手数料率</th><th>ステータス</th></tr></thead>
+          <tbody id="dsp-tbody"></tbody>
+        </table>
+        <div id="dsp-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">DSP設定がありません。</div>
+      </div>
+      <!-- DSPパフォーマンス -->
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+        <span>DSP別パフォーマンス（過去7日）</span>
+        <button class="btn btn-ghost" style="font-size:12px" onclick="loadDspPerformance()">更新</button>
+      </div>
+      <div id="dsp-perf-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="dsp-perf-table" style="display:none">
+          <thead><tr><th>DSP</th><th>落札数</th><th>Win率</th><th>平均CPM(円)</th><th>収益(円)</th></tr></thead>
+          <tbody id="dsp-perf-tbody"></tbody>
+        </table>
+        <div id="dsp-perf-empty" style="display:none;text-align:center;padding:16px;color:var(--muted);font-size:14px">パフォーマンスデータなし。</div>
+      </div>
+    </section>
+
+    <!-- iOS ウィジェット広告管理 -->
+    <section id="ios-widget" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">iOS ウィジェット広告管理</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadIosWidgetStats()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="showIosWidgetModal()">+ クリエイティブ登録</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">iOS ホーム画面・ロック画面ウィジェット向けクリエイティブを登録します。</p>
+      <!-- 統計カード -->
+      <div id="ios-widget-loading" class="loading">読み込み中...</div>
+      <div id="ios-widget-stats" style="display:none;margin-bottom:20px">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+          <div class="card" style="text-align:center"><div class="card-title">総Imp</div><div class="kpi-value" id="widget-imp">-</div></div>
+          <div class="card" style="text-align:center"><div class="card-title">総Click</div><div class="kpi-value" id="widget-click">-</div></div>
+          <div class="card" style="text-align:center"><div class="card-title">CTR</div><div class="kpi-value" id="widget-ctr">-</div></div>
+        </div>
+        <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">TOP クリエイティブ</div>
+        <div class="table-wrap">
+          <table id="widget-creative-table" style="display:none">
+            <thead><tr><th>タイトル</th><th>Imp</th><th>Click</th><th>CTR</th><th>プレビュー</th></tr></thead>
+            <tbody id="widget-creative-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -1016,6 +1122,89 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
   </div>
 </div>
 
+<!-- キャンペーン編集モーダル -->
+<div class="modal-overlay" id="campaign-edit-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('campaign-edit-modal')">&times;</span>
+    <h2>キャンペーン編集</h2>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">保存後、紐づくiOSデバイスへWebClipが自動再配信されます。</p>
+    <form id="campaign-edit-form" style="display:grid;gap:12px;margin-top:8px">
+      <input type="hidden" id="edit-campaign-id">
+      <input id="edit-campaign-name" placeholder="キャンペーン名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <div>
+        <label style="font-size:13px;color:var(--muted)">WebClips JSON（省略可）</label>
+        <textarea id="edit-campaign-webclips" placeholder='例: [{"url":"https://example.com","label":"サービス名"}]' rows="4" style="width:100%;margin-top:4px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div>
+        <label style="font-size:13px;color:var(--muted)">Safari Config JSON（省略可）</label>
+        <textarea id="edit-campaign-safari" placeholder='例: {"content_filter_enabled":true}' rows="3" style="width:100%;margin-top:4px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">保存して再配信</button>
+      <div id="campaign-edit-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- iOS MDMコマンドモーダル -->
+<div class="modal-overlay" id="ios-command-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('ios-command-modal')">&times;</span>
+    <h2>iOS MDMコマンド送信</h2>
+    <p id="ios-command-target" style="font-size:12px;color:var(--muted);margin-bottom:12px"></p>
+    <form id="ios-command-form" style="display:grid;gap:12px;margin-top:8px">
+      <input type="hidden" id="ios-command-udid">
+      <select id="ios-request-type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="device_info">device_info — デバイス情報取得</option>
+        <option value="profile_list">profile_list — プロファイル一覧</option>
+        <option value="add_web_clip">add_web_clip — WebClip追加 (params: url, label)</option>
+        <option value="device_lock">device_lock — デバイスロック (params: message)</option>
+        <option value="install_application">install_application — アプリインストール (params: manifest_url)</option>
+        <option value="send_app_clip_invite">send_app_clip_invite — App Clip招待 (params: app_clip_url)</option>
+      </select>
+      <textarea id="ios-command-params" placeholder='パラメータ JSON（例: {"url":"https://example.com","label":"テスト"}）' rows="3" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace;resize:vertical">{}</textarea>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="ios-send-push" checked> APNs Pushでデバイスを起こす</label>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">コマンド送信</button>
+      <div id="ios-command-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- DSP設定モーダル -->
+<div class="modal-overlay" id="dsp-config-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('dsp-config-modal')">&times;</span>
+    <h2>DSP設定 追加・更新</h2>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">同名のDSPが存在する場合は上書き更新されます。</p>
+    <form id="dsp-config-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="DSP名（例: MyDSP）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="endpoint_url" type="url" placeholder="エンドポイントURL（例: https://bid.dsp.example.com/bid）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <input name="timeout_ms" type="number" min="50" max="2000" value="200" placeholder="Timeout(ms)" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+        <input name="take_rate" type="number" step="0.01" min="0" max="1" value="0.15" placeholder="手数料率（0〜1）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" name="active"> 有効化</label>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">保存する</button>
+      <div id="dsp-config-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- iOS ウィジェットクリエイティブ登録モーダル -->
+<div class="modal-overlay" id="ios-widget-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('ios-widget-modal')">&times;</span>
+    <h2>iOS ウィジェット クリエイティブ登録</h2>
+    <form id="ios-widget-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="title" placeholder="広告タイトル（例: 今すぐインストール）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="image_url" type="url" placeholder="画像URL" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="click_url" type="url" placeholder="クリック先URL" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <textarea name="body" placeholder="本文テキスト（省略可）" rows="2" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;resize:vertical"></textarea>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="ios-widget-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
 <!-- Wi-Fiトリガー登録モーダル -->
 <div class="modal-overlay" id="wifi-trigger-modal">
   <div class="modal">
@@ -1334,15 +1523,22 @@ async function loadDealers() {
         <td>${d.name}</td>
         <td><code style="background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px;font-size:12px">${d.store_code}</code></td>
         <td><span class="status-${d.status}">${d.status}</span></td>
-        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showQrModal('${d.store_code}','${d.name}','${d.id}')">📱 QR表示</button></td>
+        <td style="font-size:12px;color:var(--muted)">${d.region || '-'}</td>
+        <td style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost" style="font-size:11px" onclick="showQrModal('${d.store_code}','${d.name}','${d.id}')">📱 QR</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="setDealerRegion('${d.id}','${d.region||''}')">🌏 リージョン</button>
+        </td>
       </tr>`
     ).join('');
     document.getElementById('dealers-table').style.display = 'table';
 
-    // キャンペーンモーダルのセレクトを更新
+    // キャンペーン・代理店別レポートのセレクトを更新
     const sel = document.getElementById('campaign-dealer-select');
     sel.innerHTML = '<option value="">代理店を選択...</option>' +
       dealers.map(d => `<option value="${d.id}">${d.name} (${d.store_code})</option>`).join('');
+    const rptSel = document.getElementById('dealer-report-select');
+    rptSel.innerHTML = '<option value="">代理店を選択...</option>' +
+      dealers.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
   } catch(e) {
     document.getElementById('dealers-loading').textContent = 'エラー: ' + e.message;
   }
@@ -1459,10 +1655,11 @@ document.getElementById('campaign-form').addEventListener('submit', async (e) =>
     const tbody = document.getElementById('campaigns-tbody');
     const dealerName = _dealersCache.find(x => x.id === body.dealer_id)?.name || body.dealer_id;
     tbody.insertAdjacentHTML('beforeend',
-      `<tr>
+      `<tr id="campaign-row-${d.id}">
         <td style="font-family:monospace;font-size:12px;color:var(--muted)">${d.id.slice(0,8)}...</td>
-        <td>${d.name}</td>
+        <td id="campaign-name-${d.id}">${d.name}</td>
         <td>${dealerName}</td>
+        <td><button class="btn btn-ghost" style="font-size:11px" onclick="showCampaignEditModal('${d.id}','${d.name.replace(/'/g,"\\'")}')">✏️ 編集</button></td>
       </tr>`
     );
     document.getElementById('campaigns-empty').style.display = 'none';
@@ -1961,6 +2158,10 @@ async function loadIosDevices() {
         <td>${d.os_version || '-'}</td>
         <td>${pushBadge}</td>
         <td style="font-size:12px;color:var(--muted)">${lastSeen}</td>
+        <td style="display:flex;gap:4px">
+          <button class="btn btn-ghost" style="font-size:11px" onclick="sendIosPush('${d.udid}')" ${d.has_push_token ? '' : 'disabled title="Pushトークンなし"'}>📲 Push</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="showIosCommandModal('${d.udid}')">📋 CMD</button>
+        </td>
       </tr>`;
     }).join('');
     table.style.display = '';
@@ -2165,6 +2366,9 @@ async function loadPendingBilling() {
       <td style="color:${e.postback_status==='success'?'var(--green)':'var(--yellow)'}">${e.postback_status}</td>
       <td style="color:var(--yellow)">${e.billing_status}</td>
       <td style="font-size:12px;color:var(--muted)">${e.created_at ? e.created_at.slice(0,16).replace('T',' ') : '-'}</td>
+      <td>${e.billing_status === 'billable'
+        ? `<button class="btn btn-ghost" style="font-size:11px;color:var(--green);border-color:var(--green)" onclick="markCpiPaid('${e.id}',this)">支払済にする</button>`
+        : '<span style="color:var(--green);font-size:12px">✓ 支払済</span>'}</td>
     </tr>`).join('');
     table.style.display = '';
   } catch(e) { loading.textContent = '読み込みエラー'; }
@@ -2245,6 +2449,369 @@ document.getElementById('affiliate-campaign-form').addEventListener('submit', as
   } else {
     el.style.color = 'var(--red)';
     el.textContent = d.detail || 'エラーが発生しました';
+  }
+});
+
+// ── キャンペーン編集 ──────────────────────────────────────
+function showCampaignEditModal(campaignId, campaignName) {
+  document.getElementById('edit-campaign-id').value = campaignId;
+  document.getElementById('edit-campaign-name').value = campaignName;
+  document.getElementById('edit-campaign-webclips').value = '';
+  document.getElementById('edit-campaign-safari').value = '';
+  document.getElementById('campaign-edit-result').textContent = '';
+  document.getElementById('campaign-edit-modal').classList.add('open');
+}
+
+document.getElementById('campaign-edit-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('edit-campaign-id').value;
+  const body = { name: document.getElementById('edit-campaign-name').value };
+  const webclipsRaw = document.getElementById('edit-campaign-webclips').value.trim();
+  const safariRaw   = document.getElementById('edit-campaign-safari').value.trim();
+  if (webclipsRaw) {
+    try { body.webclips = JSON.parse(webclipsRaw); }
+    catch { alert('WebClips JSON の形式が正しくありません'); return; }
+  }
+  if (safariRaw) {
+    try { body.safari_config = JSON.parse(safariRaw); }
+    catch { alert('Safari Config JSON の形式が正しくありません'); return; }
+  }
+  const res = await fetch(`/mdm/admin/campaigns/${id}`, {
+    method: 'PUT',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('campaign-edit-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ 更新完了！ 再配信: ${d.redeployment}`;
+    const nameCell = document.getElementById(`campaign-name-${id}`);
+    if (nameCell) nameCell.textContent = body.name;
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── 代理店別月次レポート ──────────────────────────────────
+async function loadDealerReport() {
+  const dealerId = document.getElementById('dealer-report-select').value;
+  if (!dealerId) { alert('代理店を選択してください'); return; }
+  const year  = document.getElementById('billing-year').value;
+  const month = document.getElementById('billing-month').value;
+  const content = document.getElementById('dealer-report-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  try {
+    const q = (year && month) ? `?year=${year}&month=${month}` : '';
+    const res = await fetch(`/mdm/admin/affiliate/report/${dealerId}${q}`, { headers: adminHeaders() });
+    if (!res.ok) throw new Error(await res.text());
+    const d = await res.json();
+    content.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px">
+        <div class="card" style="padding:12px;text-align:center">
+          <div class="card-title">代理店名</div>
+          <div style="font-weight:700;font-size:15px">${d.dealer_name || '-'}</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center">
+          <div class="card-title">CPI件数</div>
+          <div class="kpi-value" style="font-size:24px">${(d.cpi_count || 0).toLocaleString()}</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center">
+          <div class="card-title">支払額(円)</div>
+          <div class="kpi-value" style="font-size:24px;color:var(--accent)">¥${(d.net_payable_jpy || 0).toLocaleString()}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="card" style="padding:12px;text-align:center">
+          <div class="card-title">総収益(円)</div>
+          <div style="font-size:18px;font-weight:700">¥${(d.gross_revenue_jpy || 0).toLocaleString()}</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center">
+          <div class="card-title">手数料(円)</div>
+          <div style="font-size:18px;font-weight:700">¥${(d.platform_fee_jpy || 0).toLocaleString()}</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center">
+          <div class="card-title">期間</div>
+          <div style="font-size:14px;font-weight:600;color:var(--muted)">${d.year || year}-${String(d.month || month).padStart(2,'0')}</div>
+        </div>
+      </div>`;
+  } catch(e) {
+    content.innerHTML = `<div style="color:var(--red);font-size:13px">取得エラー: ${e.message}</div>`;
+  }
+}
+
+// ── 代理店リージョン設定 ──────────────────────────────────
+async function setDealerRegion(dealerId, currentRegion) {
+  const region = prompt('リージョンを入力してください（例: tokyo, osaka）:', currentRegion);
+  if (region === null) return;
+  const res = await fetch(`/mdm/admin/dealer/${dealerId}/region`, {
+    method: 'PUT',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ region: region.trim() }),
+  });
+  if (res.ok) { alert('リージョンを更新しました'); loadDealers(); }
+  else { const d = await res.json(); alert(d.detail || '更新失敗'); }
+}
+
+// ── iOS APNs Push & MDMコマンド ──────────────────────────
+async function sendIosPush(udid) {
+  if (!confirm(`UDID: ${udid.slice(0,8)}… にAPNs Pushを送信します。よろしいですか？`)) return;
+  const res = await fetch(`/mdm/admin/ios/push/${udid}`, { method: 'POST', headers: adminHeaders() });
+  const d = await res.json();
+  if (res.ok) alert(`Push送信: ${d.push_sent ? '成功' : '失敗'}`);
+  else alert(d.detail || 'エラー');
+}
+
+function showIosCommandModal(udid) {
+  document.getElementById('ios-command-udid').value = udid;
+  document.getElementById('ios-command-target').textContent = `対象UDID: ${udid.slice(0,8)}…`;
+  document.getElementById('ios-command-result').textContent = '';
+  document.getElementById('ios-command-params').value = '{}';
+  document.getElementById('ios-command-modal').classList.add('open');
+}
+
+document.getElementById('ios-command-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const udid = document.getElementById('ios-command-udid').value;
+  const requestType = document.getElementById('ios-request-type').value;
+  let params = {};
+  try { params = JSON.parse(document.getElementById('ios-command-params').value || '{}'); }
+  catch { alert('パラメータのJSON形式が不正です'); return; }
+  const sendPush = document.getElementById('ios-send-push').checked;
+  const res = await fetch('/mdm/admin/ios/command', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ udid, request_type: requestType, params, send_push: sendPush }),
+  });
+  const d = await res.json();
+  const el = document.getElementById('ios-command-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ コマンドキュー登録！ UUID: <code style="font-size:11px">${d.command_uuid}</code> | Push: ${d.push_sent ? '送信済' : '未送信'}`;
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── CPI課金 支払済マーク ─────────────────────────────────
+async function markCpiPaid(installEventId, btn) {
+  if (!confirm('このCPI課金を支払済にします。よろしいですか？')) return;
+  btn.disabled = true;
+  const res = await fetch(`/mdm/admin/billing/mark-paid/${installEventId}`, {
+    method: 'POST', headers: adminHeaders(),
+  });
+  const d = await res.json();
+  if (res.ok) {
+    btn.outerHTML = '<span style="color:var(--green);font-size:12px">✓ 支払済</span>';
+  } else {
+    btn.disabled = false;
+    alert(d.detail || 'エラー');
+  }
+}
+
+// ── アナリティクス 24h ────────────────────────────────────
+async function load24hAnalytics() {
+  try {
+    const r = await fetch('/mdm/admin/analytics/impressions', { headers: adminHeaders() });
+    const d = await r.json();
+    document.getElementById('analytics-24h-loading').style.display = 'none';
+    document.getElementById('analytics-24h-cards').style.display = 'grid';
+    document.getElementById('a24-imp').textContent = (d.total_impressions || 0).toLocaleString();
+    document.getElementById('a24-click').textContent = (d.total_clicks || 0).toLocaleString();
+    document.getElementById('a24-ctr').textContent = d.overall_ctr != null ? (d.overall_ctr * 100).toFixed(2) + '%' : '-';
+  } catch(e) {
+    document.getElementById('analytics-24h-loading').textContent = '読み込みエラー';
+  }
+}
+
+// ── ML 特徴量・コホート ───────────────────────────────────
+async function loadMlFeatureStats() {
+  try {
+    const r = await fetch('/mdm/admin/ml/features/stats', { headers: adminHeaders() });
+    const d = await r.json();
+    document.getElementById('ml-features-loading').style.display = 'none';
+    document.getElementById('ml-features-cards').style.display = 'grid';
+    document.getElementById('feat-devices').textContent = (d.total_devices_with_features || 0).toLocaleString();
+    document.getElementById('feat-ctr').textContent = d.avg_ctr_30d != null ? (d.avg_ctr_30d * 100).toFixed(2) + '%' : '-';
+    document.getElementById('feat-dwell').textContent = d.avg_dwell_ms != null ? d.avg_dwell_ms.toFixed(0) : '-';
+  } catch(e) {
+    document.getElementById('ml-features-loading').textContent = '読み込みエラー';
+  }
+}
+
+async function triggerComputeFeatures() {
+  const res = await fetch('/mdm/admin/ml/compute_features', { method: 'POST', headers: adminHeaders() });
+  const d = await res.json();
+  alert(res.ok ? d.message || '特徴量計算を開始しました' : d.detail || 'エラー');
+  if (res.ok) loadMlFeatureStats();
+}
+
+async function loadCohortStats() {
+  const loading = document.getElementById('ml-cohorts-loading');
+  const table = document.getElementById('ml-cohorts-table');
+  const empty = document.getElementById('ml-cohorts-empty');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/ml/cohort_stats', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    const cohorts = d.cohorts || d;
+    if (!cohorts.length) { empty.style.display = 'block'; return; }
+    document.getElementById('ml-cohorts-tbody').innerHTML = cohorts.map(c => `
+      <tr>
+        <td>${c.cohort_id}</td>
+        <td>${c.cohort_label || '-'}</td>
+        <td><strong>${(c.device_count || 0).toLocaleString()}</strong></td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+async function triggerComputeCohorts() {
+  const res = await fetch('/mdm/admin/ml/compute_cohorts', { method: 'POST', headers: adminHeaders() });
+  const d = await res.json();
+  alert(res.ok ? d.message || 'コホート計算を開始しました' : d.detail || 'エラー');
+  if (res.ok) setTimeout(loadCohortStats, 3000);
+}
+
+// ── DSP設定管理 ───────────────────────────────────────────
+async function loadDspConfigs() {
+  const loading = document.getElementById('dsp-loading');
+  const table = document.getElementById('dsp-table');
+  const empty = document.getElementById('dsp-empty');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/dsp/configs', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    if (!Array.isArray(d) || !d.length) { empty.style.display = 'block'; return; }
+    document.getElementById('dsp-tbody').innerHTML = d.map(c => `
+      <tr>
+        <td style="font-weight:600">${c.name}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${c.endpoint_url}</td>
+        <td>${c.timeout_ms}ms</td>
+        <td>${(c.take_rate * 100).toFixed(1)}%</td>
+        <td class="status-${c.active ? 'active' : 'suspended'}">${c.active ? '有効' : '停止'}</td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+async function loadDspPerformance() {
+  const loading = document.getElementById('dsp-perf-loading');
+  const table = document.getElementById('dsp-perf-table');
+  const empty = document.getElementById('dsp-perf-empty');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/dsp/performance', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    const rows = d.dsps || d;
+    if (!Array.isArray(rows) || !rows.length) { empty.style.display = 'block'; return; }
+    document.getElementById('dsp-perf-tbody').innerHTML = rows.map(p => `
+      <tr>
+        <td style="font-weight:600">${p.dsp_name || p.dsp_id || '-'}</td>
+        <td>${(p.total_wins || 0).toLocaleString()}</td>
+        <td>${p.win_rate != null ? (p.win_rate * 100).toFixed(1) + '%' : '-'}</td>
+        <td>¥${Number(p.avg_cpm_jpy || 0).toLocaleString()}</td>
+        <td>¥${Number(p.total_revenue_jpy || 0).toLocaleString()}</td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+function showDspModal() {
+  document.getElementById('dsp-config-form').reset();
+  document.getElementById('dsp-config-result').textContent = '';
+  document.getElementById('dsp-config-modal').classList.add('open');
+}
+
+document.getElementById('dsp-config-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    name: f.name.value,
+    endpoint_url: f.endpoint_url.value,
+    timeout_ms: parseInt(f.timeout_ms.value),
+    take_rate: parseFloat(f.take_rate.value),
+    active: f.active.checked,
+  };
+  const res = await fetch('/mdm/admin/dsp/configs', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('dsp-config-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ 保存完了！ DSP: ${d.name}`;
+    loadDspConfigs();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── iOS ウィジェット広告 ──────────────────────────────────
+async function loadIosWidgetStats() {
+  const loading = document.getElementById('ios-widget-loading');
+  const statsDiv = document.getElementById('ios-widget-stats');
+  loading.style.display = 'block'; statsDiv.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/ios/widget/stats', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    statsDiv.style.display = 'block';
+    document.getElementById('widget-imp').textContent = (d.total_impressions || 0).toLocaleString();
+    document.getElementById('widget-click').textContent = (d.total_clicks || 0).toLocaleString();
+    document.getElementById('widget-ctr').textContent = d.ctr != null ? (d.ctr * 100).toFixed(2) + '%' : '-';
+    const top = d.top_creatives || [];
+    if (top.length) {
+      document.getElementById('widget-creative-tbody').innerHTML = top.map(c => `
+        <tr>
+          <td>${c.title}</td>
+          <td>${(c.impressions || 0).toLocaleString()}</td>
+          <td>${(c.clicks || 0).toLocaleString()}</td>
+          <td>${c.ctr != null ? (c.ctr * 100).toFixed(2) + '%' : '-'}</td>
+          <td>${c.image_url ? `<img src="${c.image_url}" style="height:40px;border-radius:4px" onerror="this.style.display='none'">` : '-'}</td>
+        </tr>`).join('');
+      document.getElementById('widget-creative-table').style.display = 'table';
+    }
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+function showIosWidgetModal() {
+  document.getElementById('ios-widget-form').reset();
+  document.getElementById('ios-widget-result').textContent = '';
+  document.getElementById('ios-widget-modal').classList.add('open');
+}
+
+document.getElementById('ios-widget-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    title: f.title.value,
+    image_url: f.image_url.value,
+    click_url: f.click_url.value,
+    body: f.body.value || null,
+  };
+  const res = await fetch('/mdm/admin/ios/widget/creative', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('ios-widget-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 登録完了！ Creative ID: <code style="font-size:11px">${d.creative_id}</code>`;
+    loadIosWidgetStats();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
   }
 });
 
@@ -2659,8 +3226,14 @@ loadWifiTriggers();
 loadTimeSlots();
 loadAdSlots();
 loadAnalytics();
+load24hAnalytics();
 loadConsentLogs();
 loadMlModels();
+loadMlFeatureStats();
+loadCohortStats();
+loadDspConfigs();
+loadDspPerformance();
+loadIosWidgetStats();
 setInterval(loadAdminStats, 30000);
 setInterval(loadHealth, 60000);
 </script>
