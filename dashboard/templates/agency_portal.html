@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ agency_name }} – 代理店ポータル</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    /* admin.htmlと同じCSS変数・レイアウトを使用 */
+    :root {
+      --bg: #ffffff;
+      --surface: #f8fafc;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --green: #16a34a;
+      --red: #dc2626;
+      --yellow: #d97706;
+      --nav-bg: #0f172a;
+      --nav-text: #cbd5e1;
+      --nav-active-bg: #1e3a5f;
+      --nav-active-color: #818cf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+
+    header {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--nav-bg);
+      border-bottom: 1px solid #1e293b;
+      padding: 0 24px;
+      height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .header-brand { display: flex; align-items: center; gap: 10px; }
+    .header-brand span { color: #e2e8f0; font-weight: 700; font-size: 16px; }
+    .header-badge { background: #1e3a5f; color: #818cf8; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; text-decoration: none; transition: all .15s; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-ghost { background: transparent; color: var(--nav-text); border: 1px solid #334155; }
+    .btn-ghost:hover { background: #1e293b; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+    .layout { display: flex; min-height: calc(100vh - 56px); }
+    nav {
+      width: 220px; flex-shrink: 0;
+      background: var(--nav-bg);
+      padding: 20px 12px;
+      position: sticky; top: 56px; height: calc(100vh - 56px); overflow-y: auto;
+    }
+    nav a {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 8px;
+      color: var(--nav-text); text-decoration: none; font-size: 13px; font-weight: 500;
+      margin-bottom: 2px; transition: all .15s;
+    }
+    nav a:hover { background: #1e293b; }
+    nav a.active { background: var(--nav-active-bg); color: var(--nav-active-color); }
+    .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #475569; padding: 8px 12px 4px; }
+
+    main { flex: 1; padding: 32px; max-width: 1100px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+    h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .kpi-value { font-size: 28px; font-weight: 800; color: var(--accent); }
+    .kpi-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-bottom: 2px solid var(--border); }
+    td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface); }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: #dcfce7; color: #16a34a; }
+    .badge-red { background: #fee2e2; color: #dc2626; }
+
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--muted); }
+    .form-group input, .form-group select { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--bg); color: var(--text); }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 200; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--bg); border-radius: 16px; padding: 28px; width: 480px; max-width: 95vw; }
+    .modal-close { float: right; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+
+    #store-revenue-chart { height: 240px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-brand">
+    <span>📱</span>
+    <span>{{ agency_name }}</span>
+    <span class="header-badge">代理店ポータル</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span style="font-size:12px;color:#64748b" id="last-updated"></span>
+    <a href="/mdm/dealer/manual" class="btn btn-ghost btn-sm" target="_blank">マニュアル</a>
+  </div>
+</header>
+
+<div class="layout">
+  <nav>
+    <div class="section-label">メニュー</div>
+    <a href="#summary" class="active">📊 サマリー</a>
+    <a href="#stores">🏪 店舗一覧</a>
+    <a href="#revenue">💰 収益レポート</a>
+  </nav>
+
+  <main>
+    <!-- サマリーKPI -->
+    <section id="summary" style="margin-bottom:32px">
+      <h2 style="font-size:20px;font-weight:700;margin-bottom:20px">全店舗サマリー</h2>
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div style="font-size:24px;margin-bottom:8px">🏪</div>
+          <div class="kpi-value" id="kpi-dealers">-</div>
+          <div class="kpi-label">管理店舗数</div>
+        </div>
+        <div class="kpi-card">
+          <div style="font-size:24px;margin-bottom:8px">📱</div>
+          <div class="kpi-value" id="kpi-devices">-</div>
+          <div class="kpi-label">総エンロール端末</div>
+        </div>
+        <div class="kpi-card">
+          <div style="font-size:24px;margin-bottom:8px">📊</div>
+          <div class="kpi-value" id="kpi-impressions">-</div>
+          <div class="kpi-label">当月インプレッション</div>
+        </div>
+        <div class="kpi-card" style="background:linear-gradient(135deg,#1e3a5f,#1e293b)">
+          <div style="font-size:24px;margin-bottom:8px">💰</div>
+          <div class="kpi-value" id="kpi-revenue" style="color:#818cf8">¥-</div>
+          <div class="kpi-label" style="color:#94a3b8">当月収益（推計）</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 店舗一覧 -->
+    <section id="stores">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="margin:0">店舗一覧</h2>
+          <button class="btn btn-primary btn-sm" onclick="showAddStoreModal()">+ 店舗追加</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>店舗名</th>
+              <th>店舗コード</th>
+              <th>地域</th>
+              <th>端末数</th>
+              <th>当月IMP</th>
+              <th>当月収益</th>
+              <th>ステータス</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="stores-tbody">
+            <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">読み込み中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 月次収益レポート -->
+    <section id="revenue">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="margin:0">月次収益レポート</h2>
+          <input type="month" id="revenue-period" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px" onchange="loadRevenue()">
+        </div>
+        <div style="position:relative;height:240px;margin-bottom:16px">
+          <canvas id="store-revenue-chart"></canvas>
+        </div>
+        <table id="revenue-table">
+          <thead>
+            <tr><th>店舗名</th><th>IMP</th><th>クリック</th><th>収益</th></tr>
+          </thead>
+          <tbody id="revenue-tbody">
+            <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">月を選択してください</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 店舗追加モーダル -->
+<div class="modal-overlay" id="add-store-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-store-modal')">&times;</button>
+    <h2 style="margin-bottom:20px">店舗追加</h2>
+    <form id="add-store-form">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>店舗名 *</label>
+          <input id="store-name" placeholder="例: ソフトバンク渋谷店" required>
+        </div>
+        <div class="form-group">
+          <label>店舗コード *</label>
+          <input id="store-code" placeholder="例: SB-SHIBUYA-001" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>地域（任意）</label>
+        <input id="store-region" placeholder="例: tokyo">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">追加する</button>
+      <div id="add-store-result" style="margin-top:10px;font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+const API_KEY = '{{ api_key }}';
+const headers = { 'Content-Type': 'application/json' };
+let revenueChart = null;
+
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function showAddStoreModal() { document.getElementById('add-store-modal').classList.add('open'); }
+
+function fmt(n) { return (n || 0).toLocaleString('ja-JP'); }
+function fmtYen(n) { return '¥' + (n || 0).toLocaleString('ja-JP'); }
+
+async function loadStats() {
+  try {
+    const r = await fetch(`/mdm/agency/stats?api_key=${API_KEY}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('kpi-dealers').textContent = fmt(d.total_dealers);
+    document.getElementById('kpi-devices').textContent = fmt(d.total_devices);
+    document.getElementById('kpi-impressions').textContent = fmt(d.monthly_impressions);
+    document.getElementById('kpi-revenue').textContent = fmtYen(d.monthly_revenue_jpy);
+    document.getElementById('last-updated').textContent = '更新: ' + new Date().toLocaleTimeString('ja-JP');
+  } catch(e) { console.error(e); }
+}
+
+async function loadStores() {
+  try {
+    const r = await fetch(`/mdm/agency/stores?api_key=${API_KEY}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    const tbody = document.getElementById('stores-tbody');
+    if (!d.stores.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">店舗がまだありません</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.stores.map(s => `
+      <tr>
+        <td style="color:var(--muted)">${s.store_number || '-'}</td>
+        <td style="font-weight:600">${s.name}</td>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${s.store_code}</td>
+        <td>${s.region || '-'}</td>
+        <td>${fmt(s.device_count)} 台</td>
+        <td>${fmt(s.monthly_impressions)}</td>
+        <td style="font-weight:600;color:var(--accent)">${fmtYen(s.monthly_revenue_jpy)}</td>
+        <td><span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-red'}">${s.status}</span></td>
+        <td><a href="${s.portal_url}" target="_blank" class="btn btn-ghost btn-sm">店舗ポータル →</a></td>
+      </tr>
+    `).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadRevenue() {
+  const period = document.getElementById('revenue-period').value;
+  if (!period) return;
+  try {
+    const r = await fetch(`/mdm/agency/revenue?api_key=${API_KEY}&period=${period}`);
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // チャート
+    const ctx = document.getElementById('store-revenue-chart').getContext('2d');
+    if (revenueChart) revenueChart.destroy();
+    revenueChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: d.stores.map(s => s.store_name),
+        datasets: [{
+          label: '収益（円）',
+          data: d.stores.map(s => s.revenue_jpy),
+          backgroundColor: 'rgba(99,102,241,0.7)',
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { callback: v => '¥' + v.toLocaleString() } } },
+      },
+    });
+
+    // テーブル
+    document.getElementById('revenue-tbody').innerHTML = d.stores.map(s => `
+      <tr>
+        <td>${s.store_name}</td>
+        <td>${fmt(s.impressions)}</td>
+        <td>${fmt(s.clicks)}</td>
+        <td style="font-weight:600;color:var(--accent)">${fmtYen(s.revenue_jpy)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">データなし</td></tr>';
+  } catch(e) { console.error(e); }
+}
+
+document.getElementById('add-store-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = {
+    name: document.getElementById('store-name').value,
+    store_code: document.getElementById('store-code').value,
+    region: document.getElementById('store-region').value || null,
+  };
+  try {
+    const r = await fetch(`/mdm/agency/stores?api_key=${API_KEY}`, {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    const el = document.getElementById('add-store-result');
+    if (r.ok) {
+      el.style.color = '#16a34a';
+      el.innerHTML = `✓ 店舗を追加しました。APIキー: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">${d.api_key}</code>`;
+      loadStores();
+      loadStats();
+      document.getElementById('add-store-form').reset();
+    } else {
+      el.style.color = '#dc2626';
+      el.textContent = d.detail || 'エラーが発生しました';
+    }
+  } catch(e) {
+    document.getElementById('add-store-result').textContent = 'ネットワークエラー';
+  }
+});
+
+// 月選択のデフォルト値を今月に設定
+const now = new Date();
+document.getElementById('revenue-period').value =
+  `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+// 初期化
+loadStats();
+loadStores();
+setInterval(loadStats, 60000);
+</script>
+</body>
+</html>

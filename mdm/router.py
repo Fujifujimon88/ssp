@@ -37,6 +37,7 @@ from config import settings
 from database import get_db
 from db_models import (
     AffiliateCampaignDB, AffiliateClickDB, AffiliateConversionDB,
+    AgencyDB,
     AndroidCommandDB, AndroidDeviceDB,
     CampaignDB, ConsentLogDB, CreativeDB, DealerDB, DealerPushLogDB, DeviceDB,
     DeviceProfileDB,
@@ -5291,8 +5292,8 @@ async def agency_devices(
     }
 
 
-@router.get("/agency/revenue", summary="代理店月次収益レポート")
-async def agency_revenue(
+@router.get("/agency/revenue/invoices", summary="代理店月次収益レポート（請求書ベース）")
+async def agency_revenue_invoices(
     month: str = Query(default="", description="対象月 YYYY-MM（省略時は当月）"),
     db: AsyncSession = Depends(get_db),
     agency_key: str = Depends(_verify_agency_key),
@@ -6275,3 +6276,544 @@ async def mark_install_paid(
     event.billing_status = "paid"
     await db.commit()
     return {"id": install_event_id, "billing_status": "paid"}
+
+
+# ── 代理店ポータル（BKD-11） ──────────────────────────────────────────
+
+
+async def _verify_agency_key_query(api_key: str, db: AsyncSession) -> AgencyDB:
+    agency = await db.scalar(
+        select(AgencyDB).where(AgencyDB.api_key == api_key)
+    )
+    if not agency:
+        raise HTTPException(status_code=403, detail="Invalid or inactive agency API key")
+    return agency
+
+
+@router.get("/agency/portal", response_class=HTMLResponse, summary="代理店ポータル（HTML）")
+async def agency_portal(api_key: str = Query(...), db: AsyncSession = Depends(get_db)):
+    agency = await _verify_agency_key_query(api_key, db)
+    html = _AGENCY_PORTAL_HTML.replace("{{ agency_name }}", agency.name).replace("{{ api_key }}", api_key)
+    return HTMLResponse(content=html)
+
+
+@router.get("/agency/stats", summary="代理店全店舗合計KPI")
+async def agency_stats(api_key: str = Query(...), db: AsyncSession = Depends(get_db)):
+    agency = await _verify_agency_key_query(api_key, db)
+
+    dealers = (await db.execute(
+        select(DealerDB).where(DealerDB.agency_id == agency.id)
+    )).scalars().all()
+    dealer_ids = [d.id for d in dealers]
+
+    if not dealer_ids:
+        return {"agency_name": agency.name, "total_devices": 0, "total_dealers": 0, "monthly_revenue_jpy": 0, "monthly_impressions": 0}
+
+    total_devices = await db.scalar(
+        select(func.count(DeviceDB.id)).where(DeviceDB.dealer_id.in_(dealer_ids))
+    ) or 0
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    imp_result = await db.execute(
+        select(
+            func.count(MdmImpressionDB.id).label("impressions"),
+            func.sum(MdmImpressionDB.cpm_price).label("revenue"),
+        ).where(
+            MdmImpressionDB.dealer_id.in_(dealer_ids),
+            MdmImpressionDB.created_at >= month_start,
+        )
+    )
+    imp_row = imp_result.one()
+
+    return {
+        "agency_name": agency.name,
+        "total_dealers": len(dealers),
+        "total_devices": total_devices,
+        "monthly_impressions": imp_row.impressions or 0,
+        "monthly_revenue_jpy": int((imp_row.revenue or 0) / 1000),
+    }
+
+
+@router.get("/agency/stores", summary="代理店配下の店舗一覧（端末数・収益付き）")
+async def agency_stores(api_key: str = Query(...), db: AsyncSession = Depends(get_db)):
+    agency = await _verify_agency_key_query(api_key, db)
+
+    dealers = (await db.execute(
+        select(DealerDB)
+        .where(DealerDB.agency_id == agency.id)
+        .order_by(DealerDB.store_number, DealerDB.created_at)
+    )).scalars().all()
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    stores = []
+    for dealer in dealers:
+        device_count = await db.scalar(
+            select(func.count(DeviceDB.id)).where(DeviceDB.dealer_id == dealer.id)
+        ) or 0
+
+        imp_result = await db.execute(
+            select(
+                func.count(MdmImpressionDB.id).label("impressions"),
+                func.sum(MdmImpressionDB.cpm_price).label("revenue"),
+                func.sum(func.cast(MdmImpressionDB.clicked, Integer)).label("clicks"),
+            ).where(
+                MdmImpressionDB.dealer_id == dealer.id,
+                MdmImpressionDB.created_at >= month_start,
+            )
+        )
+        imp_row = imp_result.one()
+
+        stores.append({
+            "id": dealer.id,
+            "name": dealer.name,
+            "store_code": dealer.store_code,
+            "store_number": dealer.store_number,
+            "region": dealer.region,
+            "status": dealer.status,
+            "device_count": device_count,
+            "monthly_impressions": imp_row.impressions or 0,
+            "monthly_clicks": int(imp_row.clicks or 0),
+            "monthly_revenue_jpy": int((imp_row.revenue or 0) / 1000),
+            "portal_url": f"/mdm/dealer/portal?api_key={dealer.api_key}",
+        })
+
+    return {
+        "stores": stores,
+        "total_devices": sum(s["device_count"] for s in stores),
+        "total_revenue_jpy": sum(s["monthly_revenue_jpy"] for s in stores),
+    }
+
+
+class AgencyStoreCreate(BaseModel):
+    name: str
+    store_code: str
+    region: Optional[str] = None
+
+
+@router.post("/agency/stores", status_code=201, summary="代理店配下に店舗を新規追加")
+async def agency_create_store(
+    body: AgencyStoreCreate,
+    api_key: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    agency = await _verify_agency_key_query(api_key, db)
+
+    max_num = await db.scalar(
+        select(func.max(DealerDB.store_number)).where(DealerDB.agency_id == agency.id)
+    ) or 0
+
+    dealer = DealerDB(
+        name=body.name,
+        store_code=body.store_code,
+        region=body.region,
+        agency_id=agency.id,
+        store_number=max_num + 1,
+        api_key=str(uuid.uuid4()),
+        status="active",
+    )
+    db.add(dealer)
+    await db.commit()
+    await db.refresh(dealer)
+
+    return {
+        "id": dealer.id,
+        "name": dealer.name,
+        "store_code": dealer.store_code,
+        "api_key": dealer.api_key,
+        "portal_url": f"/mdm/dealer/portal?api_key={dealer.api_key}",
+    }
+
+
+@router.get("/agency/revenue", summary="代理店月次収益レポート")
+async def agency_revenue(
+    api_key: str = Query(...),
+    period: str = Query(..., description="YYYY-MM"),
+    db: AsyncSession = Depends(get_db),
+):
+    import re as _re
+    import calendar
+    if not _re.match(r'^\d{4}-\d{2}$', period):
+        raise HTTPException(status_code=400, detail="period must be YYYY-MM")
+
+    agency = await _verify_agency_key_query(api_key, db)
+
+    dealers = (await db.execute(
+        select(DealerDB).where(DealerDB.agency_id == agency.id)
+    )).scalars().all()
+
+    year, month = map(int, period.split("-"))
+    month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    last_day = calendar.monthrange(year, month)[1]
+    month_end = datetime(year, month, last_day, 23, 59, 59, tzinfo=timezone.utc)
+
+    result = []
+    for dealer in dealers:
+        row = await db.execute(
+            select(
+                func.count(MdmImpressionDB.id).label("impressions"),
+                func.sum(func.cast(MdmImpressionDB.clicked, Integer)).label("clicks"),
+                func.sum(MdmImpressionDB.cpm_price).label("revenue"),
+            ).where(
+                MdmImpressionDB.dealer_id == dealer.id,
+                MdmImpressionDB.created_at >= month_start,
+                MdmImpressionDB.created_at <= month_end,
+            )
+        )
+        r = row.one()
+        result.append({
+            "store_name": dealer.name,
+            "store_code": dealer.store_code,
+            "impressions": r.impressions or 0,
+            "clicks": int(r.clicks or 0),
+            "revenue_jpy": int((r.revenue or 0) / 1000),
+        })
+
+    return {"period": period, "stores": result}
+
+
+_AGENCY_PORTAL_HTML = """\
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ agency_name }} \u2013 \u4ee3\u7406\u5e97\u30dd\u30fc\u30bf\u30eb</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f8fafc;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --green: #16a34a;
+      --red: #dc2626;
+      --yellow: #d97706;
+      --nav-bg: #0f172a;
+      --nav-text: #cbd5e1;
+      --nav-active-bg: #1e3a5f;
+      --nav-active-color: #818cf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+
+    header {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--nav-bg);
+      border-bottom: 1px solid #1e293b;
+      padding: 0 24px;
+      height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .header-brand { display: flex; align-items: center; gap: 10px; }
+    .header-brand span { color: #e2e8f0; font-weight: 700; font-size: 16px; }
+    .header-badge { background: #1e3a5f; color: #818cf8; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; text-decoration: none; transition: all .15s; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-ghost { background: transparent; color: var(--nav-text); border: 1px solid #334155; }
+    .btn-ghost:hover { background: #1e293b; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+    .layout { display: flex; min-height: calc(100vh - 56px); }
+    nav {
+      width: 220px; flex-shrink: 0;
+      background: var(--nav-bg);
+      padding: 20px 12px;
+      position: sticky; top: 56px; height: calc(100vh - 56px); overflow-y: auto;
+    }
+    nav a {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 8px;
+      color: var(--nav-text); text-decoration: none; font-size: 13px; font-weight: 500;
+      margin-bottom: 2px; transition: all .15s;
+    }
+    nav a:hover { background: #1e293b; }
+    nav a.active { background: var(--nav-active-bg); color: var(--nav-active-color); }
+    .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #475569; padding: 8px 12px 4px; }
+
+    main { flex: 1; padding: 32px; max-width: 1100px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+    h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .kpi-value { font-size: 28px; font-weight: 800; color: var(--accent); }
+    .kpi-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-bottom: 2px solid var(--border); }
+    td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface); }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: #dcfce7; color: #16a34a; }
+    .badge-red { background: #fee2e2; color: #dc2626; }
+
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--muted); }
+    .form-group input, .form-group select { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--bg); color: var(--text); }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 200; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--bg); border-radius: 16px; padding: 28px; width: 480px; max-width: 95vw; }
+    .modal-close { float: right; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-brand">
+    <span>&#128241;</span>
+    <span>{{ agency_name }}</span>
+    <span class="header-badge">\u4ee3\u7406\u5e97\u30dd\u30fc\u30bf\u30eb</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span style="font-size:12px;color:#64748b" id="last-updated"></span>
+    <a href="/mdm/dealer/manual" class="btn btn-ghost btn-sm" target="_blank">\u30de\u30cb\u30e5\u30a2\u30eb</a>
+  </div>
+</header>
+
+<div class="layout">
+  <nav>
+    <div class="section-label">\u30e1\u30cb\u30e5\u30fc</div>
+    <a href="#summary" class="active">&#128202; \u30b5\u30de\u30ea\u30fc</a>
+    <a href="#stores">&#127978; \u5e97\u8217\u4e00\u89a7</a>
+    <a href="#revenue">&#128176; \u53ce\u76ca\u30ec\u30dd\u30fc\u30c8</a>
+  </nav>
+
+  <main>
+    <section id="summary" style="margin-bottom:32px">
+      <h2 style="font-size:20px;font-weight:700;margin-bottom:20px">\u5168\u5e97\u8217\u30b5\u30de\u30ea\u30fc</h2>
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div style="font-size:24px;margin-bottom:8px">&#127978;</div>
+          <div class="kpi-value" id="kpi-dealers">-</div>
+          <div class="kpi-label">\u7ba1\u7406\u5e97\u8217\u6570</div>
+        </div>
+        <div class="kpi-card">
+          <div style="font-size:24px;margin-bottom:8px">&#128241;</div>
+          <div class="kpi-value" id="kpi-devices">-</div>
+          <div class="kpi-label">\u7dcf\u30a8\u30f3\u30ed\u30fc\u30eb\u7aef\u672b</div>
+        </div>
+        <div class="kpi-card">
+          <div style="font-size:24px;margin-bottom:8px">&#128202;</div>
+          <div class="kpi-value" id="kpi-impressions">-</div>
+          <div class="kpi-label">\u5f53\u6708\u30a4\u30f3\u30d7\u30ec\u30c3\u30b7\u30e7\u30f3</div>
+        </div>
+        <div class="kpi-card" style="background:linear-gradient(135deg,#1e3a5f,#1e293b)">
+          <div style="font-size:24px;margin-bottom:8px">&#128176;</div>
+          <div class="kpi-value" id="kpi-revenue" style="color:#818cf8">\u00a5-</div>
+          <div class="kpi-label" style="color:#94a3b8">\u5f53\u6708\u53ce\u76ca\uff08\u63a8\u8a08\uff09</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="stores">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="margin:0">\u5e97\u8217\u4e00\u89a7</h2>
+          <button class="btn btn-primary btn-sm" onclick="showAddStoreModal()">+ \u5e97\u8217\u8ffd\u52a0</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>\u5e97\u8217\u540d</th>
+              <th>\u5e97\u8217\u30b3\u30fc\u30c9</th>
+              <th>\u5730\u57df</th>
+              <th>\u7aef\u672b\u6570</th>
+              <th>\u5f53\u6708IMP</th>
+              <th>\u5f53\u6708\u53ce\u76ca</th>
+              <th>\u30b9\u30c6\u30fc\u30bf\u30b9</th>
+              <th>\u64cd\u4f5c</th>
+            </tr>
+          </thead>
+          <tbody id="stores-tbody">
+            <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">\u8aad\u307f\u8fbc\u307f\u4e2d...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="revenue">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="margin:0">\u6708\u6b21\u53ce\u76ca\u30ec\u30dd\u30fc\u30c8</h2>
+          <input type="month" id="revenue-period" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px" onchange="loadRevenue()">
+        </div>
+        <div style="position:relative;height:240px;margin-bottom:16px">
+          <canvas id="store-revenue-chart"></canvas>
+        </div>
+        <table id="revenue-table">
+          <thead>
+            <tr><th>\u5e97\u8217\u540d</th><th>IMP</th><th>\u30af\u30ea\u30c3\u30af</th><th>\u53ce\u76ca</th></tr>
+          </thead>
+          <tbody id="revenue-tbody">
+            <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">\u6708\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal-overlay" id="add-store-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-store-modal')">&times;</button>
+    <h2 style="margin-bottom:20px">\u5e97\u8217\u8ffd\u52a0</h2>
+    <form id="add-store-form">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>\u5e97\u8217\u540d *</label>
+          <input id="store-name" placeholder="\u4f8b: \u30bd\u30d5\u30c8\u30d0\u30f3\u30af\u6e0b\u8c37\u5e97" required>
+        </div>
+        <div class="form-group">
+          <label>\u5e97\u8217\u30b3\u30fc\u30c9 *</label>
+          <input id="store-code" placeholder="\u4f8b: SB-SHIBUYA-001" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>\u5730\u57df\uff08\u4efb\u610f\uff09</label>
+        <input id="store-region" placeholder="\u4f8b: tokyo">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">\u8ffd\u52a0\u3059\u308b</button>
+      <div id="add-store-result" style="margin-top:10px;font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+const API_KEY = '{{ api_key }}';
+const headers = { 'Content-Type': 'application/json' };
+let revenueChart = null;
+
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function showAddStoreModal() { document.getElementById('add-store-modal').classList.add('open'); }
+
+function fmt(n) { return (n || 0).toLocaleString('ja-JP'); }
+function fmtYen(n) { return '\\u00a5' + (n || 0).toLocaleString('ja-JP'); }
+
+async function loadStats() {
+  try {
+    const r = await fetch(`/mdm/agency/stats?api_key=${API_KEY}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('kpi-dealers').textContent = fmt(d.total_dealers);
+    document.getElementById('kpi-devices').textContent = fmt(d.total_devices);
+    document.getElementById('kpi-impressions').textContent = fmt(d.monthly_impressions);
+    document.getElementById('kpi-revenue').textContent = fmtYen(d.monthly_revenue_jpy);
+    document.getElementById('last-updated').textContent = '\\u66f4\\u65b0: ' + new Date().toLocaleTimeString('ja-JP');
+  } catch(e) { console.error(e); }
+}
+
+async function loadStores() {
+  try {
+    const r = await fetch(`/mdm/agency/stores?api_key=${API_KEY}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    const tbody = document.getElementById('stores-tbody');
+    if (!d.stores.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">\\u5e97\\u8217\\u304c\\u307e\\u3060\\u3042\\u308a\\u307e\\u305b\\u3093</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.stores.map(s => `
+      <tr>
+        <td style="color:var(--muted)">${s.store_number || '-'}</td>
+        <td style="font-weight:600">${s.name}</td>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${s.store_code}</td>
+        <td>${s.region || '-'}</td>
+        <td>${fmt(s.device_count)} \\u53f0</td>
+        <td>${fmt(s.monthly_impressions)}</td>
+        <td style="font-weight:600;color:var(--accent)">${fmtYen(s.monthly_revenue_jpy)}</td>
+        <td><span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-red'}">${s.status}</span></td>
+        <td><a href="${s.portal_url}" target="_blank" class="btn btn-ghost btn-sm">\\u5e97\\u8217\\u30dd\\u30fc\\u30bf\\u30eb \\u2192</a></td>
+      </tr>
+    `).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadRevenue() {
+  const period = document.getElementById('revenue-period').value;
+  if (!period) return;
+  try {
+    const r = await fetch(`/mdm/agency/revenue?api_key=${API_KEY}&period=${period}`);
+    if (!r.ok) return;
+    const d = await r.json();
+
+    const ctx = document.getElementById('store-revenue-chart').getContext('2d');
+    if (revenueChart) revenueChart.destroy();
+    revenueChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: d.stores.map(s => s.store_name),
+        datasets: [{
+          label: '\\u53ce\\u76ca\\uff08\\u5186\\uff09',
+          data: d.stores.map(s => s.revenue_jpy),
+          backgroundColor: 'rgba(99,102,241,0.7)',
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { callback: v => '\\u00a5' + v.toLocaleString() } } },
+      },
+    });
+
+    document.getElementById('revenue-tbody').innerHTML = d.stores.map(s => `
+      <tr>
+        <td>${s.store_name}</td>
+        <td>${fmt(s.impressions)}</td>
+        <td>${fmt(s.clicks)}</td>
+        <td style="font-weight:600;color:var(--accent)">${fmtYen(s.revenue_jpy)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">\\u30c7\\u30fc\\u30bf\\u306a\\u3057</td></tr>';
+  } catch(e) { console.error(e); }
+}
+
+document.getElementById('add-store-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = {
+    name: document.getElementById('store-name').value,
+    store_code: document.getElementById('store-code').value,
+    region: document.getElementById('store-region').value || null,
+  };
+  try {
+    const r = await fetch(`/mdm/agency/stores?api_key=${API_KEY}`, {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    const el = document.getElementById('add-store-result');
+    if (r.ok) {
+      el.style.color = '#16a34a';
+      el.innerHTML = `\\u2713 \\u5e97\\u8217\\u3092\\u8ffd\\u52a0\\u3057\\u307e\\u3057\\u305f\\u3002API\\u30ad\\u30fc: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">${d.api_key}</code>`;
+      loadStores();
+      loadStats();
+      document.getElementById('add-store-form').reset();
+    } else {
+      el.style.color = '#dc2626';
+      el.textContent = d.detail || '\\u30a8\\u30e9\\u30fc\\u304c\\u767a\\u751f\\u3057\\u307e\\u3057\\u305f';
+    }
+  } catch(e) {
+    document.getElementById('add-store-result').textContent = '\\u30cd\\u30c3\\u30c8\\u30ef\\u30fc\\u30af\\u30a8\\u30e9\\u30fc';
+  }
+});
+
+const now = new Date();
+document.getElementById('revenue-period').value =
+  `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+loadStats();
+loadStores();
+setInterval(loadStats, 60000);
+</script>
+</body>
+</html>"""

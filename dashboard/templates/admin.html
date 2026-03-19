@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>管理画面 – SSP Platform</title>
+  <title>MDM管理 – SSP Platform</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -11,7 +11,9 @@
       --bg: #ffffff; --surface: #f8fafc; --border: #e2e8f0;
       --text: #1e293b; --muted: #64748b; --accent: #6366f1;
       --green: #16a34a; --yellow: #d97706; --red: #dc2626;
-      --nav-bg: #f0fdf4; --nav-border: #bbf7d0;
+      --nav-bg: #0f172a; --nav-border: #1e293b;
+      --nav-text: #cbd5e1; --nav-active-bg: #1e3a5f; --nav-active-color: #818cf8;
+      --nav-section-label: #475569;
     }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
            background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -34,10 +36,14 @@
     nav { width: 220px; background: var(--nav-bg); border-right: 1px solid var(--nav-border);
           padding: 16px 0; flex-shrink: 0; }
     nav a { display: flex; align-items: center; gap: 10px; padding: 10px 20px;
-            font-size: 14px; color: var(--muted); transition: all .15s; }
-    nav a:hover, nav a.active { color: var(--accent); background: rgba(22,163,74,.1); }
-    nav .section-label { padding: 16px 20px 6px; font-size: 11px; color: var(--muted);
+            font-size: 14px; color: var(--nav-text); transition: all .15s; }
+    nav a:hover, nav a.active { color: var(--nav-active-color); background: var(--nav-active-bg); }
+    nav .section-label { padding: 16px 20px 6px; font-size: 11px; color: var(--nav-section-label);
                           text-transform: uppercase; letter-spacing: .05em; }
+    nav details summary { padding: 0 20px; font-size: 11px; color: var(--nav-section-label);
+                           text-transform: uppercase; letter-spacing: .05em; }
+    nav details summary::-webkit-details-marker { display: none; }
+    .nav-brand { display: flex; align-items: center; gap: 8px; padding: 8px 20px 16px; border-bottom: 1px solid var(--nav-border); margin-bottom: 4px; }
     main { flex: 1; padding: 24px; overflow-x: hidden; }
 
     /* カード */
@@ -110,6 +116,32 @@
     /* ローダー */
     .loading { color: var(--muted); font-size: 13px; padding: 20px 0; }
 
+    /* KPIヒーローカード */
+    .kpi-hero-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+    }
+    .kpi-hero-value {
+      font-size: 36px;
+      font-weight: 800;
+      color: var(--accent);
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+    .kpi-hero-label {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .kpi-hero-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
     /* アンカーリンクが固定ヘッダーに隠れないようにオフセット */
     section[id], div[id] { scroll-margin-top: 72px; }
   </style>
@@ -135,125 +167,78 @@
 
 <div class="layout">
   <nav>
-    <div class="section-label">管理メニュー</div>
-    <a href="#overview" class="active">📊 概要</a>
-    <a href="#publishers">📰 パブリッシャー一覧</a>
-    <a href="#api-guide">🔌 API連携</a>
-    <a href="/login">🔑 パブリッシャーログイン</a>
+    <div class="nav-brand">
+      <span style="font-size:20px">📱</span>
+      <span style="font-weight:700;color:#e2e8f0">SSP Platform</span>
+    </div>
 
-    <div class="section-label" style="margin-top:16px">MDM管理</div>
-    <a href="#mdm-stats">📱 MDM概要</a>
-    <a href="#store-ad-delivery">🖼 店舗別広告配信</a>
-    <a href="#dealers">🏪 代理店管理</a>
-    <a href="#campaigns">📢 キャンペーン管理</a>
+    <div class="section-label">MDM管理</div>
+    <a href="#mdm-dashboard" class="active">📊 MDMダッシュボード</a>
+    <a href="#lockscreen-analytics">🔒 ロック画面CTR</a>
+    <a href="#store-ad-delivery">🏪 店舗別広告配信</a>
+    <a href="#dealers">🏬 代理店・店舗管理</a>
+    <a href="#campaigns">📣 キャンペーン管理</a>
+    <a href="#affiliate-campaigns">🤝 アフィリエイト案件</a>
+    <a href="#creatives">🎨 クリエイティブ</a>
+    <a href="#devices">📲 デバイス管理</a>
+    <a href="#billing">💰 収益・請求</a>
+    <a href="#wifi-triggers">🌐 Wi-Fiトリガー</a>
+    <a href="#time-slots">⏱ 時間帯単価</a>
+    <a href="#experiments">🧪 A/Bテスト</a>
+    <a href="#ad-slots">📦 広告枠管理</a>
+    <a href="#analytics">📈 アナリティクス</a>
+    <a href="#consent-logs">📋 同意ログ</a>
+    <a href="#invoices">🧾 精算一覧</a>
+    <a href="#ml-pipeline">🤖 ML管理</a>
+
+    <details style="margin-top:16px">
+      <summary class="section-label" style="cursor:pointer;list-style:none">SSP管理 ▸</summary>
+      <a href="#overview">📈 RTB概要</a>
+      <a href="#publishers">📰 パブリッシャー</a>
+      <a href="#api-guide">🔗 API連携</a>
+    </details>
 
     <div class="section-label" style="margin-top:16px">DSP状況</div>
-    <div id="dsp-list" style="padding:0 20px;font-size:12px;color:var(--muted);line-height:2">
-      読み込み中...
-    </div>
+    <div id="dsp-list" style="font-size:12px;padding:0 12px;color:var(--nav-text)">接続確認中...</div>
   </nav>
 
   <main>
-    <!-- KPI -->
-    <section id="overview" style="margin-bottom:24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h2 style="font-size:15px">本日のパフォーマンス</h2>
-        <span style="font-size:12px;color:var(--muted)" id="last-updated"></span>
+    <!-- MDMダッシュボード（ファーストビュー） -->
+    <section id="mdm-dashboard" style="margin-bottom:32px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <h2 style="font-size:22px;font-weight:700;color:var(--text);margin:0">MDMダッシュボード</h2>
+          <p style="font-size:13px;color:var(--muted);margin:4px 0 0">ロック画面広告 · リアルタイム更新（30秒）</p>
+        </div>
+        <button class="btn btn-ghost" onclick="loadMdmStats()" style="font-size:12px">🔄 更新</button>
       </div>
-      <div class="kpi-grid">
-        <div class="card">
-          <div class="card-title">総インプレッション</div>
-          <div class="kpi-value" id="kpi-imp">-</div>
-        </div>
-        <div class="card">
-          <div class="card-title">フィルレート</div>
-          <div class="kpi-value" id="kpi-fill">-<span class="kpi-unit">%</span></div>
-        </div>
-        <div class="card">
-          <div class="card-title">本日収益</div>
-          <div class="kpi-value" id="kpi-rev">$<span id="kpi-rev-val">-</span></div>
-        </div>
-        <div class="card">
-          <div class="card-title">平均 eCPM</div>
-          <div class="kpi-value" id="kpi-ecpm">$<span id="kpi-ecpm-val">-</span></div>
-        </div>
-      </div>
-    </section>
 
-    <!-- グラフ -->
-    <div class="chart-row">
-      <div class="card">
-        <div class="card-title">時間帯別インプレッション（直近24h）</div>
-        <div class="chart-wrap"><canvas id="chart-imp"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="card-title">DSP別落札シェア</div>
-        <div class="chart-wrap"><canvas id="chart-dsp"></canvas></div>
-      </div>
-    </div>
-
-    <!-- パブリッシャー一覧 -->
-    <section id="publishers" class="card" style="margin-bottom:24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h2 style="font-size:15px">パブリッシャー一覧</h2>
-        <button class="btn btn-primary" onclick="showRegisterModal()">+ 新規登録</button>
-      </div>
-      <div class="table-wrap">
-        {% if publishers %}
-        <table>
-          <thead>
-            <tr>
-              <th>サイト名</th><th>ドメイン</th><th>ステータス</th>
-              <th>フロアCPM</th><th>登録日</th><th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for pub in publishers %}
-            <tr>
-              <td>{{ pub.name }}</td>
-              <td style="font-family:monospace;color:var(--muted)">{{ pub.domain }}</td>
-              <td><span class="status-{{ pub.status }}">{{ pub.status }}</span></td>
-              <td>${{ pub.floor_price }}</td>
-              <td style="color:var(--muted);font-size:12px">{{ pub.created_at.strftime('%Y-%m-%d') }}</td>
-              <td style="display:flex;gap:6px;flex-wrap:wrap">
-                {% if pub.status == 'pending' %}
-                <button class="btn btn-ghost" style="font-size:12px;color:var(--green);border-color:var(--green)"
-                  onclick="updateStatus('{{ pub.id }}', 'active')">承認</button>
-                {% elif pub.status == 'active' %}
-                <button class="btn btn-ghost" style="font-size:12px;color:var(--red);border-color:var(--red)"
-                  onclick="updateStatus('{{ pub.id }}', 'suspended')">停止</button>
-                {% elif pub.status == 'suspended' %}
-                <button class="btn btn-ghost" style="font-size:12px;color:var(--green);border-color:var(--green)"
-                  onclick="updateStatus('{{ pub.id }}', 'active')">再開</button>
-                {% endif %}
-                <button class="btn btn-ghost" style="font-size:12px"
-                  onclick="showTagModal('{{ pub.id }}', '{{ pub.name }}')">タグ取得</button>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <div style="text-align:center;padding:40px;color:var(--muted);font-size:14px">
-          まだ登録されていません。「+ 新規登録」から追加してください。
+      <!-- メインKPIグリッド -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
+        <div class="kpi-hero-card">
+          <div style="font-size:32px;margin-bottom:4px">📱</div>
+          <div class="kpi-hero-value" id="mdm-total-devices">-</div>
+          <div class="kpi-hero-label">総エンロール端末</div>
+          <div class="kpi-hero-sub" id="mdm-android-count">Android: - / iOS: -</div>
         </div>
-        {% endif %}
-      </div>
-    </section>
-
-    <!-- MDM概要 -->
-    <section id="mdm-stats" class="card" style="margin-bottom:24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h2 style="font-size:15px">MDM概要</h2>
-        <button class="btn btn-ghost" onclick="loadMdmStats()" style="font-size:12px">更新</button>
-      </div>
-      <div id="mdm-kpi-grid" class="kpi-grid">
-        <div class="card">
-          <div class="card-title">総デバイス数</div>
-          <div class="kpi-value" id="mdm-total-devices">-</div>
+        <div class="kpi-hero-card">
+          <div style="font-size:32px;margin-bottom:4px">📊</div>
+          <div class="kpi-hero-value" id="mdm-today-imp">-</div>
+          <div class="kpi-hero-label">今日のインプレッション</div>
+          <div class="kpi-hero-sub" id="mdm-today-clicks">クリック: - 件</div>
         </div>
+        <div class="kpi-hero-card" style="background:linear-gradient(135deg,#1e3a5f,#1e293b);color:#e2e8f0">
+          <div style="font-size:32px;margin-bottom:4px">💰</div>
+          <div class="kpi-hero-value" id="mdm-monthly-rev" style="color:#818cf8">¥-</div>
+          <div class="kpi-hero-label" style="color:#94a3b8">当月収益（推計）</div>
+          <div class="kpi-hero-sub" id="mdm-ctr" style="color:#64748b">CTR: -%</div>
+        </div>
+      </div>
+
+      <!-- サブKPIグリッド -->
+      <div class="kpi-grid" id="mdm-sub-kpis">
         <div class="card">
-          <div class="card-title">アクティブ</div>
+          <div class="card-title">アクティブ端末</div>
           <div class="kpi-value" id="mdm-active-devices">-</div>
         </div>
         <div class="card">
@@ -263,6 +248,10 @@
         <div class="card">
           <div class="card-title">代理店数</div>
           <div class="kpi-value" id="mdm-total-dealers">-</div>
+        </div>
+        <div class="card">
+          <div class="card-title">直近クリック</div>
+          <div class="kpi-value" id="mdm-recent-clicks">-</div>
         </div>
       </div>
     </section>
@@ -329,8 +318,311 @@
       </div>
     </section>
 
+    <!-- アフィリエイトキャンペーン管理 -->
+    <section id="affiliate-campaigns" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">アフィリエイトキャンペーン管理</h2>
+        <button class="btn btn-primary" onclick="showAffiliateCampaignModal()">+ 新規登録</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">サイレントAPKインストールや提携LPへの誘導に使うキャンペーンを登録します。</p>
+      <div class="table-wrap">
+        <div id="affiliate-campaigns-loading" class="loading">読み込み中...</div>
+        <table id="affiliate-campaigns-table" style="display:none">
+          <thead>
+            <tr>
+              <th>キャンペーン名</th>
+              <th>カテゴリ</th>
+              <th>課金モデル</th>
+              <th>CPI単価（円）</th>
+              <th>ID</th>
+            </tr>
+          </thead>
+          <tbody id="affiliate-campaigns-tbody"></tbody>
+        </table>
+        <div id="affiliate-campaigns-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">
+          登録されていません。「+ 新規登録」から追加してください。
+        </div>
+      </div>
+    </section>
+
+    <!-- クリエイティブ管理 -->
+    <section id="creatives" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h2 style="font-size:15px">クリエイティブ管理</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="creative-filter-campaign" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" onchange="loadCreatives()">
+            <option value="">すべてのキャンペーン</option>
+          </select>
+          <select id="creative-filter-status" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" onchange="loadCreatives()">
+            <option value="">すべてのステータス</option>
+            <option value="active">active</option>
+            <option value="paused">paused</option>
+          </select>
+          <button class="btn btn-primary" onclick="showCreativeModal()">+ 新規登録</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <div id="creatives-loading" class="loading">読み込み中...</div>
+        <table id="creatives-table" style="display:none">
+          <thead><tr><th>名前</th><th>タイプ</th><th>ステータス</th><th>タイトル</th><th>画像URL</th><th>作成日</th><th>操作</th></tr></thead>
+          <tbody id="creatives-tbody"></tbody>
+        </table>
+        <div id="creatives-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">クリエイティブが登録されていません。</div>
+      </div>
+    </section>
+
+    <!-- デバイス管理 -->
+    <section id="devices" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h2 style="font-size:15px">デバイス管理</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="showBroadcastModal()">📡 一括ブロードキャスト</button>
+          <button class="btn btn-ghost" style="font-size:12px" onclick="loadAndroidDevices();loadIosDevices()">更新</button>
+        </div>
+      </div>
+      <!-- タブ -->
+      <div style="display:flex;gap:4px;margin-bottom:16px">
+        <button id="tab-android" class="btn btn-primary" style="font-size:13px" onclick="switchDeviceTab('android')">🤖 Android</button>
+        <button id="tab-ios" class="btn btn-ghost" style="font-size:13px" onclick="switchDeviceTab('ios')">🍎 iOS</button>
+      </div>
+      <!-- Android一覧 -->
+      <div id="devices-android">
+        <div id="android-loading" class="loading">読み込み中...</div>
+        <table id="android-table" style="display:none">
+          <thead><tr><th>デバイスID</th><th>モデル</th><th>Androidバージョン</th><th>FCM</th><th>最終接続</th><th>操作</th></tr></thead>
+          <tbody id="android-tbody"></tbody>
+        </table>
+        <div id="android-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">Androidデバイスが登録されていません。</div>
+      </div>
+      <!-- iOS一覧 -->
+      <div id="devices-ios" style="display:none">
+        <div id="ios-loading" class="loading">読み込み中...</div>
+        <table id="ios-table" style="display:none">
+          <thead><tr><th>UDID</th><th>デバイス名</th><th>モデル</th><th>iOS</th><th>Pushトークン</th><th>最終接続</th></tr></thead>
+          <tbody id="ios-tbody"></tbody>
+        </table>
+        <div id="ios-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">iOSデバイスが登録されていません。</div>
+      </div>
+    </section>
+
+    <!-- 収益・請求レポート -->
+    <section id="billing" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">収益・請求レポート</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="billing-year" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"></select>
+          <select id="billing-month" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"></select>
+          <button class="btn btn-ghost" style="font-size:13px" onclick="loadBillingReport()">📊 取得</button>
+          <button class="btn btn-ghost" style="font-size:13px;color:var(--red);border-color:var(--red)" onclick="runSettlement()">⚡ 精算実行</button>
+        </div>
+      </div>
+
+      <!-- 全代理店サマリー -->
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">全代理店 月次サマリー</div>
+      <div id="billing-summary-loading" class="loading">年月を選択して「取得」を押してください</div>
+      <div id="billing-summary-content" style="display:none;margin-bottom:24px">
+        <table>
+          <thead><tr><th>代理店</th><th>CPI件数</th><th>収益(円)</th><th>手数料(円)</th><th>支払額(円)</th></tr></thead>
+          <tbody id="billing-summary-tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- 請求書 -->
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">請求書</div>
+      <div id="billing-invoice-content" style="margin-bottom:24px">
+        <div class="loading" style="font-size:13px">年月を選択して「取得」を押してください</div>
+      </div>
+
+      <!-- CV一覧 -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:600;color:var(--muted)">コンバージョン一覧（直近50件）</div>
+        <button class="btn btn-ghost" style="font-size:12px" onclick="loadConversions()">更新</button>
+      </div>
+      <div class="table-wrap" style="margin-bottom:24px">
+        <div id="conversions-loading" class="loading">読み込み中...</div>
+        <table id="conversions-table" style="display:none">
+          <thead><tr><th>キャンペーンID</th><th>ソース</th><th>イベント</th><th>収益(円)</th><th>日時</th></tr></thead>
+          <tbody id="conversions-tbody"></tbody>
+        </table>
+        <div id="conversions-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">CVがありません。</div>
+      </div>
+
+      <!-- CPI保留一覧 -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:600;color:var(--muted)">CPI課金 保留中</div>
+        <button class="btn btn-ghost" style="font-size:12px" onclick="loadPendingBilling()">更新</button>
+      </div>
+      <div class="table-wrap">
+        <div id="pending-loading" class="loading">読み込み中...</div>
+        <table id="pending-table" style="display:none">
+          <thead><tr><th>パッケージ名</th><th>CPI単価(円)</th><th>Postbackステータス</th><th>課金ステータス</th><th>登録日時</th></tr></thead>
+          <tbody id="pending-tbody"></tbody>
+        </table>
+        <div id="pending-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">保留中のCPI課金はありません。</div>
+      </div>
+    </section>
+
+    <!-- Wi-Fiトリガールール -->
+    <section id="wifi-triggers" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">Wi-Fiトリガールール</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadWifiTriggers()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="showWifiTriggerModal()">+ 新規登録</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">指定SSID来店時に自動アクション（プッシュ/LINE/ポイント）を実行するルールを設定します。</p>
+      <div id="wifi-triggers-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="wifi-triggers-table" style="display:none">
+          <thead><tr><th>SSID</th><th>代理店ID</th><th>アクション</th><th>クールダウン</th><th>ステータス</th></tr></thead>
+          <tbody id="wifi-triggers-tbody"></tbody>
+        </table>
+        <div id="wifi-triggers-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">ルールが登録されていません。</div>
+      </div>
+    </section>
+
+    <!-- 時間帯単価乗数 -->
+    <section id="time-slots" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">時間帯単価乗数</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadTimeSlots()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="showTimeSlotModal()">+ 追加</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">時間帯・曜日別にCPM単価の乗数（倍率）を設定します。例: 朝9〜10時 × 1.5倍。</p>
+      <div id="time-slots-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="time-slots-table" style="display:none">
+          <thead><tr><th>ラベル</th><th>開始時</th><th>終了時</th><th>曜日</th><th>乗数</th></tr></thead>
+          <tbody id="time-slots-tbody"></tbody>
+        </table>
+        <div id="time-slots-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">時間帯設定がありません。</div>
+      </div>
+    </section>
+
+    <!-- A/Bテスト管理 -->
+    <section id="experiments" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">A/Bテスト管理</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadExperiments()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="showExperimentModal()">+ 実験作成</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">クリエイティブのControl/Variantを比較し、CTR・有意差を計測します。</p>
+      <div id="experiments-loading" class="loading" style="display:none"></div>
+      <div class="table-wrap">
+        <table id="experiments-table" style="display:none">
+          <thead><tr><th>実験名</th><th>スロット</th><th>ステータス</th><th>Control CTR</th><th>Variant CTR</th><th>推奨Winner</th></tr></thead>
+          <tbody id="experiments-tbody"></tbody>
+        </table>
+        <div id="experiments-empty" style="text-align:center;padding:20px;color:var(--muted);font-size:14px">実験を作成し、IDを控えて結果確認ボタンを使用してください。</div>
+      </div>
+    </section>
+
+    <!-- MDM広告枠管理 -->
+    <section id="ad-slots" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">MDM広告枠管理</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadAdSlots()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="showAdSlotModal()">+ 広告枠追加</button>
+        </div>
+      </div>
+      <div id="ad-slots-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="ad-slots-table" style="display:none">
+          <thead><tr><th>名前</th><th>タイプ</th><th>フロアCPM(円)</th><th>ステータス</th></tr></thead>
+          <tbody id="ad-slots-tbody"></tbody>
+        </table>
+        <div id="ad-slots-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">広告枠が登録されていません。</div>
+      </div>
+    </section>
+
+    <!-- アナリティクス -->
+    <section id="analytics" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">アナリティクス</h2>
+        <button class="btn btn-ghost" onclick="loadAnalytics()" style="font-size:12px">更新</button>
+      </div>
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">スロット別インプレッション統計</div>
+      <div id="imp-stats-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap" style="margin-bottom:24px">
+        <table id="imp-stats-table" style="display:none">
+          <thead><tr><th>スロット名</th><th>タイプ</th><th>Imp</th><th>Click</th><th>CTR</th><th>推計収益(円)</th></tr></thead>
+          <tbody id="imp-stats-tbody"></tbody>
+        </table>
+      </div>
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px">クリエイティブ eCPMランキング（TOP 20）</div>
+      <div id="ecpm-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="ecpm-table" style="display:none">
+          <thead><tr><th>ID</th><th>タイトル</th><th>Imp</th><th>Click</th><th>CTR</th><th>eCPM(円)</th></tr></thead>
+          <tbody id="ecpm-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 同意ログ -->
+    <section id="consent-logs" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">同意ログ（エンロール履歴）</h2>
+        <button class="btn btn-ghost" onclick="loadConsentLogs()" style="font-size:12px">更新</button>
+      </div>
+      <div id="consent-logs-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="consent-logs-table" style="display:none">
+          <thead><tr><th>トークン</th><th>代理店ID</th><th>同意バージョン</th><th>IPアドレス</th><th>同意日時</th></tr></thead>
+          <tbody id="consent-logs-tbody"></tbody>
+        </table>
+        <div id="consent-logs-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">同意ログがありません。</div>
+      </div>
+    </section>
+
+    <!-- 精算一覧 -->
+    <section id="invoices" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">精算一覧（Invoice）</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="invoice-period" type="month" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          <button class="btn btn-ghost" style="font-size:13px" onclick="loadInvoiceList()">📄 取得</button>
+        </div>
+      </div>
+      <div id="invoices-loading" class="loading">年月を選択して「取得」を押してください</div>
+      <div class="table-wrap">
+        <table id="invoices-table" style="display:none">
+          <thead><tr><th>ID</th><th>期間</th><th>キャンペーン</th><th>Gross(円)</th><th>手数料(円)</th><th>支払額(円)</th><th>CPI件数</th><th>ステータス</th></tr></thead>
+          <tbody id="invoices-tbody"></tbody>
+        </table>
+        <div id="invoices-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">精算データがありません。</div>
+      </div>
+    </section>
+
+    <!-- MLパイプライン -->
+    <section id="ml-pipeline" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">MLパイプライン管理</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadMlModels()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="triggerMlTrain()" style="background:var(--green)">▶ モデル学習</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Two-Tower 推薦モデルの学習と管理。学習はバックグラウンドで数分かかります。</p>
+      <div id="ml-train-result" style="font-size:13px;margin-bottom:12px"></div>
+      <div id="ml-models-loading" class="loading">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="ml-models-table" style="display:none">
+          <thead><tr><th>バージョン</th><th>タイプ</th><th>Train AUC</th><th>Val AUC</th><th>サイズ(MB)</th><th>本番稼働</th><th>作成日</th></tr></thead>
+          <tbody id="ml-models-tbody"></tbody>
+        </table>
+        <div id="ml-models-empty" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px">学習済みモデルがありません。</div>
+      </div>
+    </section>
+
     <!-- API連携ガイド -->
-    <section id="api-guide" class="card">
+    <section id="api-guide" class="card" style="margin-bottom:24px">
       <h2 style="font-size:15px;margin-bottom:16px">API連携クイックスタート</h2>
       <div class="code-block"><span class="code-comment"># 1. パブリッシャー登録</span>
 curl -X POST http://localhost:8000/auth/register \
@@ -355,6 +647,93 @@ curl -X POST http://localhost:8000/api/slots \
 <span class="code-comment"># 4. Prebid.jsタグ取得</span>
 curl http://localhost:8000/api/slots/SLOT_ID/tag \
   -H "Authorization: Bearer YOUR_TOKEN"</div>
+    </section>
+
+    <!-- SSP RTB概要 -->
+    <section id="overview" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">RTB 本日のパフォーマンス</h2>
+        <span style="font-size:12px;color:var(--muted)" id="last-updated"></span>
+      </div>
+      <div class="kpi-grid">
+        <div class="card">
+          <div class="card-title">総インプレッション</div>
+          <div class="kpi-value" id="kpi-imp">-</div>
+        </div>
+        <div class="card">
+          <div class="card-title">フィルレート</div>
+          <div class="kpi-value" id="kpi-fill">-<span class="kpi-unit">%</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">本日収益</div>
+          <div class="kpi-value" id="kpi-rev">$<span id="kpi-rev-val">-</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">平均 eCPM</div>
+          <div class="kpi-value" id="kpi-ecpm">$<span id="kpi-ecpm-val">-</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SSP グラフ -->
+    <div class="chart-row">
+      <div class="card">
+        <div class="card-title">時間帯別インプレッション（直近24h）</div>
+        <div class="chart-wrap"><canvas id="chart-imp"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">DSP別落札シェア</div>
+        <div class="chart-wrap"><canvas id="chart-dsp"></canvas></div>
+      </div>
+    </div>
+
+    <!-- パブリッシャー一覧 -->
+    <section id="publishers" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">パブリッシャー一覧</h2>
+        <button class="btn btn-primary" onclick="showRegisterModal()">+ 新規登録</button>
+      </div>
+      <div class="table-wrap">
+        {% if publishers %}
+        <table>
+          <thead>
+            <tr>
+              <th>サイト名</th><th>ドメイン</th><th>ステータス</th>
+              <th>フロアCPM</th><th>登録日</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for pub in publishers %}
+            <tr>
+              <td>{{ pub.name }}</td>
+              <td style="font-family:monospace;color:var(--muted)">{{ pub.domain }}</td>
+              <td><span class="status-{{ pub.status }}">{{ pub.status }}</span></td>
+              <td>${{ pub.floor_price }}</td>
+              <td style="color:var(--muted);font-size:12px">{{ pub.created_at.strftime('%Y-%m-%d') }}</td>
+              <td style="display:flex;gap:6px;flex-wrap:wrap">
+                {% if pub.status == 'pending' %}
+                <button class="btn btn-ghost" style="font-size:12px;color:var(--green);border-color:var(--green)"
+                  onclick="updateStatus('{{ pub.id }}', 'active')">承認</button>
+                {% elif pub.status == 'active' %}
+                <button class="btn btn-ghost" style="font-size:12px;color:var(--red);border-color:var(--red)"
+                  onclick="updateStatus('{{ pub.id }}', 'suspended')">停止</button>
+                {% elif pub.status == 'suspended' %}
+                <button class="btn btn-ghost" style="font-size:12px;color:var(--green);border-color:var(--green)"
+                  onclick="updateStatus('{{ pub.id }}', 'active')">再開</button>
+                {% endif %}
+                <button class="btn btn-ghost" style="font-size:12px"
+                  onclick="showTagModal('{{ pub.id }}', '{{ pub.name }}')">タグ取得</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div style="text-align:center;padding:40px;color:var(--muted);font-size:14px">
+          まだ登録されていません。「+ 新規登録」から追加してください。
+        </div>
+        {% endif %}
+      </div>
     </section>
   </main>
 </div>
@@ -524,6 +903,209 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       </div>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">保存する</button>
       <div id="slot-targeting-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- クリエイティブ登録モーダル -->
+<div class="modal-overlay" id="creative-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('creative-modal')">&times;</span>
+    <h2>クリエイティブ登録</h2>
+    <form id="creative-form" style="display:grid;gap:12px;margin-top:8px">
+      <select name="campaign_id" id="creative-campaign-select" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+        <option value="">キャンペーンを選択...</option>
+      </select>
+      <select name="type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="image">image — 静止画</option>
+        <option value="html5">html5 — HTMLバナー</option>
+        <option value="video">video — 動画</option>
+        <option value="text">text — テキスト</option>
+      </select>
+      <input name="name" placeholder="クリエイティブ名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="title" placeholder="広告タイトル（例: 今すぐダウンロード）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="image_url" type="url" placeholder="画像URL（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <input name="click_url" type="url" placeholder="クリック先URL" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <textarea name="body" placeholder="本文テキスト（省略可）" rows="2" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;resize:vertical"></textarea>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="creative-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- デバイスコマンド送信モーダル -->
+<div class="modal-overlay" id="device-command-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('device-command-modal')">&times;</span>
+    <h2>コマンド送信</h2>
+    <p id="device-command-target" style="font-size:12px;color:var(--muted);margin-bottom:12px"></p>
+    <form id="device-command-form" style="display:grid;gap:12px;margin-top:8px">
+      <input type="hidden" id="command-device-id">
+      <select id="command-type-select" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="update_lockscreen">update_lockscreen — ロック画面更新</option>
+        <option value="show_notification">show_notification — プッシュ通知</option>
+        <option value="add_webclip">add_webclip — WebClip追加</option>
+        <option value="install_apk">install_apk — APKインストール</option>
+      </select>
+      <textarea id="command-payload" placeholder='ペイロード JSON（例: {"title":"テスト"}）' rows="4" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace;resize:vertical">{}</textarea>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">送信する</button>
+      <div id="device-command-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 一括ブロードキャストモーダル -->
+<div class="modal-overlay" id="broadcast-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('broadcast-modal')">&times;</span>
+    <h2>一括ブロードキャスト</h2>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">フィルター条件に一致する全デバイスへコマンドを一括送信します。</p>
+    <form id="broadcast-form" style="display:grid;gap:12px;margin-top:8px">
+      <select id="broadcast-command-type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="update_lockscreen">update_lockscreen — ロック画面一括更新</option>
+        <option value="show_notification">show_notification — プッシュ通知一括送信</option>
+        <option value="add_webclip">add_webclip — WebClip一括追加</option>
+      </select>
+      <select id="broadcast-platform" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="">両方（Android + iOS）</option>
+        <option value="android">Androidのみ</option>
+        <option value="ios">iOSのみ</option>
+      </select>
+      <select id="broadcast-dealer" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="">すべての代理店</option>
+      </select>
+      <select id="broadcast-age" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="">すべての年齢層</option>
+        <option value="teens">10代</option>
+        <option value="20s">20代</option>
+        <option value="30s">30代</option>
+        <option value="40s">40代以上</option>
+      </select>
+      <textarea id="broadcast-payload" placeholder='ペイロード JSON（省略可） 例: {"title":"お知らせ"}' rows="3" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace;resize:vertical">{}</textarea>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;background:var(--red)">一括送信する</button>
+      <div id="broadcast-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- アフィリエイトキャンペーン登録モーダル -->
+<div class="modal-overlay" id="affiliate-campaign-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('affiliate-campaign-modal')">&times;</span>
+    <h2>アフィリエイトキャンペーン登録</h2>
+    <form id="affiliate-campaign-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="キャンペーン名（例: 〇〇アプリ インストール）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <select name="category" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+        <option value="app">app — アプリインストール</option>
+        <option value="vpn">vpn — VPNサービス</option>
+        <option value="ec">ec — ECサイト</option>
+        <option value="finance">finance — 金融・カード</option>
+      </select>
+      <input name="destination_url" type="url" placeholder="配信先URL（例: https://play.google.com/...）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <select name="reward_type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+        <option value="cpi">CPI — インストール課金</option>
+        <option value="cps">CPS — 成果課金</option>
+        <option value="cpl">CPL — リード課金</option>
+      </select>
+      <input name="reward_amount" type="number" min="0" step="1" placeholder="CPI単価（円）例: 400" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="appsflyer_dev_key" placeholder="AppsFlyer Dev Key（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <input name="adjust_app_token" placeholder="Adjust App Token（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="affiliate-campaign-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- Wi-Fiトリガー登録モーダル -->
+<div class="modal-overlay" id="wifi-trigger-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('wifi-trigger-modal')">&times;</span>
+    <h2>Wi-Fiトリガールール登録</h2>
+    <form id="wifi-trigger-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="ssid" placeholder="Wi-Fi SSID（例: MyStore_WiFi）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="dealer_id" placeholder="代理店ID（省略可 — 省略すると全代理店対象）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <select name="action_type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="push">push — プッシュ通知</option>
+        <option value="line">line — LINEメッセージ</option>
+        <option value="point">point — ポイント付与</option>
+      </select>
+      <input name="cooldown_minutes" type="number" min="1" value="60" placeholder="クールダウン（分）例: 60" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" name="active" checked> 有効化</label>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="wifi-trigger-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 時間帯単価乗数モーダル -->
+<div class="modal-overlay" id="time-slot-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('time-slot-modal')">&times;</span>
+    <h2>時間帯単価乗数 追加</h2>
+    <form id="time-slot-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="label" placeholder="ラベル（例: 朝の通勤時間）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <input name="hour_start" type="number" min="0" max="23" placeholder="開始時（0-23）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+        <input name="hour_end" type="number" min="0" max="23" placeholder="終了時（0-23）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      </div>
+      <select name="day_of_week" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="">全曜日</option>
+        <option value="0">月曜</option>
+        <option value="1">火曜</option>
+        <option value="2">水曜</option>
+        <option value="3">木曜</option>
+        <option value="4">金曜</option>
+        <option value="5">土曜</option>
+        <option value="6">日曜</option>
+      </select>
+      <input name="multiplier" type="number" step="0.1" min="0.1" value="1.0" placeholder="乗数（例: 1.5）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">追加する</button>
+      <div id="time-slot-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- A/Bテスト作成モーダル -->
+<div class="modal-overlay" id="experiment-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('experiment-modal')">&times;</span>
+    <h2>A/Bテスト実験作成</h2>
+    <form id="experiment-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="実験名（例: ロック画面バナーA/B）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <select name="slot_type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="lockscreen">lockscreen — ロック画面</option>
+        <option value="widget">widget — ウィジェット</option>
+        <option value="push">push — プッシュ通知</option>
+      </select>
+      <input name="control_creative_id" placeholder="Control クリエイティブID（UUID）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="variant_creative_id" placeholder="Variant クリエイティブID（UUID）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <div>
+        <label style="font-size:13px;color:var(--muted)">Variant配信比率（0.1〜0.9）</label>
+        <input name="traffic_split" type="number" step="0.1" min="0.1" max="0.9" value="0.5" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;margin-top:4px;box-sizing:border-box">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">実験作成</button>
+      <div id="experiment-result" style="font-size:13px"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 広告枠登録モーダル -->
+<div class="modal-overlay" id="ad-slot-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('ad-slot-modal')">&times;</span>
+    <h2>MDM広告枠 登録</h2>
+    <form id="ad-slot-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="広告枠名（例: ロック画面フルスクリーン）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <select name="slot_type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <option value="lockscreen">lockscreen — ロック画面</option>
+        <option value="widget">widget — ウィジェット</option>
+        <option value="push">push — プッシュ通知</option>
+        <option value="appclip">appclip — App Clips</option>
+        <option value="webclip">webclip — WebClip</option>
+      </select>
+      <input name="floor_price_cpm" type="number" step="1" min="0" value="500" placeholder="フロアCPM（円）例: 500" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="ad-slot-result" style="font-size:13px"></div>
     </form>
   </div>
 </div>
@@ -897,10 +1479,21 @@ async function loadMdmStats() {
     const r = await fetch('/mdm/admin/stats', { headers: adminHeaders() });
     if (!r.ok) return;
     const d = await r.json();
+    // メインKPI
     document.getElementById('mdm-total-devices').textContent = (d.total_devices || 0).toLocaleString();
+    document.getElementById('mdm-android-count').textContent =
+      `Android: ${(d.android_devices || 0).toLocaleString()} / iOS: ${(d.ios_devices || 0).toLocaleString()}`;
+    document.getElementById('mdm-today-imp').textContent = (d.today_impressions || 0).toLocaleString();
+    document.getElementById('mdm-today-clicks').textContent = `クリック: ${(d.today_clicks || 0).toLocaleString()} 件`;
+    const monthlyRev = d.monthly_revenue_jpy || 0;
+    document.getElementById('mdm-monthly-rev').textContent = `¥${monthlyRev.toLocaleString()}`;
+    const ctr = d.ctr != null ? (d.ctr * 100).toFixed(2) : '-';
+    document.getElementById('mdm-ctr').textContent = `CTR: ${ctr}%`;
+    // サブKPI
     document.getElementById('mdm-active-devices').textContent = (d.active_devices || 0).toLocaleString();
     document.getElementById('mdm-downloaded').textContent = (d.downloaded || 0).toLocaleString();
     document.getElementById('mdm-total-dealers').textContent = (d.total_dealers || 0).toLocaleString();
+    document.getElementById('mdm-recent-clicks').textContent = (d.recent_clicks || 0).toLocaleString();
   } catch(e) {
     console.error('mdm stats error', e);
   }
@@ -1197,15 +1790,877 @@ document.getElementById('slot-targeting-form').addEventListener('submit', async 
   }
 });
 
+// ── クリエイティブ管理 ─────────────────────────────────────
+function showCreativeModal() {
+  document.getElementById('creative-result').textContent = '';
+  document.getElementById('creative-form').reset();
+  // キャンペーン選択肢をキャッシュから投入
+  const sel = document.getElementById('creative-campaign-select');
+  sel.innerHTML = '<option value="">キャンペーンを選択...</option>';
+  fetch('/mdm/admin/affiliate/campaigns', { headers: adminHeaders() })
+    .then(r => r.json()).then(list => {
+      list.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.id; o.textContent = `${c.name}`;
+        sel.appendChild(o);
+      });
+    }).catch(() => {});
+  document.getElementById('creative-modal').classList.add('open');
+}
+
+async function loadCreatives() {
+  const loading = document.getElementById('creatives-loading');
+  const table   = document.getElementById('creatives-table');
+  const empty   = document.getElementById('creatives-empty');
+  const tbody   = document.getElementById('creatives-tbody');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  // フィルター値を取得
+  const filterCampaign = document.getElementById('creative-filter-campaign').value;
+  const filterStatus   = document.getElementById('creative-filter-status').value;
+  const filterSel      = document.getElementById('creative-filter-campaign');
+  // キャンペーン一覧をフィルターに反映（初回のみ）
+  if (filterSel.options.length <= 1) {
+    fetch('/mdm/admin/affiliate/campaigns', { headers: adminHeaders() })
+      .then(r => r.json()).then(list => {
+        list.forEach(c => {
+          const o = document.createElement('option');
+          o.value = c.id; o.textContent = c.name;
+          filterSel.appendChild(o);
+        });
+      }).catch(() => {});
+  }
+  let url = '/mdm/admin/creatives';
+  const params = new URLSearchParams();
+  if (filterCampaign) params.set('campaign_id', filterCampaign);
+  if (filterStatus)   params.set('status', filterStatus);
+  if ([...params].length) url += '?' + params.toString();
+  try {
+    const res = await fetch(url, { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const list = await res.json();
+    loading.style.display = 'none';
+    if (list.length === 0) { empty.style.display = 'block'; return; }
+    tbody.innerHTML = list.map(c => {
+      const statusColor = c.status === 'active' ? 'var(--green)' : 'var(--yellow)';
+      const nextStatus  = c.status === 'active' ? 'paused' : 'active';
+      const btnLabel    = c.status === 'active' ? '停止' : '再開';
+      const imgHtml = c.image_url
+        ? `<a href="${c.image_url}" target="_blank" style="color:var(--accent);font-size:11px">画像を確認</a>`
+        : '<span style="color:var(--muted);font-size:11px">なし</span>';
+      return `<tr>
+        <td>${c.name}</td>
+        <td style="color:var(--muted)">${c.type}</td>
+        <td><span style="color:${statusColor};font-weight:600">${c.status}</span></td>
+        <td>${c.title || '-'}</td>
+        <td>${imgHtml}</td>
+        <td style="font-size:11px;color:var(--muted)">${c.created_at ? c.created_at.slice(0,10) : '-'}</td>
+        <td><button class="btn btn-ghost" style="font-size:12px" onclick="toggleCreativeStatus('${c.id}','${nextStatus}')">${btnLabel}</button></td>
+      </tr>`;
+    }).join('');
+    table.style.display = '';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+async function toggleCreativeStatus(id, status) {
+  const res = await fetch(`/mdm/admin/creatives/${id}?status=${status}`, {
+    method: 'PATCH', headers: adminHeaders(),
+  });
+  if (res.ok) loadCreatives();
+  else { const d = await res.json(); alert(d.detail || 'エラー'); }
+}
+
+document.getElementById('creative-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    campaign_id: f.campaign_id.value,
+    type:        f.type.value,
+    name:        f.name.value,
+    title:       f.title.value,
+    image_url:   f.image_url.value  || null,
+    click_url:   f.click_url.value,
+    body:        f.body.value       || null,
+  };
+  const res = await fetch('/mdm/admin/creatives', {
+    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('creative-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 登録完了！ ID: <code>${d.id}</code>`;
+    loadCreatives();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラーが発生しました';
+  }
+});
+
+// ── デバイス管理 ────────────────────────────────────────────
+function switchDeviceTab(tab) {
+  document.getElementById('devices-android').style.display = tab === 'android' ? '' : 'none';
+  document.getElementById('devices-ios').style.display     = tab === 'ios'     ? '' : 'none';
+  document.getElementById('tab-android').className = tab === 'android' ? 'btn btn-primary' : 'btn btn-ghost';
+  document.getElementById('tab-ios').className     = tab === 'ios'     ? 'btn btn-primary' : 'btn btn-ghost';
+  document.getElementById('tab-android').style.fontSize = '13px';
+  document.getElementById('tab-ios').style.fontSize = '13px';
+}
+
+async function loadAndroidDevices() {
+  const loading = document.getElementById('android-loading');
+  const table   = document.getElementById('android-table');
+  const empty   = document.getElementById('android-empty');
+  const tbody   = document.getElementById('android-tbody');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  try {
+    const res = await fetch('/mdm/admin/android/devices', { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const list = await res.json();
+    loading.style.display = 'none';
+    if (list.length === 0) { empty.style.display = 'block'; return; }
+    tbody.innerHTML = list.map(d => {
+      const fcmBadge = d.has_fcm
+        ? '<span style="color:var(--green);font-size:11px">✓ あり</span>'
+        : '<span style="color:var(--muted);font-size:11px">なし</span>';
+      const lastSeen = d.last_seen_at ? d.last_seen_at.slice(0,16).replace('T',' ') : '-';
+      return `<tr>
+        <td style="font-family:monospace;font-size:12px">${d.device_id.slice(0,8)}…</td>
+        <td>${d.model || '-'}</td>
+        <td>${d.android_version || '-'}</td>
+        <td>${fcmBadge}</td>
+        <td style="font-size:12px;color:var(--muted)">${lastSeen}</td>
+        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showCommandModal('${d.device_id}')">コマンド送信</button></td>
+      </tr>`;
+    }).join('');
+    table.style.display = '';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+async function loadIosDevices() {
+  const loading = document.getElementById('ios-loading');
+  const table   = document.getElementById('ios-table');
+  const empty   = document.getElementById('ios-empty');
+  const tbody   = document.getElementById('ios-tbody');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  try {
+    const res = await fetch('/mdm/admin/ios/devices', { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const list = await res.json();
+    loading.style.display = 'none';
+    if (list.length === 0) { empty.style.display = 'block'; return; }
+    tbody.innerHTML = list.map(d => {
+      const pushBadge = d.has_push_token
+        ? '<span style="color:var(--green);font-size:11px">✓ あり</span>'
+        : '<span style="color:var(--muted);font-size:11px">なし</span>';
+      const lastSeen = d.last_checkin_at ? d.last_checkin_at.slice(0,16).replace('T',' ') : '-';
+      return `<tr>
+        <td style="font-family:monospace;font-size:11px">${d.udid.slice(0,8)}…</td>
+        <td>${d.device_name || '-'}</td>
+        <td>${d.product_name || '-'}</td>
+        <td>${d.os_version || '-'}</td>
+        <td>${pushBadge}</td>
+        <td style="font-size:12px;color:var(--muted)">${lastSeen}</td>
+      </tr>`;
+    }).join('');
+    table.style.display = '';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+function showCommandModal(deviceId) {
+  document.getElementById('command-device-id').value = deviceId;
+  document.getElementById('device-command-target').textContent = `デバイスID: ${deviceId.slice(0,8)}…`;
+  document.getElementById('device-command-result').textContent = '';
+  document.getElementById('command-payload').value = '{}';
+  document.getElementById('device-command-modal').classList.add('open');
+}
+
+document.getElementById('device-command-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const deviceId = document.getElementById('command-device-id').value;
+  const commandType = document.getElementById('command-type-select').value;
+  let payload = {};
+  try { payload = JSON.parse(document.getElementById('command-payload').value || '{}'); }
+  catch { alert('ペイロードのJSON形式が正しくありません'); return; }
+  const res = await fetch('/mdm/admin/android/push', {
+    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ device_id: deviceId, command_type: commandType, payload, send_fcm: true }),
+  });
+  const d = await res.json();
+  const el = document.getElementById('device-command-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ キュー登録完了！ コマンドID: <code>${d.command_id}</code> | FCM送信: ${d.fcm_sent ? '成功' : '未送信'}`;
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+function showBroadcastModal() {
+  document.getElementById('broadcast-result').textContent = '';
+  // 代理店ドロップダウン
+  const sel = document.getElementById('broadcast-dealer');
+  if (sel.options.length <= 1) {
+    fetch('/mdm/admin/dealers', { headers: adminHeaders() })
+      .then(r => r.json()).then(list => {
+        (list.dealers || list || []).forEach(d => {
+          const o = document.createElement('option');
+          o.value = d.id; o.textContent = d.name;
+          sel.appendChild(o);
+        });
+      }).catch(() => {});
+  }
+  document.getElementById('broadcast-modal').classList.add('open');
+}
+
+document.getElementById('broadcast-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!confirm('選択条件に一致する全デバイスへ一括送信します。よろしいですか？')) return;
+  let payload = {};
+  try { payload = JSON.parse(document.getElementById('broadcast-payload').value || '{}'); }
+  catch { alert('ペイロードのJSON形式が正しくありません'); return; }
+  const body = {
+    command_type: document.getElementById('broadcast-command-type').value,
+    payload,
+    platform:     document.getElementById('broadcast-platform').value  || null,
+    dealer_id:    document.getElementById('broadcast-dealer').value     || null,
+    age_group:    document.getElementById('broadcast-age').value        || null,
+    send_push: true,
+  };
+  const res = await fetch('/mdm/admin/broadcast', {
+    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('broadcast-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ 完了！ Android: ${d.android_queued}台キュー / FCM: ${d.android_fcm_sent}台 | iOS: ${d.ios_queued}台キュー / APNs: ${d.ios_push_sent}台 | エラー: ${d.errors}件`;
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── 収益・請求レポート ─────────────────────────────────────
+(function initBillingYearMonth() {
+  const now = new Date();
+  const yearSel  = document.getElementById('billing-year');
+  const monthSel = document.getElementById('billing-month');
+  for (let y = now.getFullYear(); y >= now.getFullYear() - 2; y--) {
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y + '年';
+    if (y === now.getFullYear()) o.selected = true;
+    yearSel.appendChild(o);
+  }
+  for (let m = 1; m <= 12; m++) {
+    const o = document.createElement('option');
+    o.value = m; o.textContent = m + '月';
+    if (m === now.getMonth() + 1) o.selected = true;
+    monthSel.appendChild(o);
+  }
+})();
+
+async function loadBillingReport() {
+  const year  = document.getElementById('billing-year').value;
+  const month = document.getElementById('billing-month').value;
+  const period = `${year}-${String(month).padStart(2,'0')}`;
+
+  // 全代理店サマリー
+  const summaryLoading = document.getElementById('billing-summary-loading');
+  const summaryContent = document.getElementById('billing-summary-content');
+  const summaryTbody   = document.getElementById('billing-summary-tbody');
+  summaryLoading.style.display = 'block'; summaryContent.style.display = 'none';
+  summaryLoading.textContent = '読み込み中...';
+  try {
+    const res = await fetch(`/mdm/admin/affiliate/report-all?year=${year}&month=${month}`, { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    const dealers = Array.isArray(data) ? data : (data.dealers || []);
+    summaryLoading.style.display = 'none';
+    if (dealers.length === 0) {
+      summaryLoading.textContent = 'データがありません';
+      summaryLoading.style.display = 'block';
+    } else {
+      summaryTbody.innerHTML = dealers.map(d => `<tr>
+        <td>${d.dealer_name || d.dealer_id || '-'}</td>
+        <td>${(d.cpi_count || 0).toLocaleString()}</td>
+        <td>¥${(d.gross_revenue_jpy || 0).toLocaleString()}</td>
+        <td>¥${(d.platform_fee_jpy || 0).toLocaleString()}</td>
+        <td style="font-weight:600">¥${(d.net_payable_jpy || 0).toLocaleString()}</td>
+      </tr>`).join('');
+      summaryContent.style.display = '';
+    }
+  } catch(e) { summaryLoading.textContent = '読み込みエラー'; }
+
+  // 請求書
+  const invContent = document.getElementById('billing-invoice-content');
+  invContent.innerHTML = '<div class="loading">読み込み中...</div>';
+  try {
+    const res = await fetch(`/mdm/admin/billing/invoice/${period}`, { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    if (!data.invoices || data.invoices.length === 0) {
+      invContent.innerHTML = `<div style="color:var(--muted);font-size:13px">${period} の請求書データはありません。精算実行後に生成されます。</div>`;
+    } else {
+      invContent.innerHTML = `
+        <div style="display:flex;gap:16px;margin-bottom:12px">
+          <div class="card" style="flex:1;padding:12px"><div class="card-title">総収益</div><div style="font-size:20px;font-weight:700">¥${data.total_gross_jpy.toLocaleString()}</div></div>
+          <div class="card" style="flex:1;padding:12px"><div class="card-title">総CPI件数</div><div style="font-size:20px;font-weight:700">${data.total_cpi_count.toLocaleString()}件</div></div>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>キャンペーンID</th><th>gross(円)</th><th>手数料(円)</th><th>支払額(円)</th><th>CPI件数</th><th>ステータス</th></tr></thead>
+          <tbody>${data.invoices.map(inv => `<tr>
+            <td style="font-family:monospace;font-size:11px">${inv.campaign_id.slice(0,8)}…</td>
+            <td>¥${(inv.gross_revenue_jpy||0).toLocaleString()}</td>
+            <td>¥${(inv.platform_fee_jpy||0).toLocaleString()}</td>
+            <td style="font-weight:600">¥${(inv.net_payable_jpy||0).toLocaleString()}</td>
+            <td>${(inv.cpi_count||0).toLocaleString()}</td>
+            <td style="color:${inv.status==='paid'?'var(--green)':'var(--yellow)'}">${inv.status}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+    }
+  } catch(e) { invContent.innerHTML = '<div style="color:var(--muted);font-size:13px">読み込みエラー</div>'; }
+}
+
+async function loadConversions() {
+  const loading = document.getElementById('conversions-loading');
+  const table   = document.getElementById('conversions-table');
+  const empty   = document.getElementById('conversions-empty');
+  const tbody   = document.getElementById('conversions-tbody');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  try {
+    const res = await fetch('/mdm/admin/affiliate/conversions?limit=50', { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const list = await res.json();
+    loading.style.display = 'none';
+    if (list.length === 0) { empty.style.display = 'block'; return; }
+    tbody.innerHTML = list.map(c => `<tr>
+      <td style="font-family:monospace;font-size:11px">${c.campaign_id.slice(0,8)}…</td>
+      <td>${c.source}</td>
+      <td>${c.event_type}</td>
+      <td>¥${(c.revenue_jpy||0).toLocaleString()}</td>
+      <td style="font-size:12px;color:var(--muted)">${c.converted_at ? c.converted_at.slice(0,16).replace('T',' ') : '-'}</td>
+    </tr>`).join('');
+    table.style.display = '';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+async function loadPendingBilling() {
+  const loading = document.getElementById('pending-loading');
+  const table   = document.getElementById('pending-table');
+  const empty   = document.getElementById('pending-empty');
+  const tbody   = document.getElementById('pending-tbody');
+  loading.style.display = 'block'; table.style.display = 'none'; empty.style.display = 'none';
+  try {
+    const res = await fetch('/mdm/admin/billing/pending', { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const list = await res.json();
+    loading.style.display = 'none';
+    if (list.length === 0) { empty.style.display = 'block'; return; }
+    tbody.innerHTML = list.map(e => `<tr>
+      <td style="font-family:monospace;font-size:12px">${e.package_name}</td>
+      <td>¥${(e.cpi_amount||0).toLocaleString()}</td>
+      <td style="color:${e.postback_status==='success'?'var(--green)':'var(--yellow)'}">${e.postback_status}</td>
+      <td style="color:var(--yellow)">${e.billing_status}</td>
+      <td style="font-size:12px;color:var(--muted)">${e.created_at ? e.created_at.slice(0,16).replace('T',' ') : '-'}</td>
+    </tr>`).join('');
+    table.style.display = '';
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+async function runSettlement() {
+  const now = new Date();
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const period = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth()+1).padStart(2,'0')}`;
+  if (!confirm(`${period} の月次精算を実行します。よろしいですか？`)) return;
+  const res = await fetch('/mdm/admin/settlement/run', {
+    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ period_month: period }),
+  });
+  const d = await res.json();
+  if (res.ok) alert(`精算を開始しました。対象期間: ${d.period_month}`);
+  else alert(d.detail || '精算エラー');
+}
+
+// ── アフィリエイトキャンペーン ──────────────────────────────
+function showAffiliateCampaignModal() {
+  document.getElementById('affiliate-campaign-result').textContent = '';
+  document.getElementById('affiliate-campaign-form').reset();
+  document.getElementById('affiliate-campaign-modal').classList.add('open');
+}
+
+async function loadAffiliateCampaigns() {
+  const loading = document.getElementById('affiliate-campaigns-loading');
+  const table   = document.getElementById('affiliate-campaigns-table');
+  const empty   = document.getElementById('affiliate-campaigns-empty');
+  const tbody   = document.getElementById('affiliate-campaigns-tbody');
+  loading.style.display = 'block';
+  table.style.display   = 'none';
+  empty.style.display   = 'none';
+  try {
+    const res = await fetch('/mdm/admin/affiliate/campaigns', { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const campaigns = await res.json();
+    loading.style.display = 'none';
+    if (campaigns.length === 0) { empty.style.display = 'block'; return; }
+    tbody.innerHTML = campaigns.map(c => `
+      <tr>
+        <td>${c.name}</td>
+        <td style="color:var(--muted)">${c.category}</td>
+        <td style="color:var(--muted)">${c.reward_type.toUpperCase()}</td>
+        <td>¥${Number(c.reward_amount).toLocaleString()}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${c.id.slice(0,8)}…</td>
+      </tr>`).join('');
+    table.style.display = '';
+  } catch (e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+document.getElementById('affiliate-campaign-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    name:              f.name.value,
+    category:          f.category.value,
+    destination_url:   f.destination_url.value,
+    reward_type:       f.reward_type.value,
+    reward_amount:     parseFloat(f.reward_amount.value),
+    appsflyer_dev_key: f.appsflyer_dev_key.value || null,
+    adjust_app_token:  f.adjust_app_token.value  || null,
+  };
+  const res = await fetch('/mdm/admin/affiliate/campaigns', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('affiliate-campaign-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 登録完了！ ID: <code>${d.id}</code>`;
+    loadAffiliateCampaigns();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラーが発生しました';
+  }
+});
+
+// ── Wi-Fiトリガールール ────────────────────────────────────
+async function loadWifiTriggers() {
+  const loading = document.getElementById('wifi-triggers-loading');
+  const table = document.getElementById('wifi-triggers-table');
+  const empty = document.getElementById('wifi-triggers-empty');
+  loading.style.display = 'block';
+  table.style.display = 'none';
+  empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/wifi_trigger_rules', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    if (!Array.isArray(d) || !d.length) { empty.style.display = 'block'; return; }
+    document.getElementById('wifi-triggers-tbody').innerHTML = d.map(rule => `
+      <tr>
+        <td style="font-weight:600">${rule.ssid}</td>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${rule.dealer_id ? rule.dealer_id.slice(0,8)+'...' : '全代理店'}</td>
+        <td><span style="background:rgba(99,102,241,.1);color:var(--accent);padding:2px 8px;border-radius:4px;font-size:12px">${rule.action_type}</span></td>
+        <td>${rule.cooldown_minutes}分</td>
+        <td class="status-${rule.active ? 'active' : 'suspended'}">${rule.active ? '有効' : '停止'}</td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+function showWifiTriggerModal() {
+  document.getElementById('wifi-trigger-form').reset();
+  document.getElementById('wifi-trigger-result').textContent = '';
+  document.getElementById('wifi-trigger-modal').classList.add('open');
+}
+
+document.getElementById('wifi-trigger-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    ssid: f.ssid.value,
+    dealer_id: f.dealer_id.value || null,
+    action_type: f.action_type.value,
+    cooldown_minutes: parseInt(f.cooldown_minutes.value),
+    active: f.active.checked,
+    action_config: {},
+  };
+  const res = await fetch('/mdm/admin/wifi_trigger_rules', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('wifi-trigger-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ 登録完了！ SSID: ${d.ssid}`;
+    loadWifiTriggers();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── 時間帯単価乗数 ────────────────────────────────────────
+const DOW_LABELS = ['月','火','水','木','金','土','日'];
+
+async function loadTimeSlots() {
+  const loading = document.getElementById('time-slots-loading');
+  const table = document.getElementById('time-slots-table');
+  const empty = document.getElementById('time-slots-empty');
+  loading.style.display = 'block';
+  table.style.display = 'none';
+  empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/time_slots', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    const slots = d.time_slots || d;
+    if (!slots.length) { empty.style.display = 'block'; return; }
+    document.getElementById('time-slots-tbody').innerHTML = slots.map(s => `
+      <tr>
+        <td>${s.label || '-'}</td>
+        <td>${s.hour_start}:00</td>
+        <td>${s.hour_end}:00</td>
+        <td>${s.day_of_week != null ? DOW_LABELS[s.day_of_week]+'曜' : '全曜日'}</td>
+        <td><strong style="color:${s.multiplier > 1 ? 'var(--green)' : s.multiplier < 1 ? 'var(--red)' : 'var(--text)'}">×${s.multiplier.toFixed(1)}</strong></td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+function showTimeSlotModal() {
+  document.getElementById('time-slot-form').reset();
+  document.getElementById('time-slot-result').textContent = '';
+  document.getElementById('time-slot-modal').classList.add('open');
+}
+
+document.getElementById('time-slot-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const dowVal = f.day_of_week.value;
+  const body = {
+    label: f.label.value || null,
+    hour_start: parseInt(f.hour_start.value),
+    hour_end: parseInt(f.hour_end.value),
+    day_of_week: dowVal !== '' ? parseInt(dowVal) : null,
+    multiplier: parseFloat(f.multiplier.value),
+  };
+  const res = await fetch('/mdm/admin/time_slots', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('time-slot-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ 追加完了！ ID: ${d.id}`;
+    loadTimeSlots();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── A/Bテスト管理 ────────────────────────────────────────
+function loadExperiments() {
+  // 一覧取得APIは未実装のため空表示
+}
+
+function showExperimentModal() {
+  document.getElementById('experiment-form').reset();
+  document.getElementById('experiment-result').textContent = '';
+  document.getElementById('experiment-modal').classList.add('open');
+}
+
+document.getElementById('experiment-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    name: f.name.value,
+    slot_type: f.slot_type.value,
+    control_creative_id: f.control_creative_id.value,
+    variant_creative_id: f.variant_creative_id.value,
+    traffic_split: parseFloat(f.traffic_split.value),
+  };
+  const res = await fetch('/mdm/admin/experiments', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('experiment-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 実験作成完了！ ID: <code style="font-size:11px">${d.id}</code>
+      <br><a href="#" style="font-size:12px" onclick="fetchExperimentResults('${d.id}');return false">▶ 結果を表示</a>`;
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+async function fetchExperimentResults(experimentId) {
+  const res = await fetch(`/mdm/admin/experiments/${experimentId}/results`, { headers: adminHeaders() });
+  if (!res.ok) { alert('結果取得失敗: ' + res.status); return; }
+  const d = await res.json();
+  document.getElementById('experiments-empty').style.display = 'none';
+  document.getElementById('experiments-table').style.display = 'table';
+  const tbody = document.getElementById('experiments-tbody');
+  const winner = d.suggested_winner ? `<strong style="color:var(--green)">${d.suggested_winner}</strong>` : (d.significant ? '有意差あり' : '判定中');
+  const row = `<tr data-exp="${d.experiment_id}">
+    <td>${d.name}</td><td>${d.slot_type}</td><td>${d.status}</td>
+    <td>${d.control ? (d.control.ctr*100).toFixed(2)+'%' : '-'}</td>
+    <td>${d.variant ? (d.variant.ctr*100).toFixed(2)+'%' : '-'}</td>
+    <td>${winner}</td>
+  </tr>`;
+  const existing = tbody.querySelector(`tr[data-exp="${d.experiment_id}"]`);
+  if (existing) existing.outerHTML = row; else tbody.insertAdjacentHTML('beforeend', row);
+}
+
+// ── MDM広告枠管理 ────────────────────────────────────────
+async function loadAdSlots() {
+  const loading = document.getElementById('ad-slots-loading');
+  const table = document.getElementById('ad-slots-table');
+  const empty = document.getElementById('ad-slots-empty');
+  loading.style.display = 'block';
+  table.style.display = 'none';
+  empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/slots', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    if (!Array.isArray(d) || !d.length) { empty.style.display = 'block'; return; }
+    document.getElementById('ad-slots-tbody').innerHTML = d.map(s => `
+      <tr>
+        <td style="font-weight:500">${s.name}</td>
+        <td><span style="background:rgba(99,102,241,.1);color:var(--accent);padding:2px 8px;border-radius:4px;font-size:12px">${s.slot_type}</span></td>
+        <td>¥${Number(s.floor_price_cpm).toLocaleString()}</td>
+        <td class="status-${s.status === 'active' ? 'active' : 'suspended'}">${s.status}</td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+function showAdSlotModal() {
+  document.getElementById('ad-slot-form').reset();
+  document.getElementById('ad-slot-result').textContent = '';
+  document.getElementById('ad-slot-modal').classList.add('open');
+}
+
+document.getElementById('ad-slot-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    name: f.name.value,
+    slot_type: f.slot_type.value,
+    floor_price_cpm: parseFloat(f.floor_price_cpm.value),
+  };
+  const res = await fetch('/mdm/admin/slots', {
+    method: 'POST',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  const el = document.getElementById('ad-slot-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ 登録完了！ ID: ${d.id}`;
+    loadAdSlots();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+});
+
+// ── アナリティクス ────────────────────────────────────────
+async function loadAnalytics() {
+  document.getElementById('imp-stats-loading').style.display = 'block';
+  document.getElementById('imp-stats-table').style.display = 'none';
+  document.getElementById('ecpm-loading').style.display = 'block';
+  document.getElementById('ecpm-table').style.display = 'none';
+  await Promise.all([loadImpStats(), loadEcpmStats()]);
+}
+
+async function loadImpStats() {
+  try {
+    const r = await fetch('/mdm/admin/impressions/stats', { headers: adminHeaders() });
+    const d = await r.json();
+    document.getElementById('imp-stats-loading').style.display = 'none';
+    const rows = d.slots || d;
+    if (!Array.isArray(rows) || !rows.length) return;
+    document.getElementById('imp-stats-tbody').innerHTML = rows.map(s => `
+      <tr>
+        <td>${s.slot_name}</td>
+        <td style="font-size:12px;color:var(--muted)">${s.slot_type}</td>
+        <td>${(s.impressions||0).toLocaleString()}</td>
+        <td>${(s.clicks||0).toLocaleString()}</td>
+        <td>${s.ctr != null ? (s.ctr*100).toFixed(2)+'%' : '-'}</td>
+        <td>¥${Number(s.revenue_est_jpy||0).toLocaleString()}</td>
+      </tr>`).join('');
+    document.getElementById('imp-stats-table').style.display = 'table';
+  } catch(e) {
+    document.getElementById('imp-stats-loading').textContent = '読み込みエラー';
+  }
+}
+
+async function loadEcpmStats() {
+  try {
+    const r = await fetch('/mdm/admin/creatives/ecpm-stats', { headers: adminHeaders() });
+    const d = await r.json();
+    document.getElementById('ecpm-loading').style.display = 'none';
+    if (!Array.isArray(d) || !d.length) return;
+    document.getElementById('ecpm-tbody').innerHTML = d.map(c => `
+      <tr>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${c.creative_id.slice(0,8)}…</td>
+        <td>${c.title}</td>
+        <td>${(c.impressions||0).toLocaleString()}</td>
+        <td>${(c.clicks||0).toLocaleString()}</td>
+        <td>${c.ctr != null ? (c.ctr*100).toFixed(2)+'%' : '-'}</td>
+        <td><strong>¥${Number(c.ecpm||0).toLocaleString()}</strong></td>
+      </tr>`).join('');
+    document.getElementById('ecpm-table').style.display = 'table';
+  } catch(e) {
+    document.getElementById('ecpm-loading').textContent = '読み込みエラー';
+  }
+}
+
+// ── 同意ログ ──────────────────────────────────────────────
+async function loadConsentLogs() {
+  const loading = document.getElementById('consent-logs-loading');
+  const table = document.getElementById('consent-logs-table');
+  const empty = document.getElementById('consent-logs-empty');
+  loading.style.display = 'block';
+  table.style.display = 'none';
+  empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/consent-logs', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    if (!Array.isArray(d) || !d.length) { empty.style.display = 'block'; return; }
+    document.getElementById('consent-logs-tbody').innerHTML = d.map(l => `
+      <tr>
+        <td style="font-family:monospace;font-size:12px">${l.enrollment_token.slice(0,8)}…</td>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${l.dealer_id ? l.dealer_id.slice(0,8)+'...' : '-'}</td>
+        <td style="font-size:12px">${l.consent_version || '-'}</td>
+        <td style="font-size:12px;color:var(--muted)">${l.ip_address || '-'}</td>
+        <td style="font-size:12px;color:var(--muted)">${new Date(l.consented_at).toLocaleString('ja-JP')}</td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+// ── 精算一覧（Invoice） ────────────────────────────────────
+async function loadInvoiceList() {
+  const loading = document.getElementById('invoices-loading');
+  const table = document.getElementById('invoices-table');
+  const empty = document.getElementById('invoices-empty');
+  const period = document.getElementById('invoice-period').value;
+  loading.style.display = 'block';
+  loading.textContent = '読み込み中...';
+  table.style.display = 'none';
+  empty.style.display = 'none';
+  try {
+    const q = period ? `?period_month=${period}` : '';
+    const r = await fetch(`/mdm/admin/settlement/invoices${q}`, { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    const invoices = d.invoices || d;
+    if (!Array.isArray(invoices) || !invoices.length) { empty.style.display = 'block'; return; }
+    document.getElementById('invoices-tbody').innerHTML = invoices.map(inv => `
+      <tr>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${inv.id.slice(0,8)}…</td>
+        <td>${inv.period_month || '-'}</td>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${(inv.campaign_id||'').slice(0,8)}…</td>
+        <td>¥${Number(inv.gross_revenue_jpy||0).toLocaleString()}</td>
+        <td>¥${Number(inv.platform_fee_jpy||0).toLocaleString()}</td>
+        <td><strong>¥${Number(inv.net_payable_jpy||0).toLocaleString()}</strong></td>
+        <td>${inv.cpi_count||0}</td>
+        <td class="status-${inv.status === 'paid' ? 'active' : 'pending'}">${inv.status}</td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+// ── MLパイプライン ────────────────────────────────────────
+async function loadMlModels() {
+  const loading = document.getElementById('ml-models-loading');
+  const table = document.getElementById('ml-models-table');
+  const empty = document.getElementById('ml-models-empty');
+  loading.style.display = 'block';
+  table.style.display = 'none';
+  empty.style.display = 'none';
+  try {
+    const r = await fetch('/mdm/admin/ml/models', { headers: adminHeaders() });
+    const d = await r.json();
+    loading.style.display = 'none';
+    const models = d.models || d;
+    if (!Array.isArray(models) || !models.length) { empty.style.display = 'block'; return; }
+    document.getElementById('ml-models-tbody').innerHTML = models.map(m => `
+      <tr>
+        <td style="font-family:monospace;font-size:12px">${m.version}</td>
+        <td style="font-size:12px;color:var(--muted)">${m.model_type}</td>
+        <td>${m.train_auc != null ? m.train_auc.toFixed(4) : '-'}</td>
+        <td>${m.val_auc != null ? m.val_auc.toFixed(4) : '-'}</td>
+        <td>${m.tflite_size_mb != null ? m.tflite_size_mb.toFixed(1) : '-'}</td>
+        <td>${m.is_active ? '<span style="color:var(--green);font-weight:600">● 稼働中</span>' : '<span style="color:var(--muted)">停止</span>'}</td>
+        <td style="font-size:12px;color:var(--muted)">${new Date(m.created_at).toLocaleString('ja-JP')}</td>
+      </tr>`).join('');
+    table.style.display = 'table';
+  } catch(e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+async function triggerMlTrain() {
+  if (!confirm('Two-Towerモデルの学習をバックグラウンドで開始します。数分かかる場合があります。続行しますか？')) return;
+  const el = document.getElementById('ml-train-result');
+  el.style.color = 'var(--muted)';
+  el.textContent = '学習をリクエスト中...';
+  const res = await fetch('/mdm/admin/ml/train', { method: 'POST', headers: adminHeaders() });
+  const d = await res.json();
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ ${d.message || '学習を開始しました'}`;
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラー';
+  }
+}
+
 // 初期化
 checkKeyBanner();
 loadHealth();
 loadAdminStats();
 loadDealers();
 loadCampaigns();
+loadAffiliateCampaigns();
 loadMdmStats();
 loadStoreAdDelivery();
 loadLockscreenAnalytics();
+loadWifiTriggers();
+loadTimeSlots();
+loadAdSlots();
+loadAnalytics();
+loadConsentLogs();
+loadMlModels();
 setInterval(loadAdminStats, 30000);
 setInterval(loadHealth, 60000);
 </script>
