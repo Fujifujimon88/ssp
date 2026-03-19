@@ -654,6 +654,41 @@ class DealerPushLogDB(Base):
 # ── 店舗別広告配信設定 ──────────────────────────────────────────────
 
 
+class WifiTriggerRuleDB(Base):
+    """
+    Wi-Fi SSID 来店トリガールール。
+
+    SSIDに接続したデバイスに対して実行するアクションを定義する。
+    action_type: "push" | "line" | "point"
+    action_config（例）:
+      push  → {"title": "ご来店！", "body": "今日のお得情報", "url": "https://..."}
+      line  → {"message": "来店ポイント+100pt獲得！"}
+      point → {"points": 100, "reason": "来店ボーナス"}
+    """
+    __tablename__ = "wifi_trigger_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    ssid: Mapped[str] = mapped_column(String(64), index=True)
+    dealer_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("dealers.id"), nullable=True, index=True)
+    action_type: Mapped[str] = mapped_column(String(32))   # push | line | point
+    action_config: Mapped[str] = mapped_column(Text, default="{}")  # JSON
+    cooldown_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class WifiCheckinLogDB(Base):
+    """Wi-Fi SSID 来店ログ（デバイスがSSIDに接続するたびに記録）"""
+    __tablename__ = "wifi_checkin_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    ssid: Mapped[str] = mapped_column(String(64))
+    dealer_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    actions_fired: Mapped[str] = mapped_column(Text, default="[]")  # JSON: 実行したaction_typeのリスト
+    triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class StoreAdAssignmentDB(Base):
     """
     店舗（DealerDB）ごとの広告配信設定。

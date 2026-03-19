@@ -28,7 +28,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_admin_key
@@ -43,6 +43,7 @@ from db_models import (
     DspConfigDB, DspWinLogDB,
     InstallEventDB,
     MDMCommandDB, MdmAdSlotDB, MdmImpressionDB, TimeSlotMultiplierDB, UserFeatureDB, iOSDeviceDB,
+    WifiTriggerRuleDB, WifiCheckinLogDB,
 )
 from mdm.ml.features import compute_user_features
 from mdm.dsp import rtb_client
@@ -59,6 +60,7 @@ from mdm.android.commands import (
     acknowledge_command, enqueue_command, get_pending_commands, update_device_last_seen,
 )
 from mdm.android.fcm import send_command_ping, send_notification
+from mdm.android.wifi_checkin import handle_wifi_checkin
 from mdm.enrollment.mobileconfig import MDMConfig, SafariConfig, VPNConfig, WebClipConfig, generate_mobileconfig
 from mdm.nanomdm import client as nanomdm_client
 from mdm.nanomdm import commands as mdm_commands
@@ -763,6 +765,57 @@ async def list_dealers(
     rows = await db.execute(select(DealerDB).order_by(DealerDB.created_at.desc()))
     dealers = rows.scalars().all()
     return [{"id": d.id, "name": d.name, "store_code": d.store_code, "status": d.status} for d in dealers]
+
+
+class WifiTriggerRuleCreate(BaseModel):
+    ssid: str
+    dealer_id: Optional[str] = None
+    action_type: str               # push | line | point
+    action_config: dict = {}
+    cooldown_minutes: int = 60
+    active: bool = True
+
+
+@router.post("/admin/wifi_trigger_rules", summary="Wi-Fiトリガールール登録（管理者）")
+async def create_wifi_trigger_rule(
+    body: WifiTriggerRuleCreate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    rule = WifiTriggerRuleDB(
+        ssid=body.ssid,
+        dealer_id=body.dealer_id,
+        action_type=body.action_type,
+        action_config=json.dumps(body.action_config),
+        cooldown_minutes=body.cooldown_minutes,
+        active=body.active,
+    )
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    return {"id": rule.id, "ssid": rule.ssid, "action_type": rule.action_type}
+
+
+@router.get("/admin/wifi_trigger_rules", summary="Wi-Fiトリガールール一覧（管理者）")
+async def list_wifi_trigger_rules(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    rows = (await db.scalars(
+        select(WifiTriggerRuleDB).order_by(WifiTriggerRuleDB.created_at.desc())
+    )).all()
+    return [
+        {
+            "id": r.id,
+            "ssid": r.ssid,
+            "dealer_id": r.dealer_id,
+            "action_type": r.action_type,
+            "action_config": json.loads(r.action_config or "{}"),
+            "cooldown_minutes": r.cooldown_minutes,
+            "active": r.active,
+        }
+        for r in rows
+    ]
 
 
 @router.post("/admin/campaigns", summary="キャンペーン作成（管理者）")
@@ -1836,6 +1889,24 @@ async def android_command_ack(
     if not ok:
         raise HTTPException(status_code=404, detail="Command not found")
     return {"status": "ok"}
+
+
+class WifiCheckinBody(BaseModel):
+    device_id: str
+    ssid: str  # 接続したSSID（例: "SHOP_FREE_WIFI"）
+
+
+@router.post("/android/wifi_checkin", summary="Wi-Fi SSID 来店チェックイン")
+async def android_wifi_checkin(
+    body: WifiCheckinBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    DPCが特定のSSIDへの接続を検知したときに呼び出す。
+    登録済みのトリガールールに従い、プッシュ/LINE/ポイントなどを自動実行する。
+    """
+    result = await handle_wifi_checkin(body.device_id, body.ssid, db)
+    return result
 
 
 @router.get("/android/lockscreen/content", summary="ロック画面広告コンテンツ取得")
@@ -5424,6 +5495,355 @@ async def delete_store_ad_assignment(
     await db.delete(row)
     await db.commit()
     return {"ok": True}
+
+
+# ── Feature 4: 店舗ロック画面専用枠 管理API ──────────────────────────────────
+
+
+class StoreCreativeBody(BaseModel):
+    title: str
+    image_url: str
+    click_url: str
+    body: Optional[str] = None
+    slot_type: str = "lockscreen"   # lockscreen / widget
+    priority: int = 1
+    floor_cpm: float = 0.0
+    width: Optional[int] = 1080
+    height: Optional[int] = 1920
+
+
+@router.post(
+    "/admin/stores/{dealer_id}/lockscreen-creative",
+    summary="店舗ロック画面専用クリエイティブ登録",
+)
+async def create_store_lockscreen_creative(
+    dealer_id: str,
+    body: StoreCreativeBody,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """
+    店舗専用ロック画面/ウィジェット広告クリエイティブを1コールで登録する。
+    内部で AffiliateCampaignDB + CreativeDB + StoreAdAssignmentDB を作成する。
+    管理画面のみで利用可能（X-Admin-Key 必須）。
+    """
+    from db_models import StoreAdAssignmentDB  # noqa
+
+    dealer = await db.get(DealerDB, dealer_id)
+    if not dealer:
+        raise HTTPException(status_code=404, detail="dealer not found")
+
+    if body.slot_type not in ("lockscreen", "widget"):
+        raise HTTPException(status_code=422, detail="slot_type must be lockscreen or widget")
+
+    # 店舗専用キャンペーンを作成（category="store" で通常オークションから除外）
+    campaign = AffiliateCampaignDB(
+        name=f"[店舗枠] {dealer.name} - {body.title}",
+        category="store",
+        destination_url=body.click_url,
+        reward_type="store",
+        reward_amount=body.floor_cpm,
+        status="active",
+    )
+    db.add(campaign)
+    await db.flush()
+
+    # クリエイティブを作成
+    creative = CreativeDB(
+        campaign_id=campaign.id,
+        name=f"[店舗枠] {body.title}",
+        type="image",
+        title=body.title,
+        body=body.body or "",
+        image_url=body.image_url,
+        click_url=body.click_url,
+        width=body.width,
+        height=body.height,
+        status="active",
+    )
+    db.add(creative)
+    await db.flush()
+
+    # StoreAdAssignmentDB でディーラーに紐付け
+    assignment = StoreAdAssignmentDB(
+        dealer_id=dealer_id,
+        campaign_id=campaign.id,
+        priority=body.priority,
+        status="active",
+    )
+    db.add(assignment)
+    await db.commit()
+
+    logger.info(
+        f"Store lockscreen creative created | dealer={dealer_id[:8]}... "
+        f"| campaign={campaign.id[:8]}... | slot={body.slot_type}"
+    )
+    return {
+        "assignment_id": assignment.id,
+        "campaign_id": campaign.id,
+        "creative_id": creative.id,
+        "dealer_id": dealer_id,
+        "slot_type": body.slot_type,
+        "priority": assignment.priority,
+    }
+
+
+@router.patch(
+    "/admin/stores/{dealer_id}/lockscreen-creatives/{assignment_id}/status",
+    summary="店舗専用クリエイティブ アクティブ/一時停止切り替え",
+)
+async def update_store_creative_status(
+    dealer_id: str,
+    assignment_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    from db_models import StoreAdAssignmentDB  # noqa
+
+    row = await db.get(StoreAdAssignmentDB, assignment_id)
+    if not row or row.dealer_id != dealer_id:
+        raise HTTPException(status_code=404, detail="not found")
+
+    new_status = body.get("status", "")
+    if new_status not in ("active", "paused"):
+        raise HTTPException(status_code=422, detail="status must be active or paused")
+
+    row.status = new_status
+    await db.commit()
+    return {"ok": True, "assignment_id": assignment_id, "status": new_status}
+
+
+@router.get(
+    "/admin/stores/{dealer_id}/lockscreen-creatives",
+    summary="店舗専用クリエイティブ一覧",
+)
+async def list_store_lockscreen_creatives(
+    dealer_id: str,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """
+    dealer_id に登録された店舗専用クリエイティブ（category=store）の一覧を返す。
+    """
+    from db_models import StoreAdAssignmentDB  # noqa
+
+    rows = (await db.scalars(
+        select(StoreAdAssignmentDB)
+        .where(
+            StoreAdAssignmentDB.dealer_id == dealer_id,
+        )
+        .order_by(StoreAdAssignmentDB.priority)
+    )).all()
+
+    result = []
+    for r in rows:
+        campaign = await db.get(AffiliateCampaignDB, r.campaign_id)
+        if not campaign or campaign.category != "store":
+            continue
+        creative = await db.scalar(
+            select(CreativeDB)
+            .where(CreativeDB.campaign_id == r.campaign_id, CreativeDB.status == "active")
+            .order_by(CreativeDB.created_at.desc())
+            .limit(1)
+        )
+        result.append({
+            "assignment_id": r.id,
+            "campaign_id": r.campaign_id,
+            "priority": r.priority,
+            "status": r.status,
+            "title": creative.title if creative else None,
+            "image_url": creative.image_url if creative else None,
+            "click_url": creative.click_url if creative else None,
+            "creative_id": creative.id if creative else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {"dealer_id": dealer_id, "creatives": result}
+
+
+# ── Feature 6: iOS ウィジェット広告 管理API ───────────────────────────────
+
+
+class IosWidgetCreativeBody(BaseModel):
+    title: str
+    image_url: str
+    click_url: str
+    body: Optional[str] = None
+
+
+@router.post(
+    "/admin/ios/widget/creative",
+    summary="iOS ウィジェット広告クリエイティブ登録",
+)
+async def create_ios_widget_creative(
+    body: IosWidgetCreativeBody,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """
+    iOS ホーム画面/ロック画面ウィジェット向けクリエイティブを登録する。
+    登録したクリエイティブは GET /mdm/ios/widget_content/{device_id} で自動配信される。
+    管理画面のみで利用可能（X-Admin-Key 必須）。
+    """
+    # iOS ウィジェット用キャンペーン
+    campaign = AffiliateCampaignDB(
+        name=f"[iOSウィジェット] {body.title}",
+        category="ios_widget",
+        destination_url=body.click_url,
+        reward_type="cpc",
+        reward_amount=0.0,
+        status="active",
+    )
+    db.add(campaign)
+    await db.flush()
+
+    creative = CreativeDB(
+        campaign_id=campaign.id,
+        name=f"[iOSウィジェット] {body.title}",
+        type="image",
+        title=body.title,
+        body=body.body or "",
+        image_url=body.image_url,
+        click_url=body.click_url,
+        width=360,
+        height=169,   # rectangular widget サイズ
+        status="active",
+    )
+    db.add(creative)
+    await db.commit()
+
+    logger.info(f"iOS widget creative created | campaign={campaign.id[:8]}...")
+    return {
+        "campaign_id": campaign.id,
+        "creative_id": creative.id,
+        "title": body.title,
+        "image_url": body.image_url,
+    }
+
+
+@router.get(
+    "/admin/ios/widget/stats",
+    summary="iOS ウィジェット広告統計",
+)
+async def ios_widget_stats(
+    days: int = Query(30, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """
+    webclip_ios スロットのインプレッション統計を返す。
+    管理画面のみで利用可能。
+    """
+    from datetime import timedelta
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    slot = await db.scalar(
+        select(MdmAdSlotDB).where(
+            MdmAdSlotDB.slot_type == "webclip_ios",
+            MdmAdSlotDB.status == "active",
+        ).limit(1)
+    )
+
+    imp_q = select(func.count(MdmImpressionDB.id)).where(
+        MdmImpressionDB.created_at >= since,
+    )
+    if slot:
+        imp_q = imp_q.where(MdmImpressionDB.slot_id == slot.id)
+
+    total_imp = await db.scalar(imp_q) or 0
+
+    click_q = select(func.count(MdmImpressionDB.id)).where(
+        MdmImpressionDB.created_at >= since,
+        MdmImpressionDB.clicked.is_(True),
+    )
+    if slot:
+        click_q = click_q.where(MdmImpressionDB.slot_id == slot.id)
+
+    total_clicks = await db.scalar(click_q) or 0
+
+    ctr = round(total_clicks / total_imp, 4) if total_imp > 0 else 0.0
+
+    # クリエイティブ別集計 (上位10件)
+    cr_rows = await db.execute(
+        select(
+            MdmImpressionDB.creative_id,
+            func.count(MdmImpressionDB.id).label("impressions"),
+            func.sum(func.cast(MdmImpressionDB.clicked, Integer)).label("clicks"),
+        )
+        .where(MdmImpressionDB.created_at >= since)
+        .group_by(MdmImpressionDB.creative_id)
+        .order_by(func.count(MdmImpressionDB.id).desc())
+        .limit(10)
+    )
+    top_creatives = []
+    for row in cr_rows.all():
+        cr = await db.get(CreativeDB, row.creative_id)
+        top_creatives.append({
+            "creative_id": row.creative_id,
+            "title": cr.title if cr else None,
+            "image_url": cr.image_url if cr else None,
+            "impressions": row.impressions,
+            "clicks": int(row.clicks or 0),
+            "ctr": round(int(row.clicks or 0) / row.impressions, 4) if row.impressions > 0 else 0.0,
+        })
+
+    return {
+        "period_days": days,
+        "total_impressions": total_imp,
+        "total_clicks": total_clicks,
+        "ctr": ctr,
+        "top_creatives": top_creatives,
+    }
+
+
+@router.get(
+    "/admin/ios/widget/preview",
+    summary="iOS ウィジェット配信プレビュー（ドライラン）",
+)
+async def ios_widget_preview(
+    token: Optional[str] = Query(None, description="enrollment_token（省略可）"),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """
+    実際にデバイスへ配信される前に、どのクリエイティブが選ばれるかをプレビューする。
+    インプレッションは記録しない（ドライランモード）。
+    管理画面のみで利用可能。
+    """
+    from mdm.creative.selector import select_creative  # noqa
+
+    # ドライラン: select_creative は実際にインプレッションを記録するため
+    # DB を直接クエリしてプレビューを構築する
+    q = (
+        select(CreativeDB, AffiliateCampaignDB)
+        .join(AffiliateCampaignDB, CreativeDB.campaign_id == AffiliateCampaignDB.id)
+        .where(
+            CreativeDB.status == "active",
+            AffiliateCampaignDB.status == "active",
+        )
+        .order_by(AffiliateCampaignDB.reward_amount.desc())
+        .limit(3)
+    )
+    rows = (await db.execute(q)).all()
+
+    items = []
+    for creative, campaign in rows:
+        items.append({
+            "creative_id": creative.id,
+            "campaign_id": campaign.id,
+            "title": creative.title,
+            "image_url": creative.image_url,
+            "click_url": creative.click_url,
+            "category": campaign.category,
+            "reward_amount": campaign.reward_amount,
+        })
+
+    return {
+        "note": "dry_run — impressions are NOT recorded",
+        "enrollment_token": token,
+        "preview_items": items,
+    }
 
 
 @router.get("/admin/campaigns-for-assignment", summary="広告割り当て用キャンペーン一覧")

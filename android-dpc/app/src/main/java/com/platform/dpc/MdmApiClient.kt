@@ -240,6 +240,29 @@ object MdmApiClient {
 
     // ── プレイアブル広告ゲームイベント報告（ADT-02）─────────────────
 
+    // ── Wi-Fi SSID 来店チェックイン（WifiCheckinWorker から呼ぶ）─────────
+
+    /**
+     * デバイスが特定のSSIDに接続したことをサーバーへ報告する。
+     * サーバー側の wifi_trigger_rules に従い push / LINE / point が自動実行される。
+     */
+    fun reportWifiCheckin(deviceId: String, ssid: String): Boolean {
+        val body = JSONObject().apply {
+            put("device_id", deviceId)
+            put("ssid", ssid)
+        }
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/mdm/android/wifi_checkin")
+                .post(body.toString().toRequestBody(JSON_TYPE))
+                .build()
+            http.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            android.util.Log.w("MdmApiClient", "reportWifiCheckin failed: $e")
+            false
+        }
+    }
+
     fun reportGameEvent(
         event: String,
         impressionId: String,

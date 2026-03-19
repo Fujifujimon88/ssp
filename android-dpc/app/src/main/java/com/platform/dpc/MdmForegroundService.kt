@@ -7,6 +7,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -24,6 +29,7 @@ import androidx.core.app.ServiceCompat
 class MdmForegroundService : Service() {
 
     private var screenOnReceiver: ScreenOnReceiver? = null
+    private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -38,6 +44,9 @@ class MdmForegroundService : Service() {
             Log.i(TAG, "ScreenOnReceiver registered")
         }
 
+        // Wi-Fi SSID 来店トリガー：Wi-Fi接続イベントを監視
+        registerWifiCallback()
+
         // WorkManagerジョブを確認・起動
         CommandPoller.schedule(this)
         PrefetchWorker.schedule(this)
@@ -51,7 +60,41 @@ class MdmForegroundService : Service() {
             unregisterReceiver(it)
             screenOnReceiver = null
         }
+        wifiNetworkCallback?.let {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(it)
+            wifiNetworkCallback = null
+        }
         Log.i(TAG, "MdmForegroundService stopped")
+    }
+
+    /**
+     * Wi-Fi接続を検知してSSIDを報告する。
+     * NetworkCallback は Android 8+ でフォアグラウンドサービス内から登録可能。
+     */
+    private fun registerWifiCallback() {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val wifiManager = applicationContext.getSystemService(WifiManager::class.java)
+                    ?: return
+                @Suppress("DEPRECATION")
+                val rawSsid = wifiManager.connectionInfo?.ssid ?: return
+                // Android はSSIDを "<SSID名>" のようにクォートで返す
+                val ssid = rawSsid.removeSurrounding("\"")
+                if (ssid.isBlank() || ssid == "<unknown ssid>") return
+
+                Log.i(TAG, "Wi-Fi connected: ssid=$ssid")
+                WifiCheckinWorker.enqueue(applicationContext, ssid)
+            }
+        }
+
+        cm.registerNetworkCallback(request, callback)
+        wifiNetworkCallback = callback
+        Log.i(TAG, "WifiNetworkCallback registered")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
