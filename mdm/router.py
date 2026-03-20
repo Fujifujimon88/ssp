@@ -416,7 +416,7 @@ PORTAL_HTML = """<!DOCTYPE html>
         btn.textContent = "同意してダウンロード";
         btn.classList.remove("btn-disabled");
         btn.classList.add("btn-primary");
-        alert("エラーが発生しました。もう一度お試しください。\n(" + err.message + ")");
+        alert("エラーが発生しました。もう一度お試しください。\\n(" + err.message + ")");
       }}
       return false;
     }}
@@ -462,7 +462,7 @@ PORTAL_HTML = """<!DOCTYPE html>
         btn.textContent = "同意してセットアップ";
         btn.classList.remove("btn-disabled");
         btn.classList.add("btn-primary");
-        alert("エラーが発生しました。もう一度お試しください。\n(" + err.message + ")");
+        alert("エラーが発生しました。もう一度お試しください。\\n(" + err.message + ")");
       }}
       return false;
     }}
