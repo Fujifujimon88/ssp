@@ -2181,6 +2181,7 @@ document.getElementById('slot-targeting-form').addEventListener('submit', async 
 function showCreativeModal() {
   document.getElementById('creative-result').textContent = '';
   document.getElementById('creative-form').reset();
+  toggleVideoFields();  // リセット後に video-fields の表示状態を同期
   // キャンペーン選択肢をキャッシュから投入
   const sel = document.getElementById('creative-campaign-select');
   sel.innerHTML = '<option value="">キャンペーンを選択...</option>';
