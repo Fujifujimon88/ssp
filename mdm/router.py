@@ -500,7 +500,10 @@ async def re_enroll(
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
         from mdm.enrollment.mobileconfig import generate_mobileconfig
-        mobileconfig_data = generate_mobileconfig(campaign, token)
+        mobileconfig_data = generate_mobileconfig(
+            profile_name=campaign.name,
+            enrollment_token=token,
+        )
         device.re_enroll_count = (device.re_enroll_count or 0) + 1
         await db.commit()
         return Response(
@@ -578,7 +581,10 @@ async def admin_restore_profile(
             campaign = await db.scalar(select(CampaignDB).where(CampaignDB.id == portal_device.campaign_id))
             if campaign:
                 from mdm.enrollment.mobileconfig import generate_mobileconfig
-                mobileconfig_data = generate_mobileconfig(campaign, ios_dev.enrollment_token)
+                mobileconfig_data = generate_mobileconfig(
+                    profile_name=campaign.name,
+                    enrollment_token=ios_dev.enrollment_token,
+                )
                 install_cmd = mdm_commands.install_configuration_profile(mobileconfig_data)
                 await nanomdm_client.push_command(device_id, install_cmd)
                 if ios_dev.push_token and ios_dev.push_magic and ios_dev.topic:
@@ -635,7 +641,10 @@ async def _bulk_restore_task(udids: list[str]):
                 if not campaign:
                     continue
                 from mdm.enrollment.mobileconfig import generate_mobileconfig
-                mobileconfig_data = generate_mobileconfig(campaign, ios_dev.enrollment_token)
+                mobileconfig_data = generate_mobileconfig(
+                    profile_name=campaign.name,
+                    enrollment_token=ios_dev.enrollment_token,
+                )
                 install_cmd = mdm_commands.install_configuration_profile(mobileconfig_data)
                 try:
                     await nanomdm_client.push_command(udid, install_cmd)
@@ -3434,7 +3443,10 @@ async def ios_profile_list_result(request: Request, db: AsyncSession = Depends(g
             )
             if campaign:
                 from mdm.enrollment.mobileconfig import generate_mobileconfig
-                mobileconfig_data = generate_mobileconfig(campaign, ios_dev.enrollment_token)
+                mobileconfig_data = generate_mobileconfig(
+                    profile_name=campaign.name,
+                    enrollment_token=ios_dev.enrollment_token,
+                )
                 install_cmd = mdm_commands.install_configuration_profile(mobileconfig_data)
                 await nanomdm_client.push_command(udid, install_cmd)
                 if ios_dev.push_token and ios_dev.push_magic and ios_dev.topic:
@@ -3605,7 +3617,7 @@ async def list_ios_devices(
             "status": d.status,
             "has_push_token": bool(d.push_token),
             "last_checkin_at": d.last_checkin_at.isoformat() if d.last_checkin_at else None,
-            "enrolled_at": d.enrolled_at.isoformat(),
+            "enrolled_at": d.enrolled_at.isoformat() if d.enrolled_at else None,
         }
         for d in devices
     ]

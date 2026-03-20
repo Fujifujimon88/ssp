@@ -278,7 +278,7 @@ async def login_page(request: Request):
 # ── パブリッシャーポータル（要JWT）─────────────────────────────
 
 @app.get("/dashboard", response_class=HTMLResponse, summary="パブリッシャーポータル")
-async def dashboard(request: Request, _: HTTPBasicCredentials = Depends(_require_basic_auth)):
+async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "version": APP_VERSION})
 
 
