@@ -1104,6 +1104,9 @@ async def dealer_detail(
                     "dealer_id": s.id,
                     "dealer_name": s.name,
                     "store_code": s.store_code,
+                    "user_count": sr["enrolled_devices"],
+                    "clicks": sr["clicks"],
+                    "installs": sr["installs"],
                     "cv_count": sr["conversions"],
                     "revenue_jpy": sr["revenue_jpy"],
                     "dealer_share_jpy": sr["dealer_share_jpy"],
@@ -1453,6 +1456,8 @@ async def affiliate_click(
     campaign_id: str,
     token: Optional[str] = Query(None),    # enrollment_token（iOS/Web用）
     device_id: Optional[str] = Query(None),  # Android ID = ASP UserID
+    nwclkid: Optional[str] = Query(None),  # ASPから渡されるネットワーククリックID
+    nwsiteid: Optional[str] = Query(None),  # ASPから渡されるネットワークサイトID
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1521,7 +1526,8 @@ async def affiliate_click(
             user_id=user_token or device_id or "",
             site_code=site_code,
             campaign_id=campaign_id,
-            click_id=click.id,
+            nwclkid=nwclkid or "",
+            nwsiteid=nwsiteid or "",
             destination_url=campaign.destination_url or "",
         )
         return RedirectResponse(url=redirect_url, status_code=302)
@@ -1562,7 +1568,7 @@ async def appsflyer_postback(request: Request, db: AsyncSession = Depends(get_db
 
     conversion = AffiliateConversionDB(
         click_token=click_token,
-        campaign_id=campaign.id if campaign else "unknown",
+        campaign_id=campaign.id if campaign else None,
         source="appsflyer",
         event_type=body.get("event_name", "install"),
         revenue_jpy=float(campaign.reward_amount if campaign else 0),
@@ -1602,7 +1608,7 @@ async def adjust_postback(request: Request, db: AsyncSession = Depends(get_db)):
 
     conversion = AffiliateConversionDB(
         click_token=click_token,
-        campaign_id=body.get("app_token", "unknown"),
+        campaign_id=body.get("app_token") or None,
         source="adjust",
         event_type=body.get("event", "install"),
         raw_payload=json.dumps(body)[:2000],
@@ -1736,6 +1742,112 @@ async def _award_points(db: AsyncSession, conversion: AffiliateConversionDB) -> 
     )
 
 
+@router.get("/affiliate/cv", summary="汎用ASPポストバック受信（SESSIONID=click_token方式）")
+async def asp_cv_postback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    ASPからのCV通知を受信する汎用エンドポイント（Ruby api/cv 相当）。
+
+    ASP管理画面に登録するポストバックURL:
+        https://{domain}/mdm/affiliate/cv?id=SESSIONID
+        （SESSIONID はtracking_urlで渡したclick_token）
+
+    id パラメータ（SESSIONID / click_token）で AffiliateClickDB を照合し、
+    ASP別パラメータから source を自動判定してCV記録する。
+
+    source 自動判定:
+      install パラメータあり → skyflag
+      attestation_flag パラメータあり → janet
+      それ以外 → smaad / a8（即approved）
+    """
+    params = dict(request.query_params)
+    click_token = params.get("id")
+    if not click_token:
+        logger.warning("asp_cv_postback: id (click_token) missing")
+        return {"status": "ok"}
+
+    # source 自動判定
+    if "install" in params:
+        source = "skyflag"
+    elif "attestation_flag" in params:
+        source = "janet"
+    elif "suid" in params:
+        source = "skyflag"
+    else:
+        source = "smaad"
+
+    normalized = _normalize_asp_params(source, params)
+    revenue = normalized["revenue"]
+    action_id = normalized["action_id"]
+    attestation_status = normalized["attestation_status"]
+
+    # click_token で AffiliateClickDB を照合
+    click = await db.scalar(
+        select(AffiliateClickDB).where(AffiliateClickDB.click_token == click_token)
+    )
+
+    # asp_action_id がある場合は冪等性チェック
+    if action_id:
+        existing = await db.scalar(
+            select(AffiliateConversionDB).where(
+                AffiliateConversionDB.asp_action_id == action_id,
+                AffiliateConversionDB.source == source,
+            )
+        )
+        if existing:
+            if existing.attestation_status != "approved" and attestation_status == "approved":
+                existing.attestation_status = "approved"
+                await db.flush()
+                await _award_points(db, existing)
+                await db.commit()
+                logger.info(f"{source} cv phase2 approved | action={action_id}")
+            else:
+                logger.info(f"{source} cv duplicate skipped | action={action_id}")
+            return {"status": "ok"}
+
+    # click_token による重複チェック（action_idなし ASP用）
+    if not action_id and click:
+        existing = await db.scalar(
+            select(AffiliateConversionDB).where(
+                AffiliateConversionDB.click_token == click_token,
+                AffiliateConversionDB.source == source,
+            )
+        )
+        if existing:
+            logger.info(f"{source} cv duplicate skipped | click_token={click_token[:8]}...")
+            return {"status": "ok"}
+
+    user_token = (normalized.get("user_token") or
+                  (click.enrollment_token if click else None) or "")
+
+    conversion = AffiliateConversionDB(
+        click_token=click_token,
+        campaign_id=click.campaign_id if click else None,
+        source=source,
+        event_type="install",
+        revenue_jpy=revenue,
+        raw_payload=json.dumps(params)[:2000],
+        attestation_status=attestation_status,
+        asp_action_id=action_id,
+        user_token=user_token,
+    )
+    db.add(conversion)
+
+    if click:
+        click.converted = True
+
+    await db.flush()
+    await _award_points(db, conversion)
+    await db.commit()
+    logger.info(
+        f"{source} cv received | click_token={click_token[:8]}... "
+        f"| revenue={revenue} | action={action_id} | status={attestation_status}"
+    )
+    return {"status": "ok"}
+
+
 @router.get("/affiliate/postback/{source}", summary="ASP S2Sポストバック受信（JANet / SKYFLAG / smaad / A8.net 共通）")
 async def asp_postback(
     source: str,
@@ -1808,7 +1920,7 @@ async def asp_postback(
 
     conversion = AffiliateConversionDB(
         click_token=click.click_token if click else None,
-        campaign_id=click.campaign_id if click else "unknown",
+        campaign_id=click.campaign_id if click else None,
         source=source,
         event_type="install",
         revenue_jpy=revenue,
@@ -1879,12 +1991,36 @@ async def create_affiliate_campaign(
 
 @router.get("/admin/affiliate/campaigns", summary="アフィリエイト案件一覧（管理者）")
 async def list_affiliate_campaigns(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_admin_key),
 ):
     rows = await db.execute(select(AffiliateCampaignDB).order_by(AffiliateCampaignDB.created_at.desc()))
     campaigns = rows.scalars().all()
-    return [{"id": c.id, "name": c.name, "category": c.category, "reward_type": c.reward_type, "reward_amount": c.reward_amount} for c in campaigns]
+    base = str(request.base_url).rstrip("/")
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "category": c.category,
+            "reward_type": c.reward_type,
+            "reward_amount": c.reward_amount,
+            "janet_media_id": c.janet_media_id,
+            "enable_points": c.enable_points,
+            "point_rate": c.point_rate,
+            "tracking_url": c.tracking_url,
+            "click_url_template": c.click_url_template,
+            # ASP管理画面に登録するポストバックURL
+            "postback_url": f"{base}/mdm/affiliate/cv?id=SESSIONID",
+            # クリックURL例（JANet はパス形式、それ以外は tracking_url / click_url_template を使用）
+            "click_url_example": (
+                f"https://click.j-a-net.jp/{c.janet_media_id}/{c.janet_original_id}/{{user_token}}"
+                if c.janet_media_id and c.janet_original_id
+                else build_tracked_url(c.id, "EXAMPLE_TOKEN", base)
+            ),
+        }
+        for c in campaigns
+    ]
 
 
 # ── BKD-10: Advertiser Self-Serve Portal API ──────────────────
@@ -3857,7 +3993,7 @@ async def agencies_monthly_report(
 
     # 店舗をagency_idでグループ化
     agency_totals = defaultdict(lambda: {
-        "clicks": 0, "conversions": 0, "revenue_jpy": 0.0, "dealer_share_jpy": 0.0,
+        "clicks": 0, "installs": 0, "conversions": 0, "revenue_jpy": 0.0, "dealer_share_jpy": 0.0,
         "store_count": 0, "stores": [],
     })
 
@@ -3870,6 +4006,7 @@ async def agencies_monthly_report(
         agency_id = dealer_agency.get(report["dealer_id"])
         t = agency_totals[agency_id]
         t["clicks"] += report.get("clicks", 0)
+        t["installs"] += report.get("installs", 0)
         t["conversions"] += report.get("conversions", 0)
         t["revenue_jpy"] += report.get("revenue_jpy", 0.0)
         t["dealer_share_jpy"] += report.get("dealer_share_jpy", 0.0)
@@ -3880,6 +4017,7 @@ async def agencies_monthly_report(
             "store_code": report["store_code"],
             "login_id": dealer_login.get(report["dealer_id"], ""),
             "clicks": report.get("clicks", 0),
+            "installs": report.get("installs", 0),
             "conversions": report.get("conversions", 0),
             "revenue_jpy": report.get("revenue_jpy", 0.0),
             "dealer_share_jpy": report.get("dealer_share_jpy", 0.0),
@@ -3894,6 +4032,7 @@ async def agencies_monthly_report(
             "agency_name": ag.name,
             "store_count": t["store_count"],
             "clicks": t["clicks"],
+            "installs": t["installs"],
             "conversions": t["conversions"],
             "revenue_jpy": round(t["revenue_jpy"], 2),
             "dealer_share_jpy": round(t["dealer_share_jpy"], 2),
@@ -3909,6 +4048,7 @@ async def agencies_monthly_report(
             "agency_name": "（未所属）",
             "store_count": unassigned["store_count"],
             "clicks": unassigned["clicks"],
+            "installs": unassigned["installs"],
             "conversions": unassigned["conversions"],
             "revenue_jpy": round(unassigned["revenue_jpy"], 2),
             "dealer_share_jpy": round(unassigned["dealer_share_jpy"], 2),
@@ -7708,10 +7848,16 @@ async def agency_revenue(
         result.append({
             "store_name": dealer.name,
             "store_code": dealer.store_code,
+            "user_count": affiliate_report.get("enrolled_devices", 0) if affiliate_report else 0,
             "impressions": r.impressions or 0,
             "clicks": int(r.clicks or 0),
             "revenue_jpy": int((r.revenue or 0) / 1000),
             "dealer_share_jpy": dealer_share,
+            # アフィリエイト計測指標
+            "affiliate_clicks": affiliate_report.get("clicks", 0) if affiliate_report else 0,
+            "installs": affiliate_report.get("installs", 0) if affiliate_report else 0,
+            "conversions": affiliate_report.get("conversions", 0) if affiliate_report else 0,
+            "affiliate_revenue_jpy": affiliate_report.get("revenue_jpy", 0.0) if affiliate_report else 0.0,
         })
 
     gross = sum(r["revenue_jpy"] for r in result)

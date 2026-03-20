@@ -183,10 +183,17 @@
         </div>
         <table id="revenue-table">
           <thead>
-            <tr><th>店舗名</th><th>IMP</th><th>クリック</th><th>収益</th><th>代理店取り分</th></tr>
+            <tr>
+              <th>店舗名</th>
+              <th>ユーザー数</th>
+              <th>獲得金額</th>
+              <th>クリック数</th>
+              <th>インストール数</th>
+              <th>成果発生数</th>
+            </tr>
           </thead>
           <tbody id="revenue-tbody">
-            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">月を選択してください</td></tr>
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">月を選択してください</td></tr>
           </tbody>
         </table>
       </div>
@@ -302,13 +309,14 @@ async function loadRevenue() {
     // テーブル
     document.getElementById('revenue-tbody').innerHTML = d.stores.map(s => `
       <tr>
-        <td>${s.store_name}</td>
-        <td>${fmt(s.impressions)}</td>
-        <td>${fmt(s.clicks)}</td>
-        <td style="font-weight:600;color:var(--accent)">${fmtYen(s.revenue_jpy)}</td>
-        <td style="font-weight:600;color:var(--green)">${fmtYen(s.dealer_share_jpy || 0)}</td>
+        <td style="font-weight:600">${s.store_name}</td>
+        <td>${fmt(s.user_count || 0)}</td>
+        <td style="font-weight:600;color:var(--accent)">${fmtYen(s.affiliate_revenue_jpy || s.revenue_jpy || 0)}</td>
+        <td>${fmt(s.affiliate_clicks || 0)}</td>
+        <td>${fmt(s.installs || 0)}</td>
+        <td>${fmt(s.conversions || 0)}</td>
       </tr>
-    `).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">データなし</td></tr>';
+    `).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted)">データなし</td></tr>';
   } catch(e) { console.error(e); }
 }
 

@@ -146,7 +146,7 @@ async def get_dealer_monthly_report(
         .where(DeviceDB.dealer_id == dealer_id)
     )
 
-    # クリック数（期間内）
+    # クリック数（期間内 全体）
     clicks = await db.scalar(
         select(func.count(AffiliateClickDB.id))
         .where(
@@ -155,6 +155,23 @@ async def get_dealer_monthly_report(
             AffiliateClickDB.clicked_at <= end,
         )
     )
+
+    # クリック数（キャンペーン別）
+    click_rows = await db.execute(
+        select(
+            AffiliateClickDB.campaign_id,
+            func.count(AffiliateClickDB.id).label("click_count"),
+        )
+        .where(
+            AffiliateClickDB.dealer_id == dealer_id,
+            AffiliateClickDB.clicked_at >= start,
+            AffiliateClickDB.clicked_at <= end,
+        )
+        .group_by(AffiliateClickDB.campaign_id)
+    )
+    clicks_by_campaign: dict[str, int] = {
+        row.campaign_id: row.click_count for row in click_rows.all()
+    }
 
     # CV数と収益（クリックのdealer_idから逆引き）
     cv_rows = await db.execute(
@@ -178,22 +195,32 @@ async def get_dealer_monthly_report(
     total_revenue = 0.0
     total_dealer_share = 0.0
     total_cv = 0
+    total_installs = 0
     for row in cv_rows.all():
         campaign = await db.get(AffiliateCampaignDB, row.campaign_id)
         rev = float(row.revenue or 0)
         dealer_rate = float(getattr(campaign, "dealer_revenue_rate", 0) or 0)
         dealer_share = round(rev * dealer_rate / 100, 2) if dealer_rate > 0 else 0.0
+        reward_amount = float(getattr(campaign, "reward_amount", 0) or 0)
+        reward_type = campaign.reward_type if campaign else "?"
+        # CPI案件のCV = インストール数
+        installs = row.cv_count if reward_type == "cpi" else 0
+        campaign_clicks = clicks_by_campaign.get(row.campaign_id, 0)
         by_campaign.append({
             "campaign_id": row.campaign_id,
             "campaign_name": campaign.name if campaign else "Unknown",
-            "reward_type": campaign.reward_type if campaign else "?",
+            "reward_type": reward_type,
+            "reward_amount": reward_amount,
+            "clicks": campaign_clicks,
             "cv_count": row.cv_count,
+            "installs": installs,
             "revenue_jpy": rev,
             "dealer_share_jpy": dealer_share,
         })
         total_revenue += rev
         total_dealer_share += dealer_share
         total_cv += row.cv_count
+        total_installs += installs
 
     return {
         "dealer_id": dealer_id,
@@ -205,6 +232,7 @@ async def get_dealer_monthly_report(
         "android_enrolled": android_count or 0,
         "clicks": clicks or 0,
         "conversions": total_cv,
+        "installs": total_installs,
         "revenue_jpy": total_revenue,
         "dealer_share_jpy": round(total_dealer_share, 2),
         "by_campaign": by_campaign,

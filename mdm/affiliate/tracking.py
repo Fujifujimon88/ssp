@@ -20,6 +20,44 @@ APPSFLYER_S2S_URL = "https://s2s.appsflyer.com/api/v2/installs"
 ADJUST_S2S_URL = "https://s2s.adjust.com/event"
 
 
+def apply_tracking_macros(
+    template: str,
+    *,
+    session_id: str = "",
+    user_id: str = "",
+    site_code: str = "",
+    campaign_id: str = "",
+    nwclkid: str = "",
+    nwsiteid: str = "",
+    destination_url: str = "",
+) -> str:
+    """
+    tracking_url テンプレートのマクロを実値に置換する（波括弧なし形式）。
+
+    対応マクロ:
+      SESSIONID   - クリックセッションID（click_token）
+      USERID      - ユーザー識別子（user_token）
+      HIMSITE     - 店舗コード（dealer.store_code）
+      NWCLKID     - ネットワーククリックID（互換性のため維持・通常は空文字）
+      NWSITEID    - ネットワークサイトID（互換性のため維持・通常は空文字）
+      CAMPAIGNID  - キャンペーンID
+      CLICK_URL   - 広告主の遷移先URL（URL-encoded）
+
+    例: https://ad.skyflag.jp/...?suid=SESSIONID&_media=HIMSITE&spram1=USERID&spram2=CAMPAIGNID
+    """
+    from urllib.parse import quote
+    return (
+        template
+        .replace("CLICK_URL", quote(destination_url, safe=""))
+        .replace("SESSIONID", session_id)
+        .replace("HIMSITE", site_code)
+        .replace("NWCLKID", nwclkid)
+        .replace("NWSITEID", nwsiteid)
+        .replace("USERID", user_id)
+        .replace("CAMPAIGNID", campaign_id)
+    )
+
+
 def build_tracked_url(campaign_id: str, enrollment_token: str, base: str) -> str:
     """
     アフィリエイトクリック追跡URL を生成する。

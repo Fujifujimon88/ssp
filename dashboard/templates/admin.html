@@ -354,6 +354,7 @@
               <th>CPI単価（円）</th>
               <th>JANet</th>
               <th>ポイント</th>
+              <th>ASP連携URL</th>
               <th>ID</th>
             </tr>
           </thead>
@@ -880,9 +881,9 @@
               <th>代理店名</th>
               <th>店舗数</th>
               <th>クリック数</th>
-              <th>CV数</th>
+              <th>インストール数</th>
+              <th>成果発生数</th>
               <th>獲得金額</th>
-              <th>代理店取り分</th>
               <th>店舗一覧</th>
             </tr>
           </thead>
@@ -915,9 +916,9 @@
               <th>代理店</th>
               <th>店舗名</th>
               <th>クリック数</th>
-              <th>CV数</th>
+              <th>インストール数</th>
+              <th>成果発生数</th>
               <th>獲得金額</th>
-              <th>代理店取り分</th>
               <th>詳細</th>
             </tr>
           </thead>
@@ -1102,24 +1103,32 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
     <h2 id="dealer-detail-title">店舗実績</h2>
     <div id="dealer-detail-loading" class="loading">読み込み中...</div>
     <div id="dealer-detail-body" style="display:none">
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:16px 0">
-        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:12px;text-align:center">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">CV数</div>
-          <div id="dd-cv" style="font-size:20px;font-weight:700;color:var(--green)">-</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0">
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:4px">クリック数</div>
+          <div id="dd-clicks" style="font-size:18px;font-weight:700">-</div>
         </div>
-        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:12px;text-align:center">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">収益</div>
-          <div id="dd-revenue" style="font-size:20px;font-weight:700">-</div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:4px">インストール数</div>
+          <div id="dd-installs" style="font-size:18px;font-weight:700">-</div>
         </div>
-        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:12px;text-align:center">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">代理店取り分</div>
-          <div id="dd-share" style="font-size:20px;font-weight:700;color:var(--blue)">-</div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:4px">成果発生数</div>
+          <div id="dd-cv" style="font-size:18px;font-weight:700;color:var(--green)">-</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:4px">獲得金額</div>
+          <div id="dd-revenue" style="font-size:18px;font-weight:700">-</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:4px">代理店取り分</div>
+          <div id="dd-share" style="font-size:18px;font-weight:700;color:var(--blue)">-</div>
         </div>
       </div>
       <h3 style="font-size:13px;margin-bottom:8px">キャンペーン別</h3>
       <div class="table-wrap" style="max-height:200px;overflow-y:auto">
         <table id="dd-campaign-table" style="font-size:12px">
-          <thead><tr><th>キャンペーン</th><th>CV</th><th>収益</th><th>取り分</th></tr></thead>
+          <thead><tr><th>タイトル</th><th>種別</th><th>単価</th><th>クリック</th><th>インストール</th><th>成果</th><th>獲得金額</th></tr></thead>
           <tbody id="dd-campaign-tbody"></tbody>
         </table>
       </div>
@@ -1127,7 +1136,7 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
         <h3 style="font-size:13px;margin-bottom:8px">同代理店の他店舗</h3>
         <div class="table-wrap" style="max-height:180px;overflow-y:auto">
           <table style="font-size:12px">
-            <thead><tr><th>店舗名</th><th>店舗コード</th><th>CV</th><th>収益</th><th>取り分</th></tr></thead>
+            <thead><tr><th>店舗名</th><th>店舗コード</th><th>クリック</th><th>インストール</th><th>成果</th><th>獲得金額</th></tr></thead>
             <tbody id="dd-stores-tbody"></tbody>
           </table>
         </div>
@@ -1363,6 +1372,42 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
   </div>
 </div>
 
+<!-- ASP連携URL確認モーダル -->
+<div class="modal-overlay" id="asp-url-modal">
+  <div class="modal" style="max-width:600px">
+    <span class="modal-close" onclick="closeModal('asp-url-modal')">&times;</span>
+    <h2>🔗 ASP連携URL</h2>
+    <p style="font-size:13px;color:var(--muted);margin:8px 0 16px">各ASPの管理画面に登録するURLです。</p>
+
+    <div style="display:grid;gap:12px">
+      <div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">📥 ポストバック受信URL（ASP管理画面に登録）</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <code id="asp-url-postback" style="flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:12px;word-break:break-all"></code>
+          <button class="btn-sm" onclick="copyText('asp-url-postback')">コピー</button>
+        </div>
+        <p style="font-size:11px;color:var(--muted);margin:4px 0 0">SESSIONIDはクリック時に自動で置換されます</p>
+      </div>
+
+      <div id="asp-url-tracking-wrap">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">📤 クリックURL（tracking_url / 広告表示時に使用）</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <code id="asp-url-tracking" style="flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:12px;word-break:break-all"></code>
+          <button class="btn-sm" onclick="copyText('asp-url-tracking')">コピー</button>
+        </div>
+      </div>
+
+      <div id="asp-url-click-wrap">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">🔗 弊社クリック計測URL例</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <code id="asp-url-click" style="flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:12px;word-break:break-all"></code>
+          <button class="btn-sm" onclick="copyText('asp-url-click')">コピー</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- アフィリエイトキャンペーン登録モーダル -->
 <div class="modal-overlay" id="affiliate-campaign-modal">
   <div class="modal">
@@ -1426,8 +1471,8 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       <details style="border:1px solid var(--border);border-radius:6px;padding:10px">
         <summary style="cursor:pointer;font-size:13px;color:var(--muted);list-style:none">🔗 Tracking URL（省略可）</summary>
         <div style="display:grid;gap:8px;margin-top:10px">
-          <input name="tracking_url" type="url" placeholder="https://example.com/track?click={CLICK_URL}&sid={SESSIONID}" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace">
-          <p style="font-size:11px;color:var(--muted);margin:0">使用可能マクロ: <code>{CLICK_URL}</code> <code>{SESSIONID}</code> <code>{HIMSITE}</code> <code>{NWCLKID}</code> <code>{NWSITEID}</code> <code>{USERID}</code> <code>{CAMPAIGNID}</code></p>
+          <input name="tracking_url" type="url" placeholder="https://ad.skyflag.jp/...?suid=SESSIONID&_media=HIMSITE&spram1=USERID&spram2=CAMPAIGNID" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace">
+          <p style="font-size:11px;color:var(--muted);margin:0">使用可能マクロ: <code>CLICK_URL</code> <code>SESSIONID</code> <code>HIMSITE</code> <code>USERID</code> <code>CAMPAIGNID</code></p>
         </div>
       </details>
       <!-- パートナーIDフィルタ -->
@@ -2036,7 +2081,9 @@ async function showDealerDetail(dealerId) {
     const r = await fetch(`/mdm/admin/dealers/${dealerId}/detail`, { headers: adminHeaders() });
     const d = await r.json();
     document.getElementById('dealer-detail-title').textContent = `${d.dealer_name} (${d.store_code}) — ${d.period}`;
-    document.getElementById('dd-cv').textContent = d.conversions ?? 0;
+    document.getElementById('dd-clicks').textContent = (d.clicks ?? 0).toLocaleString();
+    document.getElementById('dd-installs').textContent = (d.installs ?? 0).toLocaleString();
+    document.getElementById('dd-cv').textContent = (d.conversions ?? 0).toLocaleString();
     document.getElementById('dd-revenue').textContent = `¥${(d.revenue_jpy || 0).toLocaleString()}`;
     document.getElementById('dd-share').textContent = `¥${(d.dealer_share_jpy || 0).toLocaleString()}`;
 
@@ -2045,11 +2092,14 @@ async function showDealerDetail(dealerId) {
     ctbody.innerHTML = (d.by_campaign || []).map(c =>
       `<tr>
         <td>${c.campaign_name}</td>
-        <td>${c.cv_count}</td>
+        <td><span style="background:rgba(99,102,241,.15);color:#818cf8;padding:1px 6px;border-radius:3px;font-size:11px">${(c.reward_type||'?').toUpperCase()}</span></td>
+        <td>¥${(c.reward_amount || 0).toLocaleString()}</td>
+        <td>${c.clicks ?? 0}</td>
+        <td>${c.installs ?? 0}</td>
+        <td>${c.cv_count ?? 0}</td>
         <td>¥${(c.revenue_jpy || 0).toLocaleString()}</td>
-        <td>¥${(c.dealer_share_jpy || 0).toLocaleString()}</td>
       </tr>`
-    ).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">CVなし</td></tr>';
+    ).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--muted)">CVなし</td></tr>';
 
     // 同代理店の配下店舗
     const stores = d.stores || [];
@@ -2059,9 +2109,10 @@ async function showDealerDetail(dealerId) {
         `<tr>
           <td>${s.dealer_name}</td>
           <td><code style="font-size:11px">${s.store_code}</code></td>
-          <td>${s.cv_count}</td>
+          <td>${s.clicks ?? 0}</td>
+          <td>${s.installs ?? 0}</td>
+          <td>${s.cv_count ?? 0}</td>
           <td>¥${(s.revenue_jpy || 0).toLocaleString()}</td>
-          <td>¥${(s.dealer_share_jpy || 0).toLocaleString()}</td>
         </tr>`
       ).join('');
       storesSection.style.display = 'block';
@@ -2107,9 +2158,9 @@ async function loadAgencyList() {
         <td style="font-weight:600">${a.agency_name}</td>
         <td style="color:var(--muted)">${a.store_count}</td>
         <td>${(a.clicks||0).toLocaleString()}</td>
+        <td>${(a.installs||0).toLocaleString()}</td>
         <td style="font-weight:600;color:var(--green)">${(a.conversions||0).toLocaleString()}</td>
         <td>¥${(a.revenue_jpy||0).toLocaleString()}</td>
-        <td style="font-weight:600;color:var(--blue)">¥${(a.dealer_share_jpy||0).toLocaleString()}</td>
         <td style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-ghost" style="font-size:11px" onclick="showSection('store-list');document.getElementById('store-list-agency-filter').value='${a.agency_id}';document.getElementById('store-list-period').value=document.getElementById('agency-list-period').value;loadStoreList()">店舗一覧</button>
           <button class="btn btn-ghost" style="font-size:11px" onclick="openPortalLoginModal('agency','${a.agency_id}','${a.agency_name}','${a.login_id||''}')">🔑 ログイン設定</button>
@@ -2174,9 +2225,9 @@ function renderStoreListTable() {
       <td style="font-size:12px;color:var(--muted)">${s.agency_name}</td>
       <td style="font-weight:600">${s.dealer_name}</td>
       <td>${(s.clicks||0).toLocaleString()}</td>
+      <td>${(s.installs||0).toLocaleString()}</td>
       <td style="font-weight:600;color:var(--green)">${(s.conversions||0).toLocaleString()}</td>
       <td>¥${(s.revenue_jpy||0).toLocaleString()}</td>
-      <td style="font-weight:600;color:var(--blue)">¥${(s.dealer_share_jpy||0).toLocaleString()}</td>
       <td style="display:flex;gap:4px;flex-wrap:wrap">
         <button class="btn btn-ghost" style="font-size:11px" onclick="showDealerDetail('${s.dealer_id}')">📊 詳細</button>
         <button class="btn btn-ghost" style="font-size:11px" onclick="openPortalLoginModal('dealer','${s.dealer_id}','${s.dealer_name}','${s.login_id||''}')">🔑 ログイン設定</button>
@@ -3099,6 +3150,31 @@ async function runSettlement() {
   else alert(d.detail || '精算エラー');
 }
 
+// ── ASP連携URL確認モーダル ────────────────────────────────
+function showAspUrlModal(c) {
+  document.getElementById('asp-url-postback').textContent = c.postback_url;
+  const trackingEl = document.getElementById('asp-url-tracking');
+  const trackingWrap = document.getElementById('asp-url-tracking-wrap');
+  if (c.tracking_url) {
+    trackingEl.textContent = c.tracking_url;
+    trackingWrap.style.display = '';
+  } else {
+    trackingWrap.style.display = 'none';
+  }
+  document.getElementById('asp-url-click').textContent = c.click_url_example;
+  document.getElementById('asp-url-modal').classList.add('open');
+}
+
+function copyText(elId) {
+  const text = document.getElementById(elId).textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector(`[onclick="copyText('${elId}')"]`);
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  });
+}
+
 // ── アフィリエイトキャンペーン ──────────────────────────────
 function showAffiliateCampaignModal() {
   document.getElementById('affiliate-campaign-result').textContent = '';
@@ -3128,6 +3204,7 @@ async function loadAffiliateCampaigns() {
         <td>¥${Number(c.reward_amount).toLocaleString()}</td>
         <td style="font-size:11px">${c.janet_media_id ? `✓ ${c.janet_media_id}` : '<span style="color:var(--muted)">—</span>'}</td>
         <td style="font-size:11px">${c.enable_points ? `✓ ×${c.point_rate}` : '<span style="color:var(--muted)">—</span>'}</td>
+        <td><button class="btn-sm" onclick='showAspUrlModal(${JSON.stringify(c)})'>🔗 URL確認</button></td>
         <td style="font-family:monospace;font-size:11px;color:var(--muted)">${c.id.slice(0,8)}…</td>
       </tr>`).join('');
     table.style.display = '';
@@ -3689,7 +3766,7 @@ document.getElementById('agency-form').addEventListener('submit', async (e) => {
   const f = e.target;
   const res = await fetch('/mdm/admin/agencies', {
     method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ name: f.name.value, contact_email: f.contact_email.value || null }),
+    body: JSON.stringify({ name: f.elements['name'].value, contact_email: f.contact_email.value || null }),
   });
   const d = await res.json();
   const el = document.getElementById('agency-result');

@@ -1,575 +1,239 @@
-# ASP連携 完全ガイド
+# ASP連携 計測設定ガイド
 
-> 最終更新: 2026-03-20
-
----
-
-## 目次
-
-1. [スキームの全体像](#スキームの全体像)
-2. [ユーザーID設計方針](#ユーザーid設計方針)
-3. [インバウンド型](#インバウンド型)
-   - ASPパラメータ正規化マップ
-   - JANet
-   - SKYFLAG
-   - smaad
-   - A8.net
-4. [アウトバウンド型](#アウトバウンド型)
-   - AppsFlyer S2S
-   - Adjust S2S
-   - postback_url_template（汎用）
-5. [ポイント付与設計](#ポイント付与設計)
-6. [進捗サマリー](#進捗サマリー)
+本ドキュメントは、SSPプラットフォームにおけるASP（アフィリエイトサービスプロバイダー）との計測連携の設定・運用手順をまとめたものです。
 
 ---
 
-## スキームの全体像
+## 概要
 
-| 種別 | 誰がCV通知を送るか | 代表ASP | 実装状況 |
-|------|------------------|--------|---------|
-| **インバウンド型** | ASP → 弊社 | JANet / SKYFLAG / smaad / A8.net | 一部実装済み |
-| **アウトバウンド型（計測ツール）** | 弊社 → AppsFlyer/Adjust | AppsFlyer / Adjust | ✅ 実装済み |
-| **アウトバウンド型（直接）** | 弊社 → ASP | Felmat / ValueCommerce 等 | ✅ 実装済み（テンプレート方式） |
+本プラットフォームは、トラッキングURLにマクロを埋め込む方式でASPへクリックデータを渡し、コンバージョン発生時にASPからポストバック通知を受け取ります。
+
+- クリック時に `AffiliateClickDB` へレコードを作成し、`click_token` を発行
+- ポストバック受信時に `click_token` でクリックレコードを照合し、`AffiliateConversionDB` へ記録
+- 重複計上はASPアクションID + キャンペーンIDの複合ユニーク制約で防止
+
+対応ASP: **SKYFLAG**, **JANet**, **smaad**, **A8.net**
 
 ---
 
-## ユーザーID設計方針
-
-### なぜ device_id をASPに渡さないか
-
-`device_id`（Android ID）は **個人識別符号**（APPI：個人情報保護法上の保護対象）であり、外部ASPに直接渡すべきではない。代わりに内部で管理する不透明なトークン（`user_token`）をASPに渡す。
+## 計測フロー
 
 ```
-AndroidDeviceDB
-  device_id   = "a1b2c3d4e5f6a7b8"  ← 内部管理のみ（ASPには一切渡さない）
-  user_token  = "f8e2-xxxx-yyyy-..."  ← ASPに渡す不透明UUID（永続）
+1. ユーザーが広告をクリック
+   GET /mdm/affiliate/click/{campaign_id}?token={enrollment_token}
+
+2. システムが AffiliateClickDB にレコードを作成
+   - dealer_id, click_token (UUIDv4), enrollment_token を記録
+
+3. システムがASPのトラッキングURLへリダイレクト
+   - SESSIONID マクロを click_token に置換して転送
+
+4. ASPがインストール・購入・リードなどのコンバージョンを検知
+
+5. ASPが本プラットフォームへポストバックを送信
+   GET https://{BASE_URL}/mdm/affiliate/cv?id={click_token}
+
+6. システムが AffiliateClickDB から click_token でクリックレコードを検索
+   → AffiliateConversionDB へコンバージョンを記録
+
+7. 必要に応じてユーザーへポイントを付与
 ```
 
-### メリット
-
-| 観点 | 内容 |
-|------|------|
-| **プライバシー** | ASPは `user_token` しか知らない。device_id は外部に出ない |
-| **応用性** | user_token はリセット可能。複数デバイスを1ユーザーに統合も将来対応可 |
-| **セキュリティ** | 逆引きできないため、ASP側でデバイスを特定不可 |
-
-### クリック〜ポストバックの流れ
+**アトリビューションチェーン:**
 
 ```
-クリック時:
-  DPC → GET /mdm/affiliate/click/{campaign_id}?user_token={user_token}
-             ↓ user_token を AffiliateClickDB に記録
-             ↓ ASPへ user_token を渡してリダイレクト
-
-ポストバック受信時:
-  ASP → GET /mdm/affiliate/postback/{source}?user_id={user_token}&...
-             ↓ user_token → AndroidDeviceDB で device_id を逆引き
-             ↓ AffiliateConversionDB 作成
-             ↓ ポイント付与（キャンペーン設定に従う）
+AffiliateClickDB (dealer_id, click_token)
+        ↓  JOIN (click_token)
+AffiliateConversionDB
+        ↓
+収益レポート（代理店収益・ユーザーポイント）
 ```
 
 ---
 
-## インバウンド型
-
-> **共通スキーム**: 弊社がクリックURLを発行 → ユーザーがASP経由で広告主サイトへ → 成果発生 → ASPが弊社にポストバック通知
-
-```
-ユーザー（端末）
-  │
-  ├─ GET /mdm/affiliate/click/{campaign_id}?user_token={user_token}
-  │         ↓ user_token を AffiliateClickDB に記録
-  │         ↓ 302 Redirect（ASPクリック計測URLへ）
-  ├─ ASPクリック計測URL（user_token を uid/suid 等として付与）
-  │         ↓
-  ├─ 広告主サイト（ユーザーがCV行動）
-  │
-ASP
-  │  成果確認後
-  └─ GET /mdm/affiliate/postback/{source}?{user_id_param}={user_token}&{price_param}={amount}
-            ↓ user_token → device_id に逆引き
-            ↓ AffiliateConversionDB 作成
-            ↓ ポイント付与（enable_points=true のキャンペーンのみ）
-```
-
----
-
-### ASPパラメータ正規化マップ
-
-ASPによってパラメータ名は異なるが、**概念・ロジックは共通**。内部でマッピングして統一処理する。
-
-| 概念（内部名） | JANet | SKYFLAG | smaad | A8.net |
-|--------------|-------|---------|-------|--------|
-| 弊社ユーザーID | `user_id` | `suid` | `uid` | `uid` |
-| 報酬額 | `commission` | `price` | `price` | `price` |
-| CV固有ID（冪等性キー） | `action_id` | `cv_id` | なし | なし |
-| 2段階通知フラグ | `attestation_flag` | `install` / `pt`+`mcv` | なし | なし |
-| キャンペーン識別 | `thanks_id` | — | — | — |
-
-#### 2段階通知の有無
-
-| ASP | 2段階通知 | ポイント付与タイミング |
-|-----|----------|-------------------|
-| **JANet** | あり | `attestation_flag=0`（approved）受信後 |
-| **SKYFLAG** | あり | `install=1` または最終ステップ（`pt=SKYFLAG&mcv=空`）受信後 |
-| **smaad** | なし | ポストバック受信時に即付与 |
-| **A8.net** | なし | ポストバック受信時に即付与 |
-
-#### JANet 2段階通知の詳細
-
-JANetはアクション発生時と認証時の**2回**ポストバックを送信する：
-
-```
-Phase 1（アクション発生時）:
-  ?user_id={token}&commission=300&action_id=ACT001
-  ※ attestation_flag なし → 内部で "pending" として記録
-
-Phase 2（認証時）:
-  ?user_id={token}&commission=300&action_id=ACT001&attestation_flag=0  → approved
-  ?user_id={token}&commission=300&action_id=ACT001&attestation_flag=1  → rejected
-
-冪等性: action_id が同一であれば同一CVとして処理
-```
-
----
-
-### JANet
-
-**実装状況: 🔧 仕様定義済み・実連携未実施**
-
-#### ポストバックパラメータ（JANet仕様）
-
-| パラメータ | 内容 |
-|-----------|------|
-| `thanks_id` | サンクスID（どのプロモーションか） |
-| `user_id` | **弊社が渡した user_token** |
-| `attestation_flag` | 空=アクション発生、0=認証、1=否認証 |
-| `action_time` | アクション発生時刻 |
-| `attestation_time` | 成果認証時刻 |
-| `commission` | **報酬額**（円） |
-| `order_amount` | 注文金額（物販時） |
-| `action_id` | JANetが管理するCV固有ID（冪等性キー） |
-
-#### 弊社ポストバック受信URL（JANet管理画面に登録する）
-
-```
-https://your-server.com/mdm/affiliate/postback/janet
-  ?user_id={user_id}
-  &commission={commission}
-  &action_id={action_id}
-  &attestation_flag={attestation_flag}
-  &thanks_id={thanks_id}
-```
-
-#### クリックURL形式（JANet仕様: パス形式）
-
-```
-https://click.j-a-net.jp/{janet_media_id}/{janet_original_id}/{user_token}
-```
-
-#### キャンペーン登録
-
-```http
-POST /mdm/admin/affiliate/campaigns
-X-Admin-Key: {admin_key}
-Content-Type: application/json
-
-{
-  "name": "JANet案件名",
-  "category": "app",
-  "destination_url": "https://example.com/lp",
-  "reward_type": "cpi",
-  "reward_amount": 500,
-  "janet_media_id": "12345",
-  "janet_original_id": "67890",
-  "enable_points": false
-}
-```
-
-#### DBフィールド
-
-| フィールド | テーブル | 役割 |
-|-----------|--------|------|
-| `janet_media_id` | `affiliate_campaigns` | JANetメディアID |
-| `janet_original_id` | `affiliate_campaigns` | JANet原稿ID |
-| `user_token` | `android_devices` | ASPに渡す不透明ID |
-| `asp_action_id` | `affiliate_conversions` | action_id（冪等性） |
-| `attestation_status` | `affiliate_conversions` | pending/approved/rejected |
-
----
+## ASP別ポストバック設定
 
 ### SKYFLAG
 
-**実装状況: 📋 仕様定義済み・実連携未実施**
-
-> JANetと同じ立ち位置のインバウンド型ASP。パラメータ名が異なるだけでロジックは同一。
-
-#### ポストバックパラメータ（SKYFLAG仕様）
-
-SKYFLAGは **2種類のポストバック** を送信する：
-
-**① アプリインストールCV（install=1）**
-
-| パラメータ | 内容 |
-|-----------|------|
-| `suid` | **弊社が渡した user_token** |
-| `install` | `1` = CV確定 |
-| `price` | 報酬額 |
-| `cv_id` | SKYFLAGのCV固有ID（冪等性キー） |
-
-**② ステップアップCV（pt=SKYFLAG）**
-
-| パラメータ | 内容 |
-|-----------|------|
-| `suid` | **弊社が渡した user_token** |
-| `pt` | `SKYFLAG` 固定 |
-| `mcv` | ステップ番号（空 = 最終CV） |
-| `price` | 報酬額 |
-| `cv_id` | SKYFLAGのCV固有ID（冪等性キー） |
-| `spram1`, `spram2` | カスタムパラメータ（クリック時に設定可） |
-
-#### 弊社ポストバック受信URL（SKYFLAG管理画面に登録する）
+- ポストバックに `install` パラメータが含まれる場合、ソース = `"skyflag"` と判定
+- `suid` パラメータが含まれる場合も `"skyflag"` と判定（フォールバック）
+- トラッキングURL例:
 
 ```
-https://your-server.com/mdm/affiliate/postback/skyflag
-  ?suid={suid}
-  &install={install}
-  &price={price}
-  &cv_id={cv_id}
-  &pt={pt}
-  &mcv={mcv}
+https://ad.skyflag.jp/ad/p/r?_cprm=...&suid=SESSIONID&_media=HIMSITE&spram1=USERID&spram2=CAMPAIGNID
 ```
 
-#### クリックURL形式
+- `suid=SESSIONID` に click_token が入り、ポストバック時に `id={click_token}` として返送される
 
-```
-{skyflag_click_url}?suid={user_token}
-```
-※ `click_url_template` に `{user_token}` プレースホルダで設定
+### JANet
 
-#### キャンペーン登録
-
-```http
-POST /mdm/admin/affiliate/campaigns
-X-Admin-Key: {admin_key}
-Content-Type: application/json
-
-{
-  "name": "SKYFLAG案件名",
-  "category": "app",
-  "destination_url": "https://example.com/lp",
-  "reward_type": "cpi",
-  "reward_amount": 400,
-  "click_url_template": "https://click.skyflag.jp/xxxxx?suid={user_token}",
-  "enable_points": false
-}
-```
-
----
+- ポストバックに `attestation_flag` パラメータが含まれる場合、ソース = `"janet"` と判定
+- 案件設定で `janet_media_id` と `janet_original_id` を設定することでダイレクトリンク形式に対応
 
 ### smaad
 
-**実装状況: ✅ 完了**
-
-#### 計測ロジック
-
-1. クリック時に `AffiliateClickDB` へ `user_token` を記録
-2. `click_url_template` の `{user_token}` を置換してリダイレクト
-   ```
-   https://tr.smaad.net/redirect?zo={ゾーンID}&ad={広告ID}&uid={user_token}
-   ```
-3. CV発生時、smaadが下記URLに GET リクエストを送信
-   ```
-   https://your-server.com/mdm/affiliate/postback/smaad?uid={uid}&price={price}
-   ```
-4. `uid`（= user_token）で照合 → CV記録 → 即ポイント付与（設定時）
-
-#### キャンペーン登録
-
-```http
-POST /mdm/admin/affiliate/campaigns
-{
-  "name": "smaad案件名",
-  "click_url_template": "https://tr.smaad.net/redirect?zo=745468462&ad=198337123&uid={user_token}",
-  "enable_points": false
-}
-```
-
-#### ポストバック受信URL（smaad管理画面に登録）
-
-```
-https://your-server.com/mdm/affiliate/postback/smaad?uid={uid}&price={price}
-```
-
----
+- 上記パラメータがいずれも存在しない場合のデフォルト判定
+- ソース = `"smaad"`
 
 ### A8.net
 
-**実装状況: ✅ 完了**
+- デフォルト検出（smaadと同様の判定フロー）
+- 案件のトラッキングURLにA8.netのテンプレートを使用
 
-#### 計測ロジック
+**ソース判定ロジック（優先順位）:**
 
-smaadと同一スキーム。クリックURLの形式のみ異なる。
+| 条件 | 判定ソース |
+|------|-----------|
+| `install` パラメータあり | `skyflag` |
+| `attestation_flag` パラメータあり | `janet` |
+| `suid` パラメータあり | `skyflag` |
+| 上記いずれも該当なし | `smaad` |
+
+---
+
+## Tracking URL マクロ仕様
+
+トラッキングURLテンプレートに以下のマクロを記述すると、クリック時に自動で実値へ置換されます。
+**フォーマット: 中括弧なし（Ruby互換）**
+
+| マクロ名 | 置換値 | 説明 |
+|----------|--------|------|
+| `SESSIONID` | `click_token` | クリック識別子（UUID）。ポストバックの `id` パラメータと対応 |
+| `HIMSITE` | `dealer.store_code` | 店舗コード |
+| `USERID` | `user_token` | デバイス・ユーザートークン |
+| `CAMPAIGNID` | `campaign_id` | キャンペーンID |
+| `CLICK_URL` | URLエンコード済みのリンク先URL | 遷移先URL |
+| `NWCLKID` | ネットワーククリックID | 互換用（通常は空文字） |
+| `NWSITEID` | ネットワークサイトID | 互換用（通常は空文字） |
+
+**置換例（SKYFLAG）:**
 
 ```
-https://px.a8.net/a8fly/earnings?a8mat={a8matコード}&uid={user_token}
-```
+テンプレート:
+https://ad.skyflag.jp/ad/p/r?_cprm=...&suid=SESSIONID&_media=HIMSITE&spram1=USERID&spram2=CAMPAIGNID
 
-#### ポストバック受信URL（A8.net管理画面に登録）
-
-```
-https://your-server.com/mdm/affiliate/postback/a8?uid={uid}&price={price}
+置換後:
+https://ad.skyflag.jp/ad/p/r?_cprm=...&suid=a1b2c3d4-xxxx&_media=SHOP001&spram1=u_token_xxx&spram2=42
 ```
 
 ---
 
-### インバウンド型 共通仕様
+## ポストバックURL
 
-#### ポストバック受信エンドポイント
-
-```
-GET /mdm/affiliate/postback/{source}
-```
-
-**source**: `janet` / `skyflag` / `smaad` / `a8`
-
-#### 内部処理フロー
+ASP側に登録するポストバックURLは以下の形式で統一されています。
 
 ```
-1. パラメータ正規化
-   └ ASPごとのパラメータ名を内部名（user_id/revenue/asp_action_id/attestation_status）に変換
-
-2. user_token → device_id 逆引き（AndroidDeviceDB）
-   └ 未設定の場合 → 200 {"status":"ok"} を返して終了（ASPリトライ防止）
-
-3. Phase2チェック（JANet/SKYFLAG のみ）
-   └ asp_action_id が既存レコードに一致 + approved/rejected
-   → AffiliateConversionDB.attestation_status を更新
-   → approved の場合はポイント付与（enable_points=true 時）
-   → return
-
-4. 冪等性チェック
-   └ asp_action_id あり → asp_action_id で重複確認（JANet/SKYFLAG）
-   └ asp_action_id なし → click_token + source で重複確認（smaad/A8.net）
-   └ 重複あり → 200 {"status":"ok"} を返して終了
-
-5. AffiliateClickDB を検索
-   └ WHERE user_token = {user_token} AND converted = false
-   └ ORDER BY clicked_at DESC LIMIT 1
-
-6. AffiliateConversionDB を作成
-   - click_token, campaign_id, source, revenue_jpy
-   - asp_action_id（JANet: action_id, SKYFLAG: cv_id）
-   - attestation_status（JANet/SKYFLAG: "pending", smaad/A8: null）
-   - raw_payload（クエリパラメータ全体をJSON保存）
-
-7. AffiliateClickDB.converted = true に更新
-
-8. InstallEventDB を更新（billing_status = "billable"）
-
-9. ポイント付与（attestation_status が null or "approved" かつ enable_points=true 時）
-
-10. DB commit → 200 {"status":"ok"}
+https://{BASE_URL}/mdm/affiliate/cv?id=SESSIONID
 ```
+
+- `id` パラメータ = `SESSIONID` = `click_token`（クリック時に払い出したUUID）
+- 全ASP共通エンドポイント。ソースの判別はポストバックに含まれるパラメータで自動判定
+- ASP側のマクロ設定で `SESSIONID` 部分をクリックIDに差し替えてポストバックするよう設定すること
+
+**各ASPでの設定例:**
+
+| ASP | ポストバック設定値 |
+|-----|-----------------|
+| SKYFLAG | `https://{BASE_URL}/mdm/affiliate/cv?id={suid}` |
+| JANet | `https://{BASE_URL}/mdm/affiliate/cv?id={click_id}&attestation_flag={flag}` |
+| smaad | `https://{BASE_URL}/mdm/affiliate/cv?id={click_id}` |
+| A8.net | `https://{BASE_URL}/mdm/affiliate/cv?id={click_id}` |
 
 ---
 
-## アウトバウンド型
+## 案件設定方法（管理画面）
 
-> **共通スキーム**: DPCがインストールを報告 → 弊社サーバーが計測パートナーまたはASPへ通知を送信
+管理画面のキャンペーン設定から以下のフィールドを入力します。
 
-```
-DPC（Android端末）
-  │
-  └─ POST /mdm/install_confirmed { device_id, package_name, ... }
-            ↓ InstallEventDB 作成
-            ↓ cv_trigger に従いポストバック発火
-            ├─ AppsFlyer S2S（appsflyer_dev_key 設定時）
-            ├─ Adjust S2S（adjust_app_token 設定時）
-            └─ 直接ASPポストバック（postback_url_template 設定時）
-```
+### 基本設定
 
----
+| フィールド | 内容 |
+|-----------|------|
+| `tracking_url` | ASPが提供するトラッキングURLテンプレート。マクロ（`SESSIONID` 等）をそのまま記述 |
+| `dealer_revenue_rate` | 代理店（店舗）に付与する収益の割合（%） |
+| `user_point_rate` | ユーザーに付与するポイントの割合（%） |
 
-### AppsFlyer S2S
+### JANet専用設定
 
-**実装状況: ✅ 完了**
+| フィールド | 内容 |
+|-----------|------|
+| `janet_media_id` | JANetのメディアID（ダイレクトリンク形式で必要） |
+| `janet_original_id` | JANetのオリジナルID（ダイレクトリンク形式で必要） |
 
-#### エンドポイント
-```
-POST https://s2s.appsflyer.com/api/v2/installs?devkey={appsflyer_dev_key}
-```
+### 設定手順
 
-#### 送信データ
-```json
-{
-  "advertising_id": "{gaid}",
-  "app_id": "{destination_url（パッケージ名）}",
-  "af_events_api": "true",
-  "eventName": "install",
-  "af_customer_user_id": "{device_id}",
-  "timestamp": "{install_ts}"
-}
-```
-
-#### キャンペーン設定
-```json
-{ "appsflyer_dev_key": "AppsFlyerコンソールのdev key" }
-```
+1. 管理画面 > キャンペーン管理 > 対象キャンペーンを選択
+2. `tracking_url` にASPから発行されたURLテンプレートを貼り付け（マクロはそのまま）
+3. `dealer_revenue_rate` と `user_point_rate` を設定
+4. JANetの場合は `janet_media_id` / `janet_original_id` を追加入力
+5. 保存後、ASP管理画面にポストバックURLを登録
 
 ---
 
-### Adjust S2S
+## 計測確認方法
 
-**実装状況: ✅ 完了**
+### 1. クリック確認
 
-#### エンドポイント
 ```
-POST https://s2s.adjust.com/event
-```
-
-#### 送信データ（クエリパラメータ）
-```
-app_token={adjust_app_token}
-event_token={adjust_event_token}
-gps_adid={gaid}
-s2s=1
-created_at={install_ts}
-partner_params[device_id]={device_id}
+GET /mdm/affiliate/click/{campaign_id}?token={enrollment_token}
 ```
 
-#### キャンペーン設定
-```json
-{
-  "adjust_app_token": "Adjustコンソールのapp token",
-  "adjust_event_token": "イベントトークン（任意）"
-}
+レスポンスが302リダイレクトになっていること、および `AffiliateClickDB` にレコードが作成されていることを確認。
+
+### 2. ポストバック疎通確認
+
 ```
+GET https://{BASE_URL}/mdm/affiliate/cv?id={click_token}
+```
+
+テスト用のポストバックをcurlまたはASP管理画面のテスト機能で送信し、200レスポンスを確認。
+
+```bash
+curl "https://{BASE_URL}/mdm/affiliate/cv?id={click_token}&install=1"
+```
+
+### 3. コンバージョン記録確認
+
+管理画面 > コンバージョン履歴、または直接 `AffiliateConversionDB` を参照し、レコードが作成されていることを確認。
+
+### 4. 冪等性確認
+
+同一の `asp_action_id` + `campaign_id` でポストバックを2回送信し、2件目が無視されること（重複登録されないこと）を確認。
 
 ---
 
-### postback_url_template（直接ASPポストバック）
+## トラブルシューティング
 
-**実装状況: ✅ 完了**
+### ポストバックが届いているが計測されない
 
-#### 対象
+| 確認項目 | 対処 |
+|---------|------|
+| `id` パラメータが空 | ASP側のポストバックURL設定でSESSIONIDマクロが正しく差し替えられているか確認 |
+| `click_token` に一致するクリックレコードがない | クリック計測が先行して動作しているか確認。クリックURLのキャンペーンIDが正しいか確認 |
+| 400/500エラーが返る | サーバーログを確認。`id` パラメータの形式（UUID形式）を確認 |
 
-Felmat / ValueCommerce など、クリック計測なしでDPCインストール完了をトリガーとしてCV通知するASP。
+### マクロが置換されない
 
-#### テンプレート変数一覧
+| 確認項目 | 対処 |
+|---------|------|
+| トラッキングURLのマクロ名に誤字がある | `SESSIONID`・`HIMSITE` 等は大文字・スペルを厳密に一致させること |
+| 中括弧が入っている | 本プラットフォームのマクロは中括弧なし形式（例: `SESSIONID` ○ / `{SESSIONID}` ×） |
 
-| 変数 | 内容 | 例 |
-|------|------|-----|
-| `{device_id}` | Android ID（URLエンコード済） | `a1b2c3d4e5f6a7b8` |
-| `{user_token}` | 不透明ユーザーID（URLエンコード済） | `f8e2-xxxx-yyyy` |
-| `{enrollment_token}` | エンロールトークン（URLエンコード済） | `abc123xyz` |
-| `{dealer_id}` | 代理店ID | `uuid-xxxx` |
-| `{store_id}` | 店舗ID | `uuid-yyyy` |
-| `{amount}` | CV単価（円・整数） | `500` |
-| `{install_ts}` | インストール時刻 | `2026-03-20 12:00:00+00:00` |
-| `{package_name}` | APKパッケージ名（URLエンコード済） | `com.example.app` |
-| `{event_type}` | イベント種別（URLエンコード済） | `install` または `app_open` |
+### ソースが正しく判定されない
 
-#### 設定例（Felmat）
-```json
-{
-  "postback_url_template": "https://t.felmat.net/fmcv?ak=XXXXX&ev=install&price={amount}&uid={user_token}"
-}
-```
+| 確認項目 | 対処 |
+|---------|------|
+| JANetなのに `smaad` と判定される | ポストバックに `attestation_flag` パラメータが含まれているか確認 |
+| SKYFLAGなのに `smaad` と判定される | ポストバックに `install` または `suid` パラメータが含まれているか確認 |
 
----
+### 重複コンバージョンが記録される
 
-### アウトバウンド型 共通仕様
+- `asp_action_id` がポストバックに含まれているか確認
+- 含まれていない場合、ASP側の設定でアクションIDマクロを追加するか、ASPサポートへ問い合わせ
 
-#### cv_trigger（CV発火タイミング）
+### クリックからポストバックまでのデバッグ手順
 
-| cv_trigger | 発火タイミング | 用途 |
-|-----------|--------------|------|
-| `install` | DPCがインストール完了を報告した時点（Method 1） | CPI（アプリ導入数課金）|
-| `app_open` | プッシュ通知タップ → アプリ起動後（Method 2） | CPE（起動確認型課金）|
-
-#### cv_trigger 優先順位（高→低）
-
-```
-① DealerDB.default_cv_trigger   — 代理店レベルで全キャンペーンに強制適用
-② AffiliateCampaignDB.cv_trigger — キャンペーンごとの設定
-③ "install"（デフォルト）
-```
-
----
-
-## ポイント付与設計
-
-### 基本方針
-
-- **デフォルトはポイント付与なし**（`enable_points = false`）
-- キャンペーン単位でON/OFFを設定する
-- 還元率もキャンペーン単位で調整可能
-
-### キャンペーン設定フィールド
-
-| フィールド | 型 | デフォルト | 説明 |
-|-----------|---|---------|------|
-| `enable_points` | bool | `false` | ポイント付与を有効にするか |
-| `point_rate` | float | `1.0` | 1円あたりのポイント数（例: 1.0 = 1円=1pt） |
-
-### 付与タイミング
-
-| ASP | 付与条件 |
-|-----|---------|
-| smaad / A8.net | ポストバック受信時に即付与（2段階通知なし） |
-| JANet | `attestation_flag=0`（approved）受信後のみ付与 |
-| SKYFLAG | `install=1` または最終ステップ（`pt=SKYFLAG&mcv=空`）受信後のみ付与 |
-
-### DBスキーマ（未実装 / 将来実装）
-
-```sql
--- affiliate_conversions に追加予定
-attestation_status  TEXT    -- NULL / "pending" / "approved" / "rejected"
-asp_action_id       TEXT    -- ASP固有のCV ID（冪等性キー）
-
--- user_points テーブル（新規作成予定）
-CREATE TABLE user_points (
-  id              TEXT PRIMARY KEY,
-  device_id       TEXT NOT NULL,
-  conversion_id   TEXT UNIQUE REFERENCES affiliate_conversions(id),
-  points          INTEGER NOT NULL DEFAULT 0,
-  source          TEXT,    -- "janet" / "skyflag" / "smaad" / "a8"
-  awarded_at      DATETIME NOT NULL
-);
-```
-
----
-
-## 進捗サマリー
-
-| 機能 | 状態 | 備考 |
-|------|------|------|
-| JANet クリック追跡 | 🔧 仕様定義済み | パス形式リダイレクト・user_token対応は未実装 |
-| JANet ポストバック受信 | 🔧 仕様定義済み | 実際のパラメータ（user_id/commission/action_id）対応は未実装 |
-| SKYFLAG クリック追跡 | 📋 仕様定義済み | 実連携未実施 |
-| SKYFLAG ポストバック受信 | 📋 仕様定義済み | 実連携未実施 |
-| smaad クリック追跡 | ✅ 完了 | `click_url_template` で置換 |
-| smaad ポストバック受信 | ✅ 完了 | `/affiliate/postback/smaad` |
-| A8.net クリック追跡 | ✅ 完了 | `click_url_template` で置換 |
-| A8.net ポストバック受信 | ✅ 完了 | `/affiliate/postback/a8` |
-| AppsFlyer S2S | ✅ 完了 | install_confirmed 時に自動送信 |
-| Adjust S2S | ✅ 完了 | install_confirmed 時に自動送信 |
-| postback_url_template（汎用） | ✅ 完了 | Felmat / ValueCommerce 等に対応 |
-| Method 1（install CV） | ✅ 完了 | install_confirmed で即ポストバック |
-| Method 2（app_open CV） | ✅ 完了 | `/android/app_open` 受信でポストバック |
-| 店舗別CVレポート | ✅ 完了 | `/admin/affiliate/report/store/{store_id}` |
-| E2Eテスト（JANet） | ✅ 完了 | 14/14全通過 |
-
-### 未対応 / 今後の実装課題
-
-| 項目 | 概要 |
-|------|------|
-| **user_token 実装** | `AndroidDeviceDB` に `user_token` カラム追加・クリックURL生成を device_id → user_token に変更 |
-| **ASPパラメータ正規化実装** | `_ASP_PARAM_MAP` + `_normalize_asp_params()` をrouter.pyに追加 |
-| **2段階通知対応実装** | `attestation_status` / `asp_action_id` カラム追加・Phase2更新ロジック実装 |
-| **ポイント付与実装** | `user_points` テーブル作成・`enable_points` キャンペーン設定・`_award_points()` 実装 |
-| **JANet 実連携** | 管理画面でポストバックURL登録・実案件でのE2E確認 |
-| **SKYFLAG 実連携** | 管理画面でポストバックURL登録・実案件でのE2E確認 |
-| **smaad / A8.net E2E テスト** | `click_url_template` 系のテストを追加 |
-| **ポストバック失敗リトライ** | `postback_status="failed"` のイベントを定期リトライするCronを追加 |
+1. クリックURLにアクセスし、レスポンスヘッダーの `Location` でマクロ置換後のURLを確認
+2. リダイレクト先URLの `suid` / `click_id` 等にUUIDが入っているか確認
+3. ASP管理画面でポストバック送信ログを確認
+4. サーバーログで `/mdm/affiliate/cv` のアクセスログを確認

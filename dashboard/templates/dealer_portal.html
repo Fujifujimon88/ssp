@@ -83,7 +83,12 @@
         <div class="sub">{{ report.period }}</div>
       </div>
       <div class="card">
-        <div class="label">CV数</div>
+        <div class="label">インストール数</div>
+        <div class="value">{{ report.installs }}</div>
+        <div class="sub">{{ report.period }}</div>
+      </div>
+      <div class="card">
+        <div class="label">成果発生数</div>
         <div class="value">{{ report.conversions }}</div>
         <div class="sub">{{ report.period }}</div>
       </div>
@@ -113,17 +118,27 @@
     <div class="section">
       <h2>案件別成果（{{ report.period }}）</h2>
       <table>
-        <tr><th>案件名</th><th>報酬タイプ</th><th>CV数</th><th>収益</th><th>代理店取り分</th></tr>
+        <tr>
+          <th>タイトル</th>
+          <th>案件種別</th>
+          <th>単価</th>
+          <th>獲得金額</th>
+          <th>クリック数</th>
+          <th>インストール数</th>
+          <th>成果発生数</th>
+        </tr>
         {% for c in report.by_campaign %}
         <tr>
-          <td>{{ c.campaign_name }}</td>
-          <td>{{ c.reward_type | upper }}</td>
-          <td>{{ c.cv_count }}</td>
+          <td style="font-weight:600">{{ c.campaign_name }}</td>
+          <td><span style="background:#f0f4ff;color:#3b5bdb;padding:2px 8px;border-radius:4px;font-size:12px">{{ c.reward_type | upper }}</span></td>
+          <td>¥{{ "{:,.0f}".format(c.reward_amount) }}</td>
           <td class="revenue">¥{{ "{:,.0f}".format(c.revenue_jpy) }}</td>
-          <td class="revenue">¥{{ "{:,.0f}".format(c.dealer_share_jpy) }}</td>
+          <td>{{ c.clicks }}</td>
+          <td>{{ c.installs }}</td>
+          <td style="font-weight:600">{{ c.cv_count }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="muted" style="padding:16px">今月のCVはまだありません</td></tr>
+        <tr><td colspan="7" class="muted" style="padding:16px">今月のCVはまだありません</td></tr>
         {% endfor %}
       </table>
     </div>
