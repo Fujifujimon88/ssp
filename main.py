@@ -484,3 +484,17 @@ async def health():
         "env": settings.app_env,
     }
 
+
+@app.get("/debug/db-check")
+async def debug_db_check():
+    """DB接続デバッグ用（一時エンドポイント）"""
+    import traceback as _tb
+    try:
+        from database import AsyncSessionLocal
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text("SELECT 1"))
+            return {"status": "ok", "result": result.scalar()}
+    except Exception as e:
+        return {"status": "error", "type": type(e).__name__, "message": str(e), "trace": _tb.format_exc()}
+
