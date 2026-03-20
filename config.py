@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # 管理者認証（.env で上書き必須）
     admin_api_key: str = "change-me-admin-key"
 
+    # ダッシュボード Basic認証（.env / Vercel 環境変数で上書き必須）
+    basic_auth_user: str = "ssp-admin"
+    basic_auth_password: str = "change-me-basic-auth-password"
+
     # アプリ
     app_env: str = "development"
     ssp_endpoint: str = "http://localhost:8000"
@@ -65,6 +69,7 @@ if settings.app_env == "production":
     _CRITICAL_KEYS = {
         "secret_key": ("change-me-in-production-use-long-random-string", 32),
         "admin_api_key": ("change-me-admin-key", 16),
+        "basic_auth_password": ("change-me-basic-auth-password", 16),
     }
     for _field, (_default, _min_len) in _CRITICAL_KEYS.items():
         _val = getattr(settings, _field)
