@@ -282,6 +282,8 @@ app.add_api_route("/store-ad-delivery",    _admin_section("store-ad-delivery"), 
 app.add_api_route("/dealers",              _admin_section("dealers"),               response_class=HTMLResponse)
 app.add_api_route("/campaigns",            _admin_section("campaigns"),             response_class=HTMLResponse)
 app.add_api_route("/affiliate-campaigns",  _admin_section("affiliate-campaigns"),   response_class=HTMLResponse)
+app.add_api_route("/asp-cv-report",        _admin_section("asp-cv-report"),         response_class=HTMLResponse)
+app.add_api_route("/affiliate-points",     _admin_section("affiliate-points"),      response_class=HTMLResponse)
 app.add_api_route("/creatives",            _admin_section("creatives"),             response_class=HTMLResponse)
 app.add_api_route("/devices",              _admin_section("devices"),               response_class=HTMLResponse)
 app.add_api_route("/billing",              _admin_section("billing"),               response_class=HTMLResponse)
@@ -295,6 +297,7 @@ app.add_api_route("/invoices",             _admin_section("invoices"),          
 app.add_api_route("/ml-pipeline",          _admin_section("ml-pipeline"),           response_class=HTMLResponse)
 app.add_api_route("/dsp-configs",          _admin_section("dsp-configs"),           response_class=HTMLResponse)
 app.add_api_route("/ios-widget",           _admin_section("ios-widget"),            response_class=HTMLResponse)
+app.add_api_route("/agencies",             _admin_section("agencies"),              response_class=HTMLResponse)
 # SSP管理セクション
 app.add_api_route("/overview",             _admin_section("overview"),              response_class=HTMLResponse)
 app.add_api_route("/publishers",           _admin_section("publishers"),            response_class=HTMLResponse)
