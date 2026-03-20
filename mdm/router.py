@@ -856,7 +856,10 @@ async def download_mobileconfig(
         content=config_bytes,
         media_type="application/x-apple-aspen-config",
         headers={
-            "Content-Disposition": 'attachment; filename="config.mobileconfig"',
+            # attachment だと iOS Safari がファイルアプリに保存しようとしてインストーラーが起動しない
+            # inline にすることでプロファイルインストーラーが直接開く
+            "Content-Disposition": 'inline; filename="config.mobileconfig"',
+            "Cache-Control": "no-store, no-cache, must-revalidate",
             "X-Next-Url": next_url,
         },
     )
