@@ -1,7 +1,7 @@
 """add dealer_revenue_rate, user_point_rate, tracking_url, partner_id filters
 
-Revision ID: f0a1b2c3d4e5
-Revises: e5f6a7b8c9d0
+Revision ID: a2b3c4d5e6f7
+Revises: f0a1b2c3d4e5
 Create Date: 2026-03-21 00:00:00.000000
 """
 from typing import Sequence, Union
@@ -9,8 +9,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "f0a1b2c3d4e5"
-down_revision: Union[str, Sequence[str], None] = "e5f6a7b8c9d0"
+revision: str = "a2b3c4d5e6f7"
+down_revision: Union[str, Sequence[str], None] = "f0a1b2c3d4e5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
