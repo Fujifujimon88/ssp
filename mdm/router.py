@@ -59,7 +59,7 @@ from mdm.affiliate.billing import (
     calculate_monthly_revenue, get_all_dealers_report, get_dealer_monthly_report,
 )
 from mdm.affiliate.tracking import (
-    build_tracked_url, send_adjust_postback, send_appsflyer_postback,
+    apply_tracking_macros, build_tracked_url, send_adjust_postback, send_appsflyer_postback,
 )
 from mdm.measurement.gtm import build_lp_html
 from mdm.android.commands import (
@@ -490,7 +490,7 @@ async def re_enroll(
         raise HTTPException(status_code=404, detail="Token not found")
     if device.token_revoked_at:
         raise HTTPException(status_code=410, detail="Token has been revoked")
-    if device.token_expires_at and device.token_expires_at < datetime.now(timezone.utc):
+    if device.token_expires_at and device.token_expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
         raise HTTPException(status_code=410, detail="Token has expired")
 
     platform = device.platform
@@ -543,7 +543,7 @@ async def device_migrate_restore(body: MigrateRestoreBody, db: AsyncSession = De
     if not old_android:
         raise HTTPException(status_code=404, detail="Old device not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     old_android.status = "migrated"
     old_android.migrated_at = now
 
@@ -724,6 +724,13 @@ async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
     user_agent = body.get("user_agent", "")
     consent_items: list = body.get("consent_items", [])
 
+    # dealer_id 必須チェック（QR/URL経由でない直打ちエンロールを拒否）
+    if not dealer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="店舗のQRコードまたはURLからアクセスしてください。",
+        )
+
     # 必須同意項目の検証
     checked = set(consent_items)
     missing = REQUIRED_CONSENT_ITEMS - checked
@@ -846,7 +853,7 @@ async def download_mobileconfig(
 
     # ダウンロード記録
     device.mobileconfig_downloaded = True
-    device.last_seen_at = datetime.now(timezone.utc)
+    device.last_seen_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
 
     logger.info(f"MDM mobileconfig downloaded | token={token[:8]}...")
@@ -963,7 +970,7 @@ async def optout_submit(
         return HTMLResponse(content=html, status_code=404)
 
     device.status = "opted_out"
-    device.token_revoked_at = datetime.now(timezone.utc)
+    device.token_revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
 
     # Android: DPCへ remove_mdm_profile コマンドをキュー
@@ -1073,7 +1080,7 @@ async def dealer_detail(
     _: str = Depends(verify_admin_key),
 ):
     """店舗単体の月次CV・収益・代理店取り分サマリー。同一代理店の配下店舗も一覧返却。"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
 
@@ -1312,7 +1319,7 @@ async def update_campaign(
         campaign.webclips = json.dumps(body.webclips)
     if body.safari_config is not None:
         campaign.safari_config = json.dumps(body.safari_config)
-    campaign.updated_at = datetime.now(timezone.utc)
+    campaign.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     await db.commit()
     await db.refresh(campaign)
@@ -1497,17 +1504,34 @@ async def affiliate_click(
         f"| user_token={user_token[:8] if user_token else 'none'}"
     )
 
+    # dealer情報取得（tracking_url マクロ用）
+    dealer = await db.get(DealerDB, resolved_dealer_id) if resolved_dealer_id else None
+    site_code = dealer.store_code if dealer else ""
+
     # 1. JANet: パスに user_token を付与（device_id を ASP に渡さない）
     if campaign.janet_media_id and campaign.janet_original_id and user_token:
         janet_url = f"{JANET_CLICK_BASE}/{campaign.janet_media_id}/{campaign.janet_original_id}/{user_token}"
         return RedirectResponse(url=janet_url, status_code=302)
 
-    # 2. smaad / A8.net: テンプレートの {device_id} を user_token で置換
+    # 2. tracking_url: 汎用マクロ置換（JANet以外の全ASP対応）
+    if campaign.tracking_url:
+        redirect_url = apply_tracking_macros(
+            campaign.tracking_url,
+            session_id=click.click_token or "",
+            user_id=user_token or device_id or "",
+            site_code=site_code,
+            campaign_id=campaign_id,
+            click_id=click.id,
+            destination_url=campaign.destination_url or "",
+        )
+        return RedirectResponse(url=redirect_url, status_code=302)
+
+    # 3. smaad / A8.net: テンプレートの {device_id} を user_token で置換（後方互換）
     if campaign.click_url_template and user_token:
         redirect_url = campaign.click_url_template.replace("{device_id}", user_token)
         return RedirectResponse(url=redirect_url, status_code=302)
 
-    # 3. フォールバック: device_id はあるが user_token がない（未登録デバイス）or 通常案件
+    # 4. フォールバック: device_id はあるが user_token がない（未登録デバイス）or 通常案件
     return RedirectResponse(url=campaign.destination_url, status_code=302)
 
 
@@ -1704,7 +1728,7 @@ async def _award_points(db: AsyncSession, conversion: AffiliateConversionDB) -> 
         user_token=conversion.user_token or "",
         conversion_id=conversion.id,
         points=points,
-        awarded_at=datetime.now(timezone.utc),
+        awarded_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(point_record)
     logger.info(
@@ -2330,7 +2354,7 @@ async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
     if event.billing_status in ("billable", "paid"):
         return
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     should_bill = False
 
     if event.postback_status == "success":
@@ -2459,7 +2483,7 @@ async def install_confirmed(
 
     # 5. 冪等性チェック: 同一(device_id, package_name, campaign_id)で24h以内の重複
     from datetime import timedelta
-    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+    window_start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
     window_start_ts = int(window_start.timestamp() * 1000)
 
     existing_event = await db.scalar(
@@ -2570,7 +2594,7 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
             existing.store_id = body.store_id
         if body.device_fingerprint:
             existing.device_fingerprint = body.device_fingerprint
-        existing.last_seen_at = datetime.now(timezone.utc)
+        existing.last_seen_at = datetime.now(timezone.utc).replace(tzinfo=None)
         # user_token がない場合は生成（既存デバイスの後方互換）
         if not existing.user_token:
             existing.user_token = _generate_user_token()
@@ -2596,7 +2620,7 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
 
             # 旧デバイスを migrated に更新
             old_device.status = "migrated"
-            old_device.migrated_at = datetime.now(timezone.utc)
+            old_device.migrated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
             # 新デバイスを作成（キャンペーン設定・dealer_id・store_id を引き継ぎ）
             new_device = AndroidDeviceDB(
@@ -2613,7 +2637,7 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
                 previous_device_id=old_device.device_id,
                 device_fingerprint=body.device_fingerprint,
                 migration_suspicious=suspicious,
-                last_seen_at=datetime.now(timezone.utc),
+                last_seen_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             db.add(new_device)
             await db.commit()
@@ -2637,7 +2661,7 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
         dealer_id=body.dealer_id,
         store_id=body.store_id,
         device_fingerprint=body.device_fingerprint,
-        last_seen_at=datetime.now(timezone.utc),
+        last_seen_at=datetime.now(timezone.utc).replace(tzinfo=None),
         user_token=new_user_token,
     )
     db.add(device)
@@ -2649,7 +2673,7 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
         )
         if portal_device:
             portal_device.status = "active"
-            portal_device.last_seen_at = datetime.now(timezone.utc)
+            portal_device.last_seen_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     await db.commit()
     logger.info(f"Android device registered | device={body.device_id[:8]}... | model={body.model} | user_token={new_user_token}")
@@ -3339,7 +3363,7 @@ async def android_app_open(
     if cv_trigger != "app_open":
         return {"status": "skipped", "reason": "campaign uses install trigger"}
 
-    install_event.app_open_at = datetime.now(timezone.utc)
+    install_event.app_open_at = datetime.now(timezone.utc).replace(tzinfo=None)
     install_event.cv_method = "app_open"
     await db.commit()
     background_tasks.add_task(trigger_postbacks, install_event.id, db, "app_open")
@@ -3426,7 +3450,7 @@ async def download_mobileconfig_mdm(
     )
 
     device.mobileconfig_downloaded = True
-    device.last_seen_at = datetime.now(timezone.utc)
+    device.last_seen_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
 
     logger.info(f"MDM mobileconfig-mdm downloaded | token={token[:8]}...")
@@ -3477,7 +3501,7 @@ async def ios_mdm_checkin(request: Request, db: AsyncSession = Depends(get_db)):
             existing.serial_number = serial
         existing.enrolled = True
         existing.status = "active"
-        existing.last_checkin_at = datetime.now(timezone.utc)
+        existing.last_checkin_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         logger.info(f"iOS device updated | udid={udid[:8]}... | event={event}")
 
@@ -3500,7 +3524,7 @@ async def ios_mdm_checkin(request: Request, db: AsyncSession = Depends(get_db)):
             product_name=product_name,
             enrolled=True,
             status="active",
-            last_checkin_at=datetime.now(timezone.utc),
+            last_checkin_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         db.add(ios_dev)
         await db.commit()
@@ -3529,7 +3553,7 @@ async def ios_profile_list_result(request: Request, db: AsyncSession = Depends(g
     if not ios_dev or not ios_dev.enrollment_token:
         return {"status": "ignored"}
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     expected_id = f"com.platform.mdm.{ios_dev.enrollment_token}"
     profile_ids = [p.get("PayloadIdentifier") for p in profiles]
     profile_present = expected_id in profile_ids
@@ -3691,7 +3715,7 @@ async def admin_ios_command(
         command_uuid=cmd_uuid,
         payload=json.dumps(p),
         status="sent" if queued else "error",
-        sent_at=datetime.now(timezone.utc) if queued else None,
+        sent_at=datetime.now(timezone.utc).replace(tzinfo=None) if queued else None,
     )
     db.add(cmd_record)
     await db.commit()
@@ -3803,7 +3827,7 @@ async def monthly_revenue_report(
     _: str = Depends(verify_admin_key),
 ):
     """指定月（デフォルト: 今月）の全体収益サマリー"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
     return await calculate_monthly_revenue(db, y, m)
@@ -3820,7 +3844,7 @@ async def agencies_monthly_report(
     from collections import defaultdict
     from db_models import AgencyDB  # noqa
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
 
@@ -3903,7 +3927,7 @@ async def dealer_monthly_report(
     _: str = Depends(verify_admin_key),
 ):
     """代理店単位の月次精算レポート"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
     report = await get_dealer_monthly_report(db, dealer_id, y, m)
@@ -3920,7 +3944,7 @@ async def all_dealers_monthly_report(
     _: str = Depends(verify_admin_key),
 ):
     """全代理店の月次レポートを収益順で返す"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
     return await get_all_dealers_report(db, y, m)
@@ -3935,7 +3959,7 @@ async def affiliate_report_by_store(
     _: str = Depends(verify_admin_key),
 ):
     """店舗単位のCV・収益レポート。dealer_id も含めて返すことで代理店への紐づきを明示する。"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
 
@@ -4076,7 +4100,7 @@ async def stats_stream(
             if await request.is_disconnected():
                 break
             try:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
                 # 今日のインプレッション・クリック
@@ -4171,7 +4195,7 @@ async def admin_dashboard(
     _: str = Depends(verify_admin_key),
 ):
     """MDM + アフィリエイト統合ダッシュボード"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     total_devices = await db.scalar(select(func.count(DeviceDB.id))) or 0
     active_devices = await db.scalar(
@@ -4351,7 +4375,7 @@ async def dealer_portal(
     if not dealer:
         raise HTTPException(status_code=403, detail="Invalid API key")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
     report = await get_dealer_monthly_report(db, dealer.id, y, m)
@@ -4369,7 +4393,7 @@ async def dealer_portal(
     ) or "<tr><td colspan='4' style='color:#8e8e93;text-align:center'>今月のCVはまだありません</td></tr>"
 
     # 本日統計用データ（portal表示時点で取得）
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     today_impressions = await db.scalar(
         select(func.count(MdmImpressionDB.id)).where(
@@ -4635,7 +4659,7 @@ async def dealer_stats_today(
     if not dealer:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     impressions = await db.scalar(
@@ -4709,7 +4733,7 @@ async def dealer_push(
     if not dealer:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     push_count = await db.scalar(
         select(func.count(DealerPushLogDB.id)).where(
@@ -4875,7 +4899,7 @@ async def advertiser_portal(
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     y = year or now.year
     m = month or now.month
     from calendar import monthrange
@@ -5307,7 +5331,7 @@ async def impression_analytics(
     _: str = Depends(verify_admin_key),
 ):
     from datetime import timedelta
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     since = now - timedelta(hours=24)
 
     rows = await db.execute(
@@ -6164,7 +6188,7 @@ async def dsp_performance(db: AsyncSession = Depends(get_db)):
     from datetime import timedelta
     from sqlalchemy import cast, Float as SAFloat
 
-    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    seven_days_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
 
     rows = await db.execute(
         select(
@@ -6964,7 +6988,7 @@ async def ios_widget_stats(
     """
     from datetime import timedelta
 
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     slot = await db.scalar(
         select(MdmAdSlotDB).where(
@@ -7161,7 +7185,7 @@ async def run_monthly_settlement(
     period = body.get("period_month", "")
     if not period:
         # 前月を自動計算
-        today = datetime.now(timezone.utc)
+        today = datetime.now(timezone.utc).replace(tzinfo=None)
         first = today.replace(day=1)
         last_month = first - timedelta(days=1)
         period = last_month.strftime("%Y-%m")
@@ -7354,7 +7378,7 @@ async def lockscreen_analytics(
 ):
     from datetime import timedelta
     from sqlalchemy import Integer as _Int, cast as _cast
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     rows = await db.execute(
         select(
@@ -7515,7 +7539,7 @@ async def agency_stats(api_key: str = Query(...), db: AsyncSession = Depends(get
         select(func.count(DeviceDB.id)).where(DeviceDB.dealer_id.in_(dealer_ids))
     ) or 0
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     imp_result = await db.execute(
@@ -7548,7 +7572,7 @@ async def agency_stores(api_key: str = Query(...), db: AsyncSession = Depends(ge
         .order_by(DealerDB.store_number, DealerDB.created_at)
     )).scalars().all()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     stores = []
@@ -7647,7 +7671,7 @@ async def agency_revenue(
     # Support 'month' as alias for 'period'; default to current month
     resolved_period = period or month
     if not resolved_period:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         resolved_period = now.strftime("%Y-%m")
     if not _re.match(r'^\d{4}-\d{2}$', resolved_period):
         raise HTTPException(status_code=400, detail="period must be YYYY-MM")
