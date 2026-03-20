@@ -431,6 +431,6 @@ async def record_click(db: AsyncSession, impression_id: str) -> bool:
     if not imp:
         return False
     imp.clicked = True
-    imp.clicked_at = datetime.now(timezone.utc)
+    imp.clicked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
     return True

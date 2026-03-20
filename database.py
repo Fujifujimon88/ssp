@@ -11,7 +11,7 @@ engine = create_async_engine(
     settings.database_url,
     poolclass=NullPool if not _is_sqlite else None,
     connect_args={"check_same_thread": False} if _is_sqlite else {
-        "prepare_threshold": 0,  # pgbouncer（Supabase接続プーラー）対応
+        "statement_cache_size": 0,  # pgbouncer（Supabase接続プーラー）対応
     },
     echo=(settings.app_env == "development"),
 )
