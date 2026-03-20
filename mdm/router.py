@@ -1057,30 +1057,73 @@ async def line_add_friend(token: str = Query(...)):
 
 # ── アフィリエイト ─────────────────────────────────────────────
 
-@router.get("/affiliate/click/{campaign_id}", summary="アフィリエイトクリック追跡")
+JANET_CLICK_BASE = "https://click.j-a-net.jp"
+
+
+@router.get("/affiliate/click/{campaign_id}", summary="アフィリエイトクリック追跡（JANet / smaad / A8.net 対応）")
 async def affiliate_click(
     campaign_id: str,
-    token: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),    # enrollment_token（iOS/Web用）
+    device_id: Optional[str] = Query(None),  # Android ID = ASP UserID
     db: AsyncSession = Depends(get_db),
 ):
+    """
+    アフィリエイトクリックを記録して ASP へリダイレクトする。
+    全ASP共通フロー: 弊社(メディア) → ASP → 広告主ページ → 成果発生 → ASP → 弊社にポストバック
+
+    優先順位:
+      1. JANet: janet_media_id 設定あり
+         → https://click.j-a-net.jp/{media_id}/{original_id}/{device_id}
+         ※ JANet仕様: UserID はURLパスに直接付与（クエリパラメータ不可）
+      2. smaad / A8.net: click_url_template 設定あり
+         → {click_url_template} の {device_id} を置換
+         例: https://tr.smaad.net/redirect?zo=XXX&ad=YYY&uid={device_id}
+      3. フォールバック: campaign.destination_url
+    """
     campaign = await db.get(AffiliateCampaignDB, campaign_id)
     if not campaign or campaign.status != "active":
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     device = None
+    android_device = None
     if token:
         device = await db.scalar(select(DeviceDB).where(DeviceDB.enrollment_token == token))
+    if device_id:
+        android_device = await db.scalar(
+            select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == device_id)
+        )
+
+    resolved_dealer_id = (
+        (android_device.dealer_id if android_device else None)
+        or (device.dealer_id if device else None)
+    )
 
     click = AffiliateClickDB(
         campaign_id=campaign_id,
         enrollment_token=token,
-        dealer_id=device.dealer_id if device else None,
-        platform=device.platform if device else "unknown",
+        device_id=device_id,
+        dealer_id=resolved_dealer_id,
+        platform="android" if device_id else (device.platform if device else "unknown"),
     )
     db.add(click)
     await db.commit()
 
-    logger.info(f"Affiliate click | campaign={campaign_id[:8]}... | token={str(token)[:8]}...")
+    logger.info(
+        f"Affiliate click | campaign={campaign_id[:8]}... "
+        f"| device_id={str(device_id)[:8] if device_id else 'none'}"
+    )
+
+    # 1. JANet: パスにdevice_idを直接付与
+    if campaign.janet_media_id and campaign.janet_original_id and device_id:
+        janet_url = f"{JANET_CLICK_BASE}/{campaign.janet_media_id}/{campaign.janet_original_id}/{device_id}"
+        return RedirectResponse(url=janet_url, status_code=302)
+
+    # 2. smaad / A8.net: テンプレートのdevice_idを置換
+    if campaign.click_url_template and device_id:
+        redirect_url = campaign.click_url_template.replace("{device_id}", device_id)
+        return RedirectResponse(url=redirect_url, status_code=302)
+
+    # 3. フォールバック
     return RedirectResponse(url=campaign.destination_url, status_code=302)
 
 
@@ -1169,6 +1212,102 @@ async def adjust_postback(request: Request, db: AsyncSession = Depends(get_db)):
     return {"status": "ok"}
 
 
+@router.get("/affiliate/postback/{source}", summary="ASP S2Sポストバック受信（JANet / smaad / A8.net 共通）")
+async def asp_postback(
+    source: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    JANet / smaad / A8.net 等 ASP からの成果通知（ポストバック）を受信する共通エンドポイント。
+    全ASP共通フロー: 広告主ページで成果発生 → ASPが弊社に通知 → UserID照合 → CV記録
+
+    【source の値】
+      janet  … https://your-server.com/mdm/affiliate/postback/janet?uid={uid}&price={price}
+      smaad  … https://your-server.com/mdm/affiliate/postback/smaad?uid={uid}&price={price}
+      a8     … https://your-server.com/mdm/affiliate/postback/a8?uid={uid}&price={price}
+
+    【共通パラメータ】
+      uid    = クリック時に付与した device_id（Android ID = ASP側 UserID）
+      price  = CV単価（円）
+      ad     = 原稿ID / 広告ID（任意）
+
+    ※ ASP管理画面のポストバックURL登録例（JANet）:
+      https://your-server.com/mdm/affiliate/postback/janet?uid={uid}&price={price}&ad={ad}
+    ※ smaad の場合: uid パラメータ名が異なる場合は変数名を合わせて登録
+    """
+    params = dict(request.query_params)
+    device_id = params.get("uid") or params.get("user_id")
+    price_str = params.get("price", "0")
+    ad_id = params.get("ad", "")
+
+    try:
+        revenue = float(price_str)
+    except ValueError:
+        revenue = 0.0
+
+    if not device_id:
+        logger.warning(f"{source} postback: uid missing")
+        return {"status": "ok"}  # ASPに 200 を返してリトライを防ぐ
+
+    # 直近クリックレコードを取得（device_id で照合）
+    click = await db.scalar(
+        select(AffiliateClickDB)
+        .where(
+            AffiliateClickDB.device_id == device_id,
+            AffiliateClickDB.converted == False,  # noqa: E712
+        )
+        .order_by(AffiliateClickDB.clicked_at.desc())
+        .limit(1)
+    )
+
+    # 冪等性チェック: 同一 (device_id + source) の重複受信を防ぐ
+    existing = await db.scalar(
+        select(AffiliateConversionDB).where(
+            AffiliateConversionDB.click_token == (click.click_token if click else device_id),
+            AffiliateConversionDB.source == source,
+        )
+    )
+    if existing:
+        logger.info(f"{source} postback duplicate skipped | device={device_id[:8]}...")
+        return {"status": "ok"}
+
+    conversion = AffiliateConversionDB(
+        click_token=click.click_token if click else device_id,
+        campaign_id=click.campaign_id if click else "unknown",
+        source=source,
+        event_type="install",
+        revenue_jpy=revenue,
+        raw_payload=json.dumps(params)[:2000],
+    )
+    db.add(conversion)
+
+    if click:
+        click.converted = True
+
+        # 対応する InstallEventDB を billable に更新
+        install_event = await db.scalar(
+            select(InstallEventDB)
+            .where(
+                InstallEventDB.device_id == device_id,
+                InstallEventDB.campaign_id == click.campaign_id,
+            )
+            .order_by(InstallEventDB.created_at.desc())
+            .limit(1)
+        )
+        if install_event:
+            install_event.billing_status = "billable"
+            install_event.cpi_amount = revenue
+            install_event.postback_status = "success"
+
+    await db.commit()
+    logger.info(
+        f"{source} postback received | device={device_id[:8]}... "
+        f"| price={revenue} | ad={ad_id}"
+    )
+    return {"status": "ok"}
+
+
 class AffiliateCampaignCreate(BaseModel):
     name: str
     category: str = "app"
@@ -1178,6 +1317,11 @@ class AffiliateCampaignCreate(BaseModel):
     appsflyer_dev_key: Optional[str] = None
     adjust_app_token: Optional[str] = None
     gtm_container_id: Optional[str] = None
+    cv_trigger: str = "install"  # "install"=Method1 / "app_open"=Method2
+    postback_url_template: Optional[str] = None  # A8.net/smaad等の直接ポストバックURL
+    janet_media_id: Optional[str] = None    # JANet メディアID
+    janet_original_id: Optional[str] = None  # JANet 原稿ID
+    click_url_template: Optional[str] = None  # smaad/A8.net等クリックURLテンプレート（{device_id}を置換）
 
 
 @router.post("/admin/affiliate/campaigns", summary="アフィリエイト案件登録（管理者）")
@@ -1192,7 +1336,14 @@ async def create_affiliate_campaign(
     await db.commit()
     await db.refresh(campaign)
     base = str(request.base_url).rstrip("/")
-    return {"id": campaign.id, "name": campaign.name, "tracked_url_example": build_tracked_url(campaign.id, "EXAMPLE_TOKEN", base)}
+    return {
+        "id": campaign.id,
+        "name": campaign.name,
+        "cv_trigger": campaign.cv_trigger,
+        "janet_media_id": campaign.janet_media_id,
+        "janet_original_id": campaign.janet_original_id,
+        "tracked_url_example": build_tracked_url(campaign.id, "EXAMPLE_TOKEN", base),
+    }
 
 
 @router.get("/admin/affiliate/campaigns", summary="アフィリエイト案件一覧（管理者）")
@@ -1737,9 +1888,9 @@ async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
 class InstallConfirmedBody(BaseModel):
     device_id: str
     package_name: str
-    campaign_id: str
-    install_ts: int                   # Unix timestamp (ms)
-    apk_sha256: Optional[str] = None  # APK ハッシュ（任意）
+    campaign_id: Optional[str] = None  # 後方互換: サーバー側で解決できない場合のフォールバック
+    install_ts: int                    # Unix timestamp (ms)
+    apk_sha256: Optional[str] = None   # APK ハッシュ（任意）
 
 
 @router.post("/install_confirmed", summary="APKインストール確認（DPC報告）")
@@ -1764,12 +1915,42 @@ async def install_confirmed(
     if device is None:
         raise HTTPException(status_code=404, detail="device_id not enrolled")
 
-    # 2. キャンペーン確認
-    campaign = await db.get(AffiliateCampaignDB, body.campaign_id)
+    # 2. サーバー主権で campaign_id を解決（AndroidCommandDB から取得 → DPCフォールバック）
+    cmd = await db.scalar(
+        select(AndroidCommandDB)
+        .where(
+            AndroidCommandDB.device_id == body.device_id,
+            AndroidCommandDB.command_type == "install_apk",
+            AndroidCommandDB.campaign_id.is_not(None),
+            AndroidCommandDB.status.in_(["sent", "acknowledged"]),
+        )
+        .order_by(AndroidCommandDB.created_at.desc())
+        .limit(1)
+    )
+    resolved_campaign_id = (cmd.campaign_id if cmd else None) or body.campaign_id
+    resolved_store_id = (cmd.store_id if cmd else None) or (device.store_id if device else None)
+    resolved_dealer_id = device.dealer_id if device else None
+
+    if not resolved_campaign_id:
+        raise HTTPException(status_code=400, detail="campaign_id cannot be resolved")
+
+    # 3. キャンペーン確認
+    campaign = await db.get(AffiliateCampaignDB, resolved_campaign_id)
     if campaign is None:
         raise HTTPException(status_code=404, detail="campaign_id not found")
 
-    # 3. 冪等性チェック: 同一(device_id, package_name, campaign_id)で24h以内の重複
+    # 4. cv_trigger を3段階優先順位で解決
+    #    優先: 代理店設定 > キャンペーン設定 > デフォルト("install")
+    dealer = None
+    if resolved_dealer_id:
+        dealer = await db.get(DealerDB, resolved_dealer_id)
+    cv_trigger = (
+        (dealer.default_cv_trigger if dealer else None)
+        or campaign.cv_trigger
+        or "install"
+    )
+
+    # 5. 冪等性チェック: 同一(device_id, package_name, campaign_id)で24h以内の重複
     from datetime import timedelta
     window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     window_start_ts = int(window_start.timestamp() * 1000)
@@ -1778,14 +1959,14 @@ async def install_confirmed(
         select(InstallEventDB).where(
             InstallEventDB.device_id == body.device_id,
             InstallEventDB.package_name == body.package_name,
-            InstallEventDB.campaign_id == body.campaign_id,
+            InstallEventDB.campaign_id == resolved_campaign_id,
             InstallEventDB.install_ts >= window_start_ts,
         )
     )
     if existing_event:
         logger.info(
             f"install_confirmed duplicate | device={body.device_id[:8]}... "
-            f"| pkg={body.package_name} | campaign={body.campaign_id}"
+            f"| pkg={body.package_name} | campaign={resolved_campaign_id}"
         )
         return {
             "status": "recorded",
@@ -1793,16 +1974,20 @@ async def install_confirmed(
             "already_recorded": True,
         }
 
-    # 4. 新規 InstallEvent を記録
+    # 6. 新規 InstallEvent を記録
+    cv_method = "install" if cv_trigger == "install" else "pending_app_open"
     install_event = InstallEventDB(
         device_id=body.device_id,
         package_name=body.package_name,
-        campaign_id=body.campaign_id,
+        campaign_id=resolved_campaign_id,
         install_ts=body.install_ts,
         apk_sha256=body.apk_sha256,
         billing_status="pending",
         postback_status="pending",
         cpi_amount=campaign.reward_amount,
+        cv_method=cv_method,
+        dealer_id=resolved_dealer_id,
+        store_id=resolved_store_id,
     )
     db.add(install_event)
     await db.flush()  # id を確定させる
@@ -1811,18 +1996,21 @@ async def install_confirmed(
 
     logger.info(
         f"install_confirmed recorded | id={install_event_id} "
-        f"| device={body.device_id[:8]}... | pkg={body.package_name}"
+        f"| device={body.device_id[:8]}... | pkg={body.package_name} "
+        f"| cv_trigger={cv_trigger} | dealer={resolved_dealer_id} | store={resolved_store_id}"
     )
 
-    # 5. S2Sポストバック（バックグラウンドで実行）
-    background_tasks.add_task(trigger_postbacks, install_event_id, db)
+    # 7. cv_trigger に従いポストバック or 保留
+    if cv_trigger == "install":
+        # Method 1: 即時ポストバック
+        background_tasks.add_task(trigger_postbacks, install_event_id, db, "install")
 
-    # 6. VTA チェック（バックグラウンドで実行）
+    # VTA チェック（バックグラウンドで実行）
     background_tasks.add_task(
         check_vta,
         body.device_id,
         body.package_name,
-        body.campaign_id,
+        resolved_campaign_id,
         install_event_id,
         db,
     )
@@ -1848,6 +2036,9 @@ class AndroidRegisterBody(BaseModel):
     model: Optional[str] = None
     android_version: Optional[str] = None
     sdk_int: Optional[int] = None
+    gaid: Optional[str] = None       # Google Advertising ID
+    dealer_id: Optional[str] = None  # 所属代理店ID
+    store_id: Optional[str] = None   # 所属店舗ID（代理店内の複数店舗識別）
 
 
 @router.post("/android/register", summary="Android DPCデバイス登録")
@@ -1861,8 +2052,14 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
     )
 
     if existing:
-        # FCMトークン更新
+        # FCMトークン・GAID・dealer_id・store_id 更新
         existing.fcm_token = body.fcm_token or existing.fcm_token
+        if body.gaid:
+            existing.gaid = body.gaid
+        if body.dealer_id:
+            existing.dealer_id = body.dealer_id
+        if body.store_id:
+            existing.store_id = body.store_id
         existing.last_seen_at = datetime.now(timezone.utc)
         await db.commit()
         logger.info(f"Android device updated | device={body.device_id[:8]}...")
@@ -1876,6 +2073,9 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
         model=body.model,
         android_version=body.android_version,
         sdk_int=body.sdk_int,
+        gaid=body.gaid,
+        dealer_id=body.dealer_id,
+        store_id=body.store_id,
         last_seen_at=datetime.now(timezone.utc),
     )
     db.add(device)
@@ -2485,7 +2685,16 @@ async def admin_android_push(
             payload.setdefault("cta_url", creative.get("click_url", ""))
             payload["impression_id"] = creative.get("impression_id")
 
-    cmd = await enqueue_command(db, body.device_id, body.command_type, payload)
+    # install_apk: campaign_id をペイロードから取得してサーバー主権で保存
+    campaign_id_for_cmd = None
+    if body.command_type == "install_apk":
+        campaign_id_for_cmd = body.payload.get("campaign_id")
+
+    cmd = await enqueue_command(
+        db, body.device_id, body.command_type, payload,
+        campaign_id=campaign_id_for_cmd,
+        store_id=device.store_id,
+    )
 
     fcm_sent = False
     if body.send_fcm and device.fcm_token:
@@ -2496,6 +2705,83 @@ async def admin_android_push(
         "status": "queued",
         "fcm_sent": fcm_sent,
     }
+
+
+# ── Android アトリビューション補助エンドポイント ──────────────
+
+
+class UpdateGaidBody(BaseModel):
+    device_id: str
+    gaid: str
+
+
+@router.post("/android/update_gaid", summary="Android端末のGAIDを更新")
+async def android_update_gaid(body: UpdateGaidBody, db: AsyncSession = Depends(get_db)):
+    """DPC APKがGAID取得後に呼び出す。S2Sポストバックの広告識別子に使用される。"""
+    device = await db.scalar(
+        select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == body.device_id)
+    )
+    if not device:
+        raise HTTPException(status_code=404, detail="device not found")
+    device.gaid = body.gaid
+    await db.commit()
+    return {"status": "ok"}
+
+
+class AppOpenBody(BaseModel):
+    device_id: str
+    package_name: str
+    trigger: str = "push_tap"  # push_tap | organic
+
+
+@router.post("/android/app_open", summary="アプリ起動通知（Method 2 CV発火点）")
+async def android_app_open(
+    body: AppOpenBody,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    DPCがプッシュ通知タップ後のアプリ起動を報告するエンドポイント（Method 2 / CPE）。
+
+    - install_events で cv_method="pending_app_open" かつ app_open_at が未設定のレコードを探す
+    - cv_trigger="app_open" のキャンペーンの場合のみポストバックを発火する
+    """
+    install_event = await db.scalar(
+        select(InstallEventDB)
+        .where(
+            InstallEventDB.device_id == body.device_id,
+            InstallEventDB.package_name == body.package_name,
+            InstallEventDB.app_open_at.is_(None),
+            InstallEventDB.cv_method == "pending_app_open",
+        )
+        .order_by(InstallEventDB.created_at.desc())
+        .limit(1)
+    )
+    if not install_event:
+        return {"status": "no_pending_install"}
+
+    # cv_trigger を再確認（代理店設定優先）
+    campaign = await db.get(AffiliateCampaignDB, install_event.campaign_id)
+    device = await db.scalar(
+        select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == body.device_id)
+    )
+    dealer = None
+    if device and device.dealer_id:
+        dealer = await db.get(DealerDB, device.dealer_id)
+    cv_trigger = (
+        (dealer.default_cv_trigger if dealer else None)
+        or (campaign.cv_trigger if campaign else "install")
+        or "install"
+    )
+
+    if cv_trigger != "app_open":
+        return {"status": "skipped", "reason": "campaign uses install trigger"}
+
+    install_event.app_open_at = datetime.now(timezone.utc)
+    install_event.cv_method = "app_open"
+    await db.commit()
+    background_tasks.add_task(trigger_postbacks, install_event.id, db, "app_open")
+    return {"status": "recorded", "install_event_id": install_event.id}
 
 
 @router.get("/admin/android/devices", summary="Androidデバイス一覧（管理者）")
@@ -2923,6 +3209,63 @@ async def all_dealers_monthly_report(
     y = year or now.year
     m = month or now.month
     return await get_all_dealers_report(db, y, m)
+
+
+@router.get("/admin/affiliate/report/store/{store_id}", summary="店舗別月次CVレポート（管理者）")
+async def affiliate_report_by_store(
+    store_id: str,
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """店舗単位のCV・収益レポート。dealer_id も含めて返すことで代理店への紐づきを明示する。"""
+    now = datetime.now(timezone.utc)
+    y = year or now.year
+    m = month or now.month
+
+    # 月の開始・終了 Unix timestamp (ms)
+    from calendar import monthrange
+    period_start = int(datetime(y, m, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    period_end = int(
+        datetime(y, m, monthrange(y, m)[1], 23, 59, 59, tzinfo=timezone.utc).timestamp() * 1000
+    )
+
+    rows = await db.execute(
+        select(InstallEventDB)
+        .where(
+            InstallEventDB.store_id == store_id,
+            InstallEventDB.install_ts >= period_start,
+            InstallEventDB.install_ts <= period_end,
+            InstallEventDB.billing_status == "billable",
+        )
+        .order_by(InstallEventDB.created_at.desc())
+    )
+    events = rows.scalars().all()
+
+    total_cv = len(events)
+    total_revenue = sum(e.cpi_amount for e in events)
+    dealer_id = events[0].dealer_id if events else None
+
+    return {
+        "store_id": store_id,
+        "dealer_id": dealer_id,
+        "period": f"{y:04d}-{m:02d}",
+        "total_cv": total_cv,
+        "total_revenue_jpy": round(total_revenue, 2),
+        "events": [
+            {
+                "id": e.id,
+                "device_id": e.device_id,
+                "package_name": e.package_name,
+                "campaign_id": e.campaign_id,
+                "cv_method": e.cv_method,
+                "cpi_amount": e.cpi_amount,
+                "install_ts": e.install_ts,
+            }
+            for e in events
+        ],
+    }
 
 
 @router.get("/admin/affiliate/conversions", summary="CV一覧（管理者）")

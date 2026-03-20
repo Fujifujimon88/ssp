@@ -66,7 +66,7 @@ async function adminPut(request, endpoint, options = {}) {
 async function setAdminKeyInBrowser(page) {
   await page.evaluate((key) => localStorage.setItem("ssp_admin_key", key), ADMIN_KEY);
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("domcontentloaded");
 }
 
 module.exports = { loadAuth, apiGet, apiPost, adminGet, adminPut, setAdminKeyInBrowser };

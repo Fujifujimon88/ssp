@@ -4,6 +4,7 @@ DPC APKからインストール確認を受けた後、計測パートナー（A
 S2Sポストバックを送信してインストールイベントを計上する。
 """
 import logging
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -104,12 +105,61 @@ async def send_adjust_postback(
         return False
 
 
-async def trigger_postbacks(install_event_id: str, db: AsyncSession) -> None:
+async def send_direct_asp_postback(
+    install_event: InstallEventDB,
+    campaign: AffiliateCampaignDB,
+    device: AndroidDeviceDB,
+    event_type: str = "install",
+) -> bool:
+    """postback_url_template を使って ASP（A8.net / smaad / Felmat等）に直接ポストバックを送信する。
+
+    テンプレート変数:
+      {device_id} {enrollment_token} {dealer_id} {store_id}
+      {amount} {install_ts} {package_name} {event_type}
+    """
+    if not campaign.postback_url_template:
+        return False
+
+    try:
+        url = campaign.postback_url_template.format(
+            device_id=urllib.parse.quote(install_event.device_id, safe=""),
+            enrollment_token=urllib.parse.quote(device.enrollment_token or "", safe=""),
+            dealer_id=urllib.parse.quote(install_event.dealer_id or "", safe=""),
+            store_id=urllib.parse.quote(install_event.store_id or "", safe=""),
+            amount=int(install_event.cpi_amount),
+            install_ts=install_event.install_ts,
+            package_name=urllib.parse.quote(install_event.package_name, safe=""),
+            event_type=urllib.parse.quote(event_type, safe=""),
+        )
+    except KeyError as exc:
+        logger.warning(f"send_direct_asp_postback: invalid template variable {exc}")
+        return False
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            success = 200 <= resp.status_code < 300
+            logger.info(
+                f"Direct ASP postback | event_type={event_type} | device={install_event.device_id[:8]}... "
+                f"| status={resp.status_code}"
+            )
+            return success
+    except Exception as exc:
+        logger.warning(f"send_direct_asp_postback error: {exc}")
+        return False
+
+
+async def trigger_postbacks(
+    install_event_id: str,
+    db: AsyncSession,
+    event_type: str = "install",
+) -> None:
     """インストールイベントに対して登録済み計測パートナーへポストバックを送信する。
 
     - install_event / campaign / device をロード
     - appsflyer_dev_key が設定されていれば AppsFlyer へ送信
     - adjust_app_token が設定されていれば Adjust へ送信
+    - postback_url_template が設定されていれば直接ASPへ送信
     - 各送信結果を PostbackLogDB に記録
     - install_event の postback_status / billing_status を更新する
     """
@@ -160,6 +210,20 @@ async def trigger_postbacks(install_event_id: str, db: AsyncSession) -> None:
         )
         db.add(log)
         results.append(adj_success)
+
+    # 直接ASPポストバック（A8.net / smaad / Felmat / ValueCommerce等）
+    if campaign.postback_url_template:
+        asp_success = await send_direct_asp_postback(install_event, campaign, device, event_type)
+        log = PostbackLogDB(
+            install_event_id=install_event_id,
+            provider="direct_asp",
+            request_url=campaign.postback_url_template[:500],
+            response_status=200 if asp_success else None,
+            success=asp_success,
+            attempted_at=datetime.now(timezone.utc),
+        )
+        db.add(log)
+        results.append(asp_success)
 
     install_event.postback_attempts += 1
 

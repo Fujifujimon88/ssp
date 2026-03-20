@@ -11,6 +11,7 @@ DPC APKが定期ポーリングして実行するコマンドを管理する。
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,8 @@ async def enqueue_command(
     device_id: str,
     command_type: str,
     payload: dict,
+    campaign_id: Optional[str] = None,
+    store_id: Optional[str] = None,
 ) -> AndroidCommandDB:
     """
     デバイスへのコマンドをキューに追加する。
@@ -34,6 +37,8 @@ async def enqueue_command(
         device_id: Android ID
         command_type: コマンド種別
         payload: コマンドパラメータ（dict）
+        campaign_id: アフィリエイトキャンペーンID（サーバー主権で保存）
+        store_id: 店舗ID（代理店内での店舗識別）
 
     Returns:
         作成されたコマンドレコード
@@ -43,6 +48,8 @@ async def enqueue_command(
         command_type=command_type,
         payload=json.dumps(payload, ensure_ascii=False),
         status="pending",
+        campaign_id=campaign_id,
+        store_id=store_id,
     )
     db.add(cmd)
     await db.commit()

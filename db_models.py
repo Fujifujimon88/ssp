@@ -89,6 +89,8 @@ class DealerDB(Base):
     store_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     region: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # CV計測方法デフォルト（NULL=キャンペーン設定に従う / "install" / "app_open"）
+    default_cv_trigger: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     devices: Mapped[list["DeviceDB"]] = relationship("DeviceDB", back_populates="dealer")
     ad_assignments: Mapped[list["StoreAdAssignmentDB"]] = relationship("StoreAdAssignmentDB", back_populates="dealer")
@@ -178,6 +180,18 @@ class AffiliateCampaignDB(Base):
     # 担当代理店 ID（nullable: 直販キャンペーンは NULL）
     agency_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agencies.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # CV計測方法: "install"=Method1（プリインストール完了でCV）/ "app_open"=Method2（プッシュ通知タップでCV）
+    cv_trigger: Mapped[str] = mapped_column(String(20), default="install")
+    # 直接ASPポストバックURLテンプレート（A8.net/smaad等）
+    # 変数: {device_id} {enrollment_token} {dealer_id} {store_id} {amount} {install_ts} {package_name} {event_type}
+    postback_url_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # JANet連携: クリックURL = https://click.j-a-net.jp/{janet_media_id}/{janet_original_id}/{device_id}
+    janet_media_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    janet_original_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # smaad / A8.net 等クリックURLテンプレート（{device_id} を置換）
+    # 例: https://tr.smaad.net/redirect?zo=745468462&ad=198337123&uid={device_id}
+    # 例: https://px.a8.net/a8fly/earnings?a8mat=XXX&uid={device_id}
+    click_url_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     clicks: Mapped[list["AffiliateClickDB"]] = relationship("AffiliateClickDB", back_populates="campaign")
     creatives: Mapped[list["CreativeDB"]] = relationship("CreativeDB", back_populates="campaign")
@@ -190,6 +204,7 @@ class AffiliateClickDB(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_campaigns.id"), index=True)
     enrollment_token: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
+    device_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)  # Android ID（JANet UserID）
     dealer_id: Mapped[str] = mapped_column(String(36), index=True, nullable=True)
     click_token: Mapped[str] = mapped_column(String(64), unique=True, index=True, default=_uuid)
     platform: Mapped[str] = mapped_column(String(10), nullable=True)
@@ -229,6 +244,8 @@ class AndroidDeviceDB(Base):
     android_version: Mapped[str] = mapped_column(String(20), nullable=True)
     sdk_int: Mapped[int] = mapped_column(Integer, nullable=True)
     gaid: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)       # Google Advertising ID
+    dealer_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)  # 所属代理店
+    store_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)   # 所属店舗
     status: Mapped[str] = mapped_column(String(20), default="active")             # active/unenrolled
     registered_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -250,6 +267,9 @@ class AndroidCommandDB(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     acked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    # アトリビューション追跡: サーバー側でキャンペーン・店舗を保存
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    store_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     device: Mapped["AndroidDeviceDB"] = relationship("AndroidDeviceDB", back_populates="commands")
 
@@ -449,6 +469,11 @@ class InstallEventDB(Base):
     attribution_type: Mapped[str] = mapped_column(String(20), default="click")  # click | view_through
     vta_impression_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    # アトリビューション強化フィールド
+    cv_method: Mapped[str] = mapped_column(String(20), default="install")         # install | app_open | pending_app_open
+    app_open_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dealer_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    store_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
 
 class PostbackLogDB(Base):
