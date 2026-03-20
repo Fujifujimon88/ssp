@@ -6335,33 +6335,45 @@ async def list_agencies_with_stores(
     db: AsyncSession = Depends(get_db),
     _=Depends(verify_admin_key),
 ):
-    """代理店ごとに配下の店舗リストを返す"""
+    """代理店ごとに配下の店舗リストを返す（2クエリで取得、N+1回避）"""
     from db_models import AgencyDB  # noqa
+    from collections import defaultdict
+
+    # 1クエリ目: 全代理店を取得
     agencies = (await db.scalars(select(AgencyDB).order_by(AgencyDB.id))).all()
-    result = []
-    for ag in agencies:
-        stores_rows = (await db.scalars(
-            select(DealerDB)
-            .where(DealerDB.agency_id == ag.id)
-            .order_by(DealerDB.store_number)
-        )).all()
-        result.append({
+    if not agencies:
+        return {"agencies": []}
+
+    agency_ids = [ag.id for ag in agencies]
+
+    # 2クエリ目: 該当代理店の全店舗を一括取得
+    stores_rows = (await db.scalars(
+        select(DealerDB)
+        .where(DealerDB.agency_id.in_(agency_ids))
+        .order_by(DealerDB.agency_id, DealerDB.store_number)
+    )).all()
+
+    # agency_id → stores のマップを構築
+    stores_map: dict[int, list] = defaultdict(list)
+    for s in stores_rows:
+        stores_map[s.agency_id].append({
+            "id": s.id,
+            "name": s.name,
+            "store_code": s.store_code,
+            "store_number": s.store_number,
+            "address": s.address,
+            "status": s.status,
+        })
+
+    return {"agencies": [
+        {
             "id": ag.id,
             "name": ag.name,
             "contact_email": ag.contact_email,
-            "stores": [
-                {
-                    "id": s.id,
-                    "name": s.name,
-                    "store_code": s.store_code,
-                    "store_number": s.store_number,
-                    "address": s.address,
-                    "status": s.status,
-                }
-                for s in stores_rows
-            ],
-        })
-    return {"agencies": result}
+            "stores": stores_map[ag.id],
+        }
+        for ag in agencies
+    ]}
 
 
 @router.get("/admin/stores/{dealer_id}/ad-assignments", summary="店舗の広告設定一覧")
