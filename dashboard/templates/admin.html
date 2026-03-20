@@ -187,8 +187,8 @@
     <a href="#devices" data-section="devices" onclick="showSection('devices'); return false;">📲 デバイス管理</a>
     <a href="#billing" data-section="billing" onclick="showSection('billing'); return false;">💰 収益・請求</a>
     <a href="#wifi-triggers" data-section="wifi-triggers" onclick="showSection('wifi-triggers'); return false;">🌐 Wi-Fiトリガー</a>
-    <a href="#time-slots" data-section="time-slots" onclick="showSection('time-slots'); return false;">⏱ 時間帯単価</a>
-    <a href="#experiments" data-section="experiments" onclick="showSection('experiments'); return false;">🧪 A/Bテスト</a>
+    <a href="/time-slots" data-section="time-slots" onclick="showSection('time-slots'); return false;">⏱ 時間帯単価</a>
+    <a href="/experiments" data-section="experiments" onclick="showSection('experiments'); return false;">🧪 A/Bテスト</a>
     <a href="#ad-slots" data-section="ad-slots" onclick="showSection('ad-slots'); return false;">📦 広告枠管理</a>
     <a href="#analytics" data-section="analytics" onclick="showSection('analytics'); return false;">📈 アナリティクス</a>
     <a href="#consent-logs" data-section="consent-logs" onclick="showSection('consent-logs'); return false;">📋 同意ログ</a>
@@ -1315,8 +1315,10 @@ function showSection(id) {
   document.querySelectorAll('nav a[data-section]').forEach(a => a.classList.remove('active'));
   const navLink = document.querySelector(`nav a[data-section="${id}"]`);
   if (navLink) navLink.classList.add('active');
-  // ハッシュを更新（スクロールなし）
-  history.replaceState(null, '', '#' + id);
+  // URL更新: 独立パスを持つセクションはクリーンURLで、それ以外はハッシュで管理
+  const STANDALONE_PATHS = { 'time-slots': '/time-slots', 'experiments': '/experiments' };
+  const newUrl = STANDALONE_PATHS[id] ? STANDALONE_PATHS[id] : '/admin#' + id;
+  history.replaceState(null, '', newUrl);
 }
 
 // ── 管理者キー管理 ─────────────────────────────────────────
@@ -3231,8 +3233,9 @@ async function triggerMlTrain() {
   }
 }
 
-// 初期化 — ハッシュに対応するセクションを表示（デフォルト: mdm-dashboard）
-const _initSection = (location.hash.slice(1)) || 'mdm-dashboard';
+// 初期化 — サーバー指定セクション > ハッシュ > デフォルト の優先順位で表示
+const _serverSection = '{{ initial_section }}';
+const _initSection = _serverSection || (location.hash.slice(1)) || 'mdm-dashboard';
 showSection(_initSection);
 
 // ブラウザの戻る/進むに対応

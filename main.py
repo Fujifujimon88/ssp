@@ -228,10 +228,25 @@ async def dashboard(request: Request):
 
 @app.get("/admin", response_class=HTMLResponse, summary="管理画面")
 async def admin(request: Request):
-    # publisher一覧はクライアント側JSが認証付きAPIで取得するため、SSRでは渡さない
     return templates.TemplateResponse(
         "admin.html",
-        {"request": request, "version": APP_VERSION}
+        {"request": request, "version": APP_VERSION, "initial_section": ""}
+    )
+
+
+@app.get("/time-slots", response_class=HTMLResponse, summary="時間帯単価管理")
+async def time_slots_page(request: Request):
+    return templates.TemplateResponse(
+        "admin.html",
+        {"request": request, "version": APP_VERSION, "initial_section": "time-slots"}
+    )
+
+
+@app.get("/experiments", response_class=HTMLResponse, summary="A/Bテスト管理")
+async def experiments_page(request: Request):
+    return templates.TemplateResponse(
+        "admin.html",
+        {"request": request, "version": APP_VERSION, "initial_section": "experiments"}
     )
 
 
