@@ -13,6 +13,8 @@ import android.telephony.TelephonyManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.platform.dpc.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,10 +24,10 @@ import kotlinx.coroutines.withContext
  * MDM DPC メインアクティビティ
  *
  * 起動フロー:
- *   1. Android ID（device_id）を取得してSharedPreferencesに保存
- *   2. 未登録の場合はバックエンドへ登録
- *   3. WorkManagerでコマンドポーリングを開始
- *   4. デバイス管理者が有効になっているか確認・案内
+ *   1. 旧 mdm_prefs（平文）から mdm_prefs_encrypted へのマイグレーション（一回限り）
+ *   2. Android ID（device_id）を取得してEncryptedSharedPreferencesに保存
+ *   3. enrollment_token あり & registered=false → 再登録フロー（機種変更後の復旧）
+ *   4. WorkManagerでコマンドポーリングを開始
  */
 class MainActivity : AppCompatActivity() {
 
@@ -43,12 +45,53 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 旧平文 SharedPreferences から暗号化版へのマイグレーション（初回のみ）
+        migrateLegacyPrefsIfNeeded()
+
         // Android IDをデバイス識別子として使用
         deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
         binding.tvDeviceId.text = "Device ID: ${deviceId.take(8)}..."
 
         setupButtons()
         autoInit()
+    }
+
+    /**
+     * 旧 mdm_prefs（平文）から mdm_prefs_encrypted（暗号化）へ一回限りのマイグレーション。
+     * enrollment_token・device_id・registered フラグを移行し、旧ファイルを削除する。
+     */
+    private fun migrateLegacyPrefsIfNeeded() {
+        val oldPrefs = getSharedPreferences("mdm_prefs", Context.MODE_PRIVATE)
+        val oldToken = oldPrefs.getString("enrollment_token", null) ?: return
+
+        val newPrefs = getEncryptedPrefs()
+        if (newPrefs.getString("enrollment_token", null) != null) return  // 移行済み
+
+        newPrefs.edit()
+            .putString("enrollment_token", oldToken)
+            .putString("device_id", oldPrefs.getString("device_id", null))
+            .putBoolean("registered", oldPrefs.getBoolean("registered", false))
+            .apply()
+
+        // enrollment_token のみ平文バックアップファイルにも保存（BackupAgent用）
+        getSharedPreferences("mdm_token_backup", Context.MODE_PRIVATE)
+            .edit().putString("enrollment_token", oldToken).apply()
+
+        oldPrefs.edit().clear().apply()
+        deleteSharedPreferences("mdm_prefs")
+    }
+
+    fun getEncryptedPrefs(): android.content.SharedPreferences {
+        val masterKey = MasterKey.Builder(this)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            this,
+            "mdm_prefs_encrypted",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
     }
 
     private fun setupButtons() {
@@ -77,15 +120,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun autoInit() {
-        val prefs = getSharedPreferences("mdm_prefs", Context.MODE_PRIVATE)
+        val prefs = getEncryptedPrefs()
 
-        // device_idを保存
+        // device_idを保存（常に最新のAndroid IDで上書き）
         prefs.edit().putString("device_id", deviceId).apply()
 
-        // エンロールトークンをインテント or Prefsから取得
+        // enrollment_token のバックアップファイルにも同期（BackupAgent用）
         val token = intent.getStringExtra("enrollment_token")
             ?: prefs.getString("enrollment_token", null)
-        token?.let { prefs.edit().putString("enrollment_token", it).apply() }
+        if (token != null) {
+            prefs.edit().putString("enrollment_token", token).apply()
+            getSharedPreferences("mdm_token_backup", Context.MODE_PRIVATE)
+                .edit().putString("enrollment_token", token).apply()
+        }
 
         // 管理者権限確認
         if (dpm.isAdminActive(adminComponent)) {
@@ -94,7 +141,7 @@ class MainActivity : AppCompatActivity() {
             appendLog("デバイス管理者: 無効 → 「有効化」ボタンをタップしてください")
         }
 
-        // WorkManagerスケジュール + 常駐サービス起動（DPC-04）
+        // WorkManagerスケジュール + 常駐サービス起動
         CommandPoller.schedule(this)
         PrefetchWorker.schedule(this)
         MdmForegroundService.start(this)
@@ -102,7 +149,7 @@ class MainActivity : AppCompatActivity() {
         appendLog("コンテンツプリフェッチ: 開始（30分間隔）")
         appendLog("常駐サービス: 起動")
 
-        // 初回登録
+        // 初回登録 or 機種変更後の再登録（BackupAgentがregistered=falseにリセット済みの場合も含む）
         val isRegistered = prefs.getBoolean("registered", false)
         if (!isRegistered) {
             registerToServer()
@@ -118,8 +165,9 @@ class MainActivity : AppCompatActivity() {
     private fun registerToServer() {
         binding.tvStatus.text = "登録中..."
         lifecycleScope.launch {
-            val prefs = getSharedPreferences("mdm_prefs", Context.MODE_PRIVATE)
+            val prefs = getEncryptedPrefs()
             val token = prefs.getString("enrollment_token", null)
+            val fingerprint = "${Build.MANUFACTURER}:${Build.MODEL}:${Build.BRAND}".hashCode().toString(16)
 
             val success = withContext(Dispatchers.IO) {
                 MdmApiClient.registerDevice(
@@ -130,6 +178,7 @@ class MainActivity : AppCompatActivity() {
                     model = Build.MODEL,
                     androidVersion = Build.VERSION.RELEASE,
                     sdkInt = Build.VERSION.SDK_INT,
+                    deviceFingerprint = fingerprint,
                 )
             }
 

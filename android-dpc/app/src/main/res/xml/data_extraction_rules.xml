@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    バックアップ対象の明示的定義（Android 12+ / API 31+）
+
+    設計方針:
+      - mdm_token_backup.xml のみバックアップ（enrollment_tokenのみ平文保存）
+      - mdm_prefs_encrypted.xml は KeyStore 依存のため除外（別端末で復号不可）
+      - その他の設定ファイルはデバイス固有データのため除外
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- enrollment_token のみ平文バックアップ -->
+        <include domain="sharedpref" path="mdm_token_backup.xml" />
+        <!-- KeyStore依存の暗号化ファイルは除外（別端末で復号不可） -->
+        <exclude domain="sharedpref" path="mdm_prefs_encrypted.xml" />
+        <exclude domain="sharedpref" path="mdm_prefs.xml" />
+        <exclude domain="sharedpref" path="mdm_freq_cap.xml" />
+        <exclude domain="sharedpref" path="mdm_lockscreen.xml" />
+        <exclude domain="sharedpref" path="mdm_pending_installs.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- enrollment_token のみデバイス間転送 -->
+        <include domain="sharedpref" path="mdm_token_backup.xml" />
+        <exclude domain="sharedpref" path="mdm_prefs_encrypted.xml" />
+        <exclude domain="sharedpref" path="mdm_prefs.xml" />
+        <exclude domain="sharedpref" path="mdm_freq_cap.xml" />
+        <exclude domain="sharedpref" path="mdm_lockscreen.xml" />
+        <exclude domain="sharedpref" path="mdm_pending_installs.xml" />
+    </device-transfer>
+</data-extraction-rules>

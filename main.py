@@ -57,12 +57,28 @@ auction_engine = AuctionEngine()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
+    from database import AsyncSessionLocal
+    from mdm.tasks.health_check import run_health_check
+
+    async def _schedule_health_check():
+        while True:
+            await asyncio.sleep(3600)  # 1時間ごと
+            async with AsyncSessionLocal() as db:
+                try:
+                    await run_health_check(db)
+                except Exception as e:
+                    logger.error(f"HealthCheck task failed: {e}")
+
     # DSP登録（開発: モックDSP / 本番: HttpDSPに差し替え）
     for dsp in create_mock_dsps():
         auction_engine.register_dsp(dsp.dsp_id, dsp)
 
+    hc_task = asyncio.create_task(_schedule_health_check())
     logger.info(f"SSP Platform started | env={settings.app_env} | dsps={auction_engine.registered_dsp_ids()}")
     yield
+
+    hc_task.cancel()
 
     for dsp in auction_engine._dsps.values():
         if hasattr(dsp, "close"):

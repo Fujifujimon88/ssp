@@ -402,9 +402,12 @@
       </div>
       <!-- iOS一覧 -->
       <div id="devices-ios" style="display:none">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+          <button class="btn btn-ghost" style="font-size:12px" onclick="bulkRestoreProfiles()">🔄 一括再push（missing全件）</button>
+        </div>
         <div id="ios-loading" class="loading">読み込み中...</div>
         <table id="ios-table" style="display:none">
-          <thead><tr><th>UDID</th><th>デバイス名</th><th>モデル</th><th>iOS</th><th>Pushトークン</th><th>最終接続</th><th>操作</th></tr></thead>
+          <thead><tr><th>UDID</th><th>デバイス名</th><th>モデル</th><th>iOS</th><th>Pushトークン</th><th>プロファイル</th><th>最終接続</th><th>操作</th></tr></thead>
           <tbody id="ios-tbody"></tbody>
         </table>
         <div id="ios-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">iOSデバイスが登録されていません。</div>
@@ -2164,14 +2167,25 @@ async function loadAndroidDevices() {
       const fcmBadge = d.has_fcm
         ? '<span style="color:var(--green);font-size:11px">✓ あり</span>'
         : '<span style="color:var(--muted);font-size:11px">なし</span>';
+      const suspiciousBadge = d.migration_suspicious
+        ? ' <span title="機種変更時に端末不一致が検知されました" style="cursor:help">⚠️</span>'
+        : '';
+      const statusBadge = d.status === 'inactive'
+        ? '<span style="color:#f97316;font-size:11px">🟠 inactive</span> '
+        : d.status === 'migrated'
+          ? '<span style="color:#3b82f6;font-size:11px">🔵 migrated</span> '
+          : '';
       const lastSeen = d.last_seen_at ? d.last_seen_at.slice(0,16).replace('T',' ') : '-';
       return `<tr>
-        <td style="font-family:monospace;font-size:12px">${d.device_id.slice(0,8)}…</td>
+        <td style="font-family:monospace;font-size:12px">${d.device_id.slice(0,8)}…${suspiciousBadge}</td>
         <td>${d.model || '-'}</td>
         <td>${d.android_version || '-'}</td>
         <td>${fcmBadge}</td>
-        <td style="font-size:12px;color:var(--muted)">${lastSeen}</td>
-        <td><button class="btn btn-ghost" style="font-size:12px" onclick="showCommandModal('${d.device_id}')">コマンド送信</button></td>
+        <td style="font-size:12px;color:var(--muted)">${statusBadge}${lastSeen}</td>
+        <td style="display:flex;gap:4px;flex-wrap:wrap">
+          <button class="btn btn-ghost" style="font-size:12px" onclick="showCommandModal('${d.device_id}')">コマンド送信</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="copyReenrollUrl('${d.enrollment_token}')">🔗 再登録URL</button>
+        </td>
       </tr>`;
     }).join('');
     table.style.display = '';
@@ -2194,6 +2208,11 @@ async function loadIosDevices() {
       const pushBadge = d.has_push_token
         ? '<span style="color:var(--green);font-size:11px">✓ あり</span>'
         : '<span style="color:var(--muted);font-size:11px">なし</span>';
+      const profileBadge = {
+        'present':      '<span style="color:var(--green);font-size:11px">🟢 present</span>',
+        'missing':      '<span style="color:var(--red,#ef4444);font-size:11px">🔴 missing</span>',
+        're_installing':'<span style="color:#f59e0b;font-size:11px">🟡 再配信中</span>',
+      }[d.profile_status] || '<span style="color:var(--muted);font-size:11px">不明</span>';
       const lastSeen = d.last_checkin_at ? d.last_checkin_at.slice(0,16).replace('T',' ') : '-';
       return `<tr>
         <td style="font-family:monospace;font-size:11px">${d.udid.slice(0,8)}…</td>
@@ -2201,10 +2220,13 @@ async function loadIosDevices() {
         <td>${d.product_name || '-'}</td>
         <td>${d.os_version || '-'}</td>
         <td>${pushBadge}</td>
+        <td>${profileBadge}</td>
         <td style="font-size:12px;color:var(--muted)">${lastSeen}</td>
-        <td style="display:flex;gap:4px">
+        <td style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-ghost" style="font-size:11px" onclick="sendIosPush('${d.udid}')" ${d.has_push_token ? '' : 'disabled title="Pushトークンなし"'}>📲 Push</button>
           <button class="btn btn-ghost" style="font-size:11px" onclick="showIosCommandModal('${d.udid}')">📋 CMD</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="restoreIosProfile('${d.udid}')" ${d.has_push_token ? '' : 'disabled title="Pushトークンなし"'}>🔄 再push</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="copyReenrollUrl('${d.enrollment_token}')">🔗 再登録URL</button>
         </td>
       </tr>`;
     }).join('');
@@ -2596,6 +2618,36 @@ async function setDealerRegion(dealerId, currentRegion) {
   });
   if (res.ok) { alert('リージョンを更新しました'); loadDealers(); }
   else { const d = await res.json(); alert(d.detail || '更新失敗'); }
+}
+
+// ── iOS プロファイル復旧・再登録URL・一括再push ──────────────────────────
+async function restoreIosProfile(udid) {
+  if (!confirm(`UDID: ${udid.slice(0,8)}… のプロファイルを再pushします。よろしいですか？`)) return;
+  const res = await fetch(`/mdm/admin/device/${udid}/restore-profile`, { method: 'POST', headers: adminHeaders() });
+  const d = await res.json();
+  if (res.ok) { alert('再push完了'); loadIosDevices(); }
+  else alert(d.detail || 'エラー');
+}
+
+async function copyReenrollUrl(token) {
+  if (!token) { alert('enrollment_tokenが取得できません'); return; }
+  const res = await fetch(`/mdm/admin/device/${token}/re-enroll-url`, { headers: adminHeaders() });
+  const d = await res.json();
+  if (!res.ok) { alert(d.detail || 'URL取得失敗'); return; }
+  try {
+    await navigator.clipboard.writeText(d.url);
+    alert('再登録URLをクリップボードにコピーしました:\n' + d.url);
+  } catch {
+    prompt('以下のURLをコピーしてください:', d.url);
+  }
+}
+
+async function bulkRestoreProfiles() {
+  if (!confirm('profile_status=missingの全iOSデバイスにプロファイルを再pushします。よろしいですか？\n（100件/分でバッチ送信されます）')) return;
+  const res = await fetch('/mdm/admin/bulk-restore', { method: 'POST', headers: adminHeaders() });
+  const d = await res.json();
+  if (res.ok) alert(`一括再push開始: 対象 ${d.queued} 件`);
+  else alert(d.detail || 'エラー');
 }
 
 // ── iOS APNs Push & MDMコマンド ──────────────────────────

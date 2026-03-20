@@ -2,11 +2,12 @@
 
 DPC APKが定期ポーリングして実行するコマンドを管理する。
 コマンド種別:
-  install_apk     - APKサイレントインストール（CPI案件）
-  add_webclip     - ホーム画面にWebクリップ追加
+  install_apk       - APKサイレントインストール（CPI案件）
+  add_webclip       - ホーム画面にWebクリップ追加
   show_notification - FCMプッシュ通知（エル投げ連携）
   update_lockscreen - ロック画面広告コンテンツ更新
-  remove_app      - アプリアンインストール
+  remove_app        - アプリアンインストール
+  remove_mdm_profile - MDM管理権限の自己解除（optout）
 """
 import json
 import logging
@@ -111,3 +112,16 @@ async def update_device_last_seen(db: AsyncSession, device_id: str) -> None:
     if device:
         device.last_seen_at = datetime.now(timezone.utc)
         await db.commit()
+
+
+async def enqueue_remove_mdm_profile(db: AsyncSession, device_id: str) -> AndroidCommandDB:
+    """
+    MDM管理権限の自己解除コマンドをキューに追加する（optout用）。
+    DPCが次回ポーリング時に受け取り、Device Admin権限を自己解除する。
+    """
+    return await enqueue_command(
+        db=db,
+        device_id=device_id,
+        command_type="remove_mdm_profile",
+        payload={"reason": "user_optout"},
+    )

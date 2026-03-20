@@ -2,6 +2,8 @@ package com.platform.dpc
 
 import android.content.Context
 import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -23,8 +25,21 @@ class CommandPoller(
     params: WorkerParameters,
 ) : Worker(context, params) {
 
+    private fun getEncryptedPrefs(): android.content.SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            context,
+            "mdm_prefs_encrypted",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
+
     override fun doWork(): Result {
-        val prefs = context.getSharedPreferences("mdm_prefs", Context.MODE_PRIVATE)
+        val prefs = getEncryptedPrefs()
         val deviceId = prefs.getString("device_id", null) ?: run {
             Log.w(TAG, "device_id not set, skipping poll")
             return Result.success()
