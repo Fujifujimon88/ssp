@@ -1718,6 +1718,11 @@ class AffiliateCampaignCreate(BaseModel):
     click_url_template: Optional[str] = None  # smaad/A8.net等クリックURLテンプレート（{device_id}を置換）
     enable_points: bool = False              # ポイント付与を行うか（デフォルト: しない）
     point_rate: float = 1.0                  # 1円=何ポイント（還元率調整）
+    dealer_revenue_rate: float = 0.0         # 代理店獲得金額率 (%)
+    user_point_rate: float = 0.0             # ユーザー獲得ポイント率 (%)
+    tracking_url: Optional[str] = None       # トラッキングURL（マクロ対応）
+    blacklist_partner_ids: Optional[str] = None   # 除外パートナーID（カンマ区切り）
+    whitelist_partner_ids: Optional[str] = None   # 許可パートナーID（カンマ区切り）
 
 
 @router.post("/admin/affiliate/campaigns", summary="アフィリエイト案件登録（管理者）")

@@ -200,6 +200,14 @@ class AffiliateCampaignDB(Base):
     # ポイント付与設定（デフォルト: 付与しない）
     enable_points: Mapped[bool] = mapped_column(Boolean, default=False)
     point_rate: Mapped[float] = mapped_column(Float, default=1.0)  # 1円=何ポイント
+    # 報酬分配設定
+    dealer_revenue_rate: Mapped[float] = mapped_column(Float, default=0.0)   # 代理店獲得金額率 (%)
+    user_point_rate: Mapped[float] = mapped_column(Float, default=0.0)       # ユーザー獲得ポイント率 (%)
+    # トラッキングURL（マクロ: {CLICK_URL} {SESSIONID} {HIMSITE} {NWCLKID} {NWSITEID} {USERID} {CAMPAIGNID}）
+    tracking_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # パートナーID フィルタ（カンマ区切り）
+    blacklist_partner_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    whitelist_partner_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     clicks: Mapped[list["AffiliateClickDB"]] = relationship("AffiliateClickDB", back_populates="campaign")
     creatives: Mapped[list["CreativeDB"]] = relationship("CreativeDB", back_populates="campaign")

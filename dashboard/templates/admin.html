@@ -1223,6 +1223,22 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
           <p style="font-size:11px;color:var(--muted);margin:0">設定するとクリックURLが <code>click.j-a-net.jp/{メディアID}/{原稿ID}/{user_token}</code> になります。</p>
         </div>
       </details>
+      <!-- 報酬分配設定 -->
+      <details style="border:1px solid var(--border);border-radius:6px;padding:10px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--muted);list-style:none">💰 報酬分配設定</summary>
+        <div style="display:grid;gap:8px;margin-top:10px">
+          <label style="font-size:13px;color:var(--muted)">代理店獲得金額</label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input name="dealer_revenue_rate" type="number" min="0" max="100" step="0.1" value="0.0" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;flex:1">
+            <span style="font-size:14px;color:var(--muted)">%</span>
+          </div>
+          <label style="font-size:13px;color:var(--muted)">ユーザー獲得ポイント</label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input name="user_point_rate" type="number" min="0" max="100" step="0.1" value="0.0" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;flex:1">
+            <span style="font-size:14px;color:var(--muted)">%</span>
+          </div>
+        </div>
+      </details>
       <!-- ポイント付与設定 -->
       <details style="border:1px solid var(--border);border-radius:6px;padding:10px">
         <summary style="cursor:pointer;font-size:13px;color:var(--muted);list-style:none">🎁 ポイント付与設定（デフォルト: なし）</summary>
@@ -1233,6 +1249,25 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
           </label>
           <input name="point_rate" type="number" min="0.1" step="0.1" value="1.0" placeholder="還元レート（1円 = 何ポイント）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
           <p style="font-size:11px;color:var(--muted);margin:0">CVのapproved確認後のみ付与されます。</p>
+        </div>
+      </details>
+      <!-- トラッキングURL -->
+      <details style="border:1px solid var(--border);border-radius:6px;padding:10px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--muted);list-style:none">🔗 Tracking URL（省略可）</summary>
+        <div style="display:grid;gap:8px;margin-top:10px">
+          <input name="tracking_url" type="url" placeholder="https://example.com/track?click={CLICK_URL}&sid={SESSIONID}" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:monospace">
+          <p style="font-size:11px;color:var(--muted);margin:0">使用可能マクロ: <code>{CLICK_URL}</code> <code>{SESSIONID}</code> <code>{HIMSITE}</code> <code>{NWCLKID}</code> <code>{NWSITEID}</code> <code>{USERID}</code> <code>{CAMPAIGNID}</code></p>
+        </div>
+      </details>
+      <!-- パートナーIDフィルタ -->
+      <details style="border:1px solid var(--border);border-radius:6px;padding:10px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--muted);list-style:none">🏪 パートナーIDフィルタ（省略可）</summary>
+        <div style="display:grid;gap:8px;margin-top:10px">
+          <label style="font-size:13px;color:var(--muted)">ホワイトListパートナーID</label>
+          <input name="whitelist_partner_ids" placeholder="例: 10,11,12（このIDの店舗ユーザーにのみ配信）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          <label style="font-size:13px;color:var(--muted)">ブラックListパートナーID</label>
+          <input name="blacklist_partner_ids" placeholder="例: 10,11,12（このIDの店舗ユーザーを除外）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px">
+          <p style="font-size:11px;color:var(--muted);margin:0">半/全角コンマ・スペース区切り可。ロック画面・プリインストール配信の対象を制御します。</p>
         </div>
       </details>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
@@ -2726,8 +2761,13 @@ document.getElementById('affiliate-campaign-form').addEventListener('submit', as
     adjust_app_token:  f.adjust_app_token.value  || null,
     janet_media_id:    f.janet_media_id.value    || null,
     janet_original_id: f.janet_original_id.value || null,
-    enable_points:     f.enable_points.checked,
-    point_rate:        parseFloat(f.point_rate.value) || 1.0,
+    enable_points:          f.enable_points.checked,
+    point_rate:             parseFloat(f.point_rate.value) || 1.0,
+    dealer_revenue_rate:    parseFloat(f.dealer_revenue_rate.value) || 0.0,
+    user_point_rate:        parseFloat(f.user_point_rate.value) || 0.0,
+    tracking_url:           f.tracking_url.value || null,
+    whitelist_partner_ids:  f.whitelist_partner_ids.value.replace(/[，　\s]+/g, ',').replace(/^,|,$/g, '') || null,
+    blacklist_partner_ids:  f.blacklist_partner_ids.value.replace(/[，　\s]+/g, ',').replace(/^,|,$/g, '') || null,
   };
   const res = await fetch('/mdm/admin/affiliate/campaigns', {
     method: 'POST',
