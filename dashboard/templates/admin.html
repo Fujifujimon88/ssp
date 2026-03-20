@@ -198,6 +198,7 @@
     <a href="/ml-pipeline" data-section="ml-pipeline" onclick="showSection('ml-pipeline'); return false;">🤖 ML管理</a>
     <a href="/dsp-configs" data-section="dsp-configs" onclick="showSection('dsp-configs'); return false;">🔌 DSP設定</a>
     <a href="/ios-widget" data-section="ios-widget" onclick="showSection('ios-widget'); return false;">📱 iOSウィジェット</a>
+    <a href="/agencies" data-section="agencies" onclick="showSection('agencies'); return false;">🏢 代理店組織管理</a>
 
     <details style="margin-top:16px">
       <summary class="section-label" style="cursor:pointer;list-style:none">SSP管理 ▸</summary>
@@ -797,6 +798,24 @@
       </div>
     </section>
 
+    <!-- 代理店組織管理 -->
+    <section id="agencies" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">代理店組織管理</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="loadAgencies()" style="font-size:12px">更新</button>
+          <button class="btn btn-primary" onclick="showAgencyModal()">+ 代理店登録</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <div id="agencies-loading" class="loading">読み込み中...</div>
+        <div id="agencies-list"></div>
+        <div id="agencies-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">
+          代理店が登録されていません。「+ 代理店登録」から追加してください。
+        </div>
+      </div>
+    </section>
+
     <!-- API連携ガイド -->
     <section id="api-guide" class="card" style="margin-bottom:24px">
       <h2 style="font-size:15px;margin-bottom:16px">API連携クイックスタート</h2>
@@ -1092,7 +1111,7 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       <select name="campaign_id" id="creative-campaign-select" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
         <option value="">キャンペーンを選択...</option>
       </select>
-      <select name="type" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <select name="type" id="creative-type-select" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" onchange="toggleVideoFields()">
         <option value="image">image — 静止画</option>
         <option value="html5">html5 — HTMLバナー</option>
         <option value="video">video — 動画</option>
@@ -1101,6 +1120,14 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       <input name="name" placeholder="クリエイティブ名" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
       <input name="title" placeholder="広告タイトル（例: 今すぐダウンロード）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
       <input name="image_url" type="url" placeholder="画像URL（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <!-- 動画専用フィールド（type=video のときのみ表示） -->
+      <div id="video-fields" style="display:none;display:grid;gap:12px">
+        <input name="video_url" type="url" placeholder="動画URL（.mp4）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <input name="video_duration_sec" type="number" min="1" max="300" placeholder="再生時間（秒）例: 30" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+          <input name="skip_after_sec" type="number" min="0" max="30" placeholder="スキップ可能秒数 例: 5" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+        </div>
+      </div>
       <input name="click_url" type="url" placeholder="クリック先URL" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
       <textarea name="body" placeholder="本文テキスト（省略可）" rows="2" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;resize:vertical"></textarea>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
@@ -1390,6 +1417,37 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
   </div>
 </div>
 
+<!-- 代理店登録モーダル（組織管理） -->
+<div class="modal-overlay" id="agency-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('agency-modal')">&times;</span>
+    <h2>代理店登録</h2>
+    <form id="agency-form" style="display:grid;gap:12px;margin-top:8px">
+      <input name="name" placeholder="代理店名（例: 株式会社テスト代理店）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="contact_email" type="email" placeholder="担当者メールアドレス（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
+      <div id="agency-result" style="font-size:13px;color:var(--green)"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 代理店への店舗追加モーダル -->
+<div class="modal-overlay" id="agency-add-store-modal">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal('agency-add-store-modal')">&times;</span>
+    <h2>店舗追加</h2>
+    <p id="agency-add-store-target" style="font-size:12px;color:var(--muted);margin-bottom:12px"></p>
+    <form id="agency-add-store-form" style="display:grid;gap:12px;margin-top:8px">
+      <input type="hidden" id="agency-add-store-agency-id">
+      <input name="name" placeholder="店舗名（例: 渋谷店）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="store_code" placeholder="店舗コード（例: SHB-001）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
+      <input name="address" placeholder="住所（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">追加する</button>
+      <div id="agency-add-store-result" style="font-size:13px;color:var(--green)"></div>
+    </form>
+  </div>
+</div>
+
 <script>
 // ── セクション切り替え ─────────────────────────────────────
 function showSection(id) {
@@ -1423,6 +1481,7 @@ function showSection(id) {
     'ml-pipeline': '/ml-pipeline',
     'dsp-configs': '/dsp-configs',
     'ios-widget': '/ios-widget',
+    'agencies': '/agencies',
     'overview': '/overview',
     'publishers': '/publishers',
     'api-guide': '/api-guide',
@@ -2197,17 +2256,27 @@ async function toggleCreativeStatus(id, status) {
   else { const d = await res.json(); alert(d.detail || 'エラー'); }
 }
 
+function toggleVideoFields() {
+  const type = document.getElementById('creative-type-select').value;
+  const videoFields = document.getElementById('video-fields');
+  videoFields.style.display = type === 'video' ? 'grid' : 'none';
+}
+
 document.getElementById('creative-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
+  const isVideo = f.type.value === 'video';
   const body = {
-    campaign_id: f.campaign_id.value,
-    type:        f.type.value,
-    name:        f.name.value,
-    title:       f.title.value,
-    image_url:   f.image_url.value  || null,
-    click_url:   f.click_url.value,
-    body:        f.body.value       || null,
+    campaign_id:       f.campaign_id.value,
+    type:              f.type.value,
+    name:              f.name.value,
+    title:             f.title.value,
+    image_url:         f.image_url.value || null,
+    click_url:         f.click_url.value,
+    body:              f.body.value || null,
+    video_url:         isVideo ? (f.video_url.value || null) : null,
+    video_duration_sec: isVideo && f.video_duration_sec.value ? parseInt(f.video_duration_sec.value) : null,
+    skip_after_sec:    isVideo && f.skip_after_sec.value ? parseInt(f.skip_after_sec.value) : null,
   };
   const res = await fetch('/mdm/admin/creatives', {
     method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
@@ -3068,6 +3137,103 @@ document.getElementById('ios-widget-form').addEventListener('submit', async (e) 
   }
 });
 
+// ── 代理店組織管理 ─────────────────────────────────────────
+async function loadAgencies() {
+  const loading = document.getElementById('agencies-loading');
+  const list    = document.getElementById('agencies-list');
+  const empty   = document.getElementById('agencies-empty');
+  loading.style.display = 'block'; list.innerHTML = ''; empty.style.display = 'none';
+  try {
+    const res = await fetch('/mdm/admin/agencies-with-stores', { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    const agencies = data.agencies || [];
+    loading.style.display = 'none';
+    if (agencies.length === 0) { empty.style.display = 'block'; return; }
+    list.innerHTML = agencies.map(ag => `
+      <details class="card" style="margin-bottom:12px;padding:12px" open>
+        <summary style="cursor:pointer;font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:space-between">
+          <span>🏢 ${ag.name}</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:var(--muted)">${ag.contact_email || ''}</span>
+            <button class="btn btn-ghost" style="font-size:11px" onclick="event.preventDefault();showAgencyAddStoreModal(${ag.id},'${ag.name.replace(/'/g,"\\'")}')" >+ 店舗追加</button>
+          </div>
+        </summary>
+        <div style="margin-top:12px">
+          ${ag.stores.length === 0
+            ? `<p style="font-size:12px;color:var(--muted)">店舗未登録</p>`
+            : `<table style="width:100%;font-size:13px">
+                <thead><tr><th>#</th><th>店舗名</th><th>店舗コード</th><th>住所</th><th>ステータス</th></tr></thead>
+                <tbody>${ag.stores.map(s => `<tr>
+                  <td style="color:var(--muted)">${s.store_number}</td>
+                  <td>${s.name}</td>
+                  <td style="font-family:monospace;font-size:11px">${s.store_code}</td>
+                  <td style="color:var(--muted);font-size:12px">${s.address || '-'}</td>
+                  <td><span style="color:${s.status==='active'?'var(--green)':'var(--muted)'}">${s.status || 'active'}</span></td>
+                </tr>`).join('')}</tbody>
+              </table>`}
+        </div>
+      </details>`).join('');
+  } catch(e) { loading.textContent = '読み込みエラー'; }
+}
+
+function showAgencyModal() {
+  document.getElementById('agency-result').textContent = '';
+  document.getElementById('agency-form').reset();
+  document.getElementById('agency-modal').classList.add('open');
+}
+
+function showAgencyAddStoreModal(agencyId, agencyName) {
+  document.getElementById('agency-add-store-result').textContent = '';
+  document.getElementById('agency-add-store-form').reset();
+  document.getElementById('agency-add-store-agency-id').value = agencyId;
+  document.getElementById('agency-add-store-target').textContent = `代理店: ${agencyName}`;
+  document.getElementById('agency-add-store-modal').classList.add('open');
+}
+
+document.getElementById('agency-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const res = await fetch('/mdm/admin/agencies', {
+    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ name: f.name.value, contact_email: f.contact_email.value || null }),
+  });
+  const d = await res.json();
+  const el = document.getElementById('agency-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.innerHTML = `✓ 登録完了！ ID: <code>${d.id}</code>`;
+    loadAgencies();
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラーが発生しました';
+  }
+});
+
+document.getElementById('agency-add-store-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const agencyId = document.getElementById('agency-add-store-agency-id').value;
+  const res = await fetch(`/mdm/admin/agencies/${agencyId}/stores`, {
+    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      name: f.name.value,
+      store_code: f.store_code.value,
+      address: f.address.value || null,
+    }),
+  });
+  const d = await res.json();
+  const el = document.getElementById('agency-add-store-result');
+  if (res.ok) {
+    el.style.color = 'var(--green)';
+    el.textContent = `✓ 店舗追加完了！ 店舗番号: ${d.store_number}`;
+    setTimeout(() => { closeModal('agency-add-store-modal'); loadAgencies(); }, 1000);
+  } else {
+    el.style.color = 'var(--red)';
+    el.textContent = d.detail || 'エラーが発生しました';
+  }
+});
+
 // ── Wi-Fiトリガールール ────────────────────────────────────
 async function loadWifiTriggers() {
   const loading = document.getElementById('wifi-triggers-loading');
@@ -3498,6 +3664,7 @@ loadMlFeatureStats();
 loadCohortStats();
 Promise.all([loadDspConfigs(), loadDspPerformance()]);
 loadIosWidgetStats();
+loadAgencies();
 setInterval(loadAdminStats, 30000);
 setInterval(loadHealth, 60000);
 </script>

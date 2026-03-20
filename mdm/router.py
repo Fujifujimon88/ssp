@@ -4735,6 +4735,9 @@ class CreativeCreate(BaseModel):
     click_url: str
     width: Optional[int] = None
     height: Optional[int] = None
+    video_url: Optional[str] = None
+    video_duration_sec: Optional[int] = None
+    skip_after_sec: Optional[int] = None
 
 
 @router.post("/admin/creatives", summary="クリエイティブ登録（管理者）")
