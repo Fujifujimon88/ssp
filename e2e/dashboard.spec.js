@@ -24,6 +24,10 @@ test.describe("管理画面 /admin", () => {
 
   test("パブリッシャー一覧セクションが表示される", async ({ page }) => {
     await page.goto("/admin");
+    // サイドバーナビでパブリッシャーセクションに切り替え
+    const navLink = page.locator("nav").getByText("パブリッシャー", { exact: false }).first();
+    if (await navLink.isVisible()) await navLink.click();
+    else await page.evaluate(() => { if (typeof showSection === "function") showSection("publishers"); });
     await expect(page.locator("#publishers")).toBeVisible();
   });
 

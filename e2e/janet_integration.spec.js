@@ -106,12 +106,19 @@ test.describe("クリック追跡 /mdm/affiliate/click/{campaign_id}", () => {
 
   test("JANetキャンペーン + device_id で j-a-net.jp へリダイレクトされる", async ({ page, request }) => {
     const campaignId = await createJanetCampaign(request);
-    const deviceId = "a1b2c3d4e5f6a7b8";
+    // デバイスを登録して user_token を取得（device_id は ASP に渡さない）
+    const deviceId = `janet-dev-${Date.now()}`;
+    const enrollRes = await request.post("/mdm/android/register", {
+      headers: { "Content-Type": "application/json" },
+      data: { device_id: deviceId, manufacturer: "Test", model: "TestPhone", android_version: "13", sdk_int: 33 },
+    });
+    const enrollData = await enrollRes.json();
+    const userToken = enrollData.user_token;
 
     let janetUrl = null;
-    // regex でホスト名を確実にキャプチャ
+    // click.j-a-net.jp のみキャプチャ（その後の j-a-net.jp リダイレクトで上書きされないよう）
     page.on("request", (req) => {
-      if (req.url().includes("j-a-net.jp")) janetUrl = req.url();
+      if (req.url().includes("click.j-a-net.jp")) janetUrl = req.url();
     });
     await page.route(/j-a-net\.jp/, (route) => route.abort());
 
@@ -121,18 +128,26 @@ test.describe("クリック追跡 /mdm/affiliate/click/{campaign_id}", () => {
 
     expect(janetUrl).not.toBeNull();
     expect(janetUrl).toContain("click.j-a-net.jp");
-    // JANetのURL形式: https://click.j-a-net.jp/{media_id}/{original_id}/{device_id}
+    // JANetのURL形式: https://click.j-a-net.jp/{media_id}/{original_id}/{user_token}
     expect(janetUrl).toContain("/99901/88801/");
-    expect(janetUrl).toContain(deviceId);
+    // user_token がパスに含まれる（device_id ではない）
+    expect(janetUrl).toContain(userToken);
   });
 
-  test("JANet URLのパス構造が正しい（クエリパラメータではなくパスに device_id）", async ({ page, request }) => {
+  test("JANet URLのパス構造が正しい（クエリパラメータではなくパスに user_token）", async ({ page, request }) => {
     const campaignId = await createJanetCampaign(request);
-    const deviceId = "testdevice99";
+    const deviceId = `janet-dev2-${Date.now()}`;
+    const enrollRes = await request.post("/mdm/android/register", {
+      headers: { "Content-Type": "application/json" },
+      data: { device_id: deviceId, manufacturer: "Test", model: "TestPhone2", android_version: "13", sdk_int: 33 },
+    });
+    const enrollData = await enrollRes.json();
+    const userToken = enrollData.user_token;
 
     let janetUrl = null;
+    // click.j-a-net.jp のみキャプチャ（その後の j-a-net.jp リダイレクトで上書きされないよう）
     page.on("request", (req) => {
-      if (req.url().includes("j-a-net.jp")) janetUrl = req.url();
+      if (req.url().includes("click.j-a-net.jp")) janetUrl = req.url();
     });
     await page.route(/j-a-net\.jp/, (route) => route.abort());
 
@@ -143,9 +158,11 @@ test.describe("クリック追跡 /mdm/affiliate/click/{campaign_id}", () => {
     expect(janetUrl).not.toBeNull();
     // パスに直接付与されている（?uid= 形式ではない）
     const url = new URL(janetUrl);
-    expect(url.pathname).toMatch(new RegExp(`/${deviceId}$`));
+    // user_token がパスの末尾に付与されている
+    expect(url.pathname).toMatch(new RegExp(`/${userToken}$`));
     expect(url.searchParams.has("uid")).toBeFalsy();
     expect(url.searchParams.has("device_id")).toBeFalsy();
+    expect(url.searchParams.has("user_token")).toBeFalsy();
   });
 
   test("janet_media_id 未設定キャンペーンは destination_url にリダイレクト", async ({ page, request }) => {

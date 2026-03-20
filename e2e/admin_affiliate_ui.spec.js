@@ -8,15 +8,19 @@ const { test, expect } = require("@playwright/test");
 const ADMIN_KEY = process.env.ADMIN_API_KEY || "change-me-admin-key";
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8000";
 
-// 各テスト前に管理者キーをlocalStorageにセットして/adminへ遷移
+// 各テスト前に管理者キーをlocalStorageにセットして/adminへ遷移し、affiliate-campaignsセクションを表示
 test.beforeEach(async ({ page }) => {
   await page.goto("/admin");
   await page.evaluate((key) => {
     localStorage.setItem("ssp_admin_key", key);
   }, ADMIN_KEY);
-  // ページをリロードしてキーを認識させる
   await page.reload();
   await page.waitForLoadState("networkidle");
+  // サイドバーでアフィリエイトキャンペーンセクションに切り替え
+  await page.evaluate(() => {
+    if (typeof showSection === "function") showSection("affiliate-campaigns");
+  });
+  await page.waitForTimeout(300);
 });
 
 // ─────────────────────────────────────────────────────────────

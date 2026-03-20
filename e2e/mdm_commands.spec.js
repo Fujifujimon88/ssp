@@ -270,7 +270,8 @@ test.describe("管理画面 MDMコマンドセクション UI", () => {
   });
 
   test("管理画面が開く", async ({ page }) => {
-    await expect(page).toHaveURL(/admin/);
+    // /admin は /mdm-dashboard にリダイレクトされる場合がある
+    await expect(page).toHaveURL(/admin|mdm-dashboard/);
     await expect(page.locator("body")).toBeVisible();
   });
 
@@ -300,17 +301,18 @@ test.describe("管理画面 MDMコマンドセクション UI", () => {
   });
 
   test("ブロードキャストモーダルが開く", async ({ page }) => {
-    const broadcastBtn = page.getByText(/ブロードキャスト|broadcast/i).first();
-    if (await broadcastBtn.isVisible()) {
-      await broadcastBtn.click();
-      // broadcast-modal が表示される
-      const modal = page.locator("#broadcast-modal");
-      await expect(modal).toBeVisible({ timeout: 5_000 });
-      // command_type セレクトが含まれている
-      await expect(page.locator("#broadcast-command-type")).toBeVisible();
-    } else {
-      // ブロードキャストボタンが見当たらない場合はスキップ
-      test.skip();
-    }
+    // #devices セクションを表示してからボタンを探す
+    await page.evaluate(() => {
+      if (typeof showSection === "function") showSection("devices");
+    });
+    await page.waitForTimeout(300);
+
+    const broadcastBtn = page.locator("#devices").getByText(/ブロードキャスト|broadcast/i).first();
+    await expect(broadcastBtn).toBeVisible({ timeout: 5_000 });
+    await broadcastBtn.click();
+
+    const modal = page.locator("#broadcast-modal");
+    await expect(modal).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator("#broadcast-command-type")).toBeVisible();
   });
 });

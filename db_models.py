@@ -131,7 +131,10 @@ class DeviceDB(Base):
     mobileconfig_downloaded: Mapped[bool] = mapped_column(Boolean, default=False)
     enrolled_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/active/unenrolled
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/active/unenrolled/opted_out
+    re_enroll_count: Mapped[int] = mapped_column(Integer, default=0)
+    token_revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     dealer: Mapped["DealerDB"] = relationship("DealerDB", back_populates="devices")
 
@@ -192,6 +195,9 @@ class AffiliateCampaignDB(Base):
     # 例: https://tr.smaad.net/redirect?zo=745468462&ad=198337123&uid={device_id}
     # 例: https://px.a8.net/a8fly/earnings?a8mat=XXX&uid={device_id}
     click_url_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # ポイント付与設定（デフォルト: 付与しない）
+    enable_points: Mapped[bool] = mapped_column(Boolean, default=False)
+    point_rate: Mapped[float] = mapped_column(Float, default=1.0)  # 1円=何ポイント
 
     clicks: Mapped[list["AffiliateClickDB"]] = relationship("AffiliateClickDB", back_populates="campaign")
     creatives: Mapped[list["CreativeDB"]] = relationship("CreativeDB", back_populates="campaign")
@@ -221,11 +227,32 @@ class AffiliateConversionDB(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     click_token: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
     campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_campaigns.id"), index=True)
-    source: Mapped[str] = mapped_column(String(20), default="manual")  # appsflyer/adjust/manual
+    source: Mapped[str] = mapped_column(String(20), default="manual")  # appsflyer/adjust/manual/janet/skyflag/smaad/a8
     event_type: Mapped[str] = mapped_column(String(50), default="install")
     revenue_jpy: Mapped[float] = mapped_column(Float, default=0.0)
     raw_payload: Mapped[str] = mapped_column(Text, nullable=True)       # JSONポストバック保存
     converted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    # ASP共通: 2段階通知ステータス（pending/approved/rejected）
+    attestation_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    # ASP固有CV ID（冪等性キー: action_id=JANet, cv_id=SKYFLAG）
+    asp_action_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    # user_token（ポストバックで受け取った ASP側ユーザーID）
+    user_token: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+
+    points: Mapped[list["UserPointDB"]] = relationship("UserPointDB", back_populates="conversion")
+
+
+class UserPointDB(Base):
+    """ユーザーへのポイント付与履歴"""
+    __tablename__ = "user_points"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_token: Mapped[str] = mapped_column(String(20), index=True)
+    conversion_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_conversions.id"), unique=True, index=True)
+    points: Mapped[float] = mapped_column(Float, default=0.0)  # 付与ポイント数
+    awarded_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    conversion: Mapped["AffiliateConversionDB"] = relationship("AffiliateConversionDB", back_populates="points")
 
 
 # ── Android MDM テーブル ───────────────────────────────────────
@@ -246,9 +273,16 @@ class AndroidDeviceDB(Base):
     gaid: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)       # Google Advertising ID
     dealer_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)  # 所属代理店
     store_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)   # 所属店舗
-    status: Mapped[str] = mapped_column(String(20), default="active")             # active/unenrolled
+    status: Mapped[str] = mapped_column(String(20), default="active")             # active/unenrolled/migrated
     registered_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    previous_device_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    migrated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    device_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    migration_suspicious: Mapped[bool] = mapped_column(Boolean, default=False)
+    # ASPに渡す不透明ユーザーID（device_idを外部に渡さないためのプロキシ）
+    # フォーマット: "UT" + 10桁英数字
+    user_token: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True, index=True)
 
     commands: Mapped[list["AndroidCommandDB"]] = relationship("AndroidCommandDB", back_populates="device")
 
@@ -296,6 +330,8 @@ class iOSDeviceDB(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")         # pending/active/unenrolled
     enrolled_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_checkin_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    profile_status: Mapped[str] = mapped_column(String(20), default="unknown")  # unknown/present/missing/re_installing
+    last_profile_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     commands: Mapped[list["MDMCommandDB"]] = relationship("MDMCommandDB", back_populates="device")
 

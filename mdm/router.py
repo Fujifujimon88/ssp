@@ -21,6 +21,8 @@ BKD-10: Advertiser Self-Serve Portal API
 import json
 import logging
 import re
+import secrets
+import string
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -46,6 +48,7 @@ from db_models import (
     DspConfigDB, DspWinLogDB,
     InstallEventDB,
     MDMCommandDB, MdmAdSlotDB, MdmImpressionDB, TimeSlotMultiplierDB, UserFeatureDB, iOSDeviceDB,
+    UserPointDB,
     WifiTriggerRuleDB, WifiCheckinLogDB,
 )
 from mdm.ml.features import compute_user_features
@@ -60,7 +63,8 @@ from mdm.affiliate.tracking import (
 )
 from mdm.measurement.gtm import build_lp_html
 from mdm.android.commands import (
-    acknowledge_command, enqueue_command, get_pending_commands, update_device_last_seen,
+    acknowledge_command, enqueue_command, enqueue_remove_mdm_profile,
+    get_pending_commands, update_device_last_seen,
 )
 from mdm.android.fcm import send_command_ping, send_notification
 from mdm.android.wifi_checkin import handle_wifi_checkin
@@ -459,6 +463,218 @@ PORTAL_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+# ── MDMプロファイル消失防止エンドポイント ─────────────────────────
+
+
+@router.get("/re-enroll", summary="再エンロール（同意不要・同じtoken）")
+async def re_enroll(
+    token: str = Query(..., description="enrollment_token"),
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    プロファイルが消えたデバイスへの再エンロール。
+    管理者が手動でURLを発行して案内する（自動送付しない）。
+    token の有効期限・失効チェックを行う。
+    """
+    device = await db.scalar(select(DeviceDB).where(DeviceDB.enrollment_token == token))
+    if not device:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if device.token_revoked_at:
+        raise HTTPException(status_code=410, detail="Token has been revoked")
+    if device.token_expires_at and device.token_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Token has expired")
+
+    platform = device.platform
+    if platform == "ios":
+        # iOS: mobileconfig を再ダウンロード
+        campaign = await db.scalar(select(CampaignDB).where(CampaignDB.id == device.campaign_id))
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        from mdm.enrollment.mobileconfig import generate_mobileconfig
+        mobileconfig_data = generate_mobileconfig(campaign, token)
+        device.re_enroll_count = (device.re_enroll_count or 0) + 1
+        await db.commit()
+        return Response(
+            content=mobileconfig_data,
+            media_type="application/x-apple-aspen-config",
+            headers={"Content-Disposition": f'attachment; filename="mdm_profile.mobileconfig"'},
+        )
+    else:
+        # Android: 再エンロール手順ページ
+        device.re_enroll_count = (device.re_enroll_count or 0) + 1
+        await db.commit()
+        base = str(request.base_url).rstrip("/") if request else ""
+        return {"status": "ok", "enrollment_token": token, "install_guide": f"{base}/mdm/android/install-guide?token={token}"}
+
+
+class MigrateRestoreBody(BaseModel):
+    old_device_id: str
+    new_device_id: str
+    enrollment_token: str
+
+
+@router.post("/device/migrate-restore", summary="機種変更手動復旧（Smart Switch等）")
+async def device_migrate_restore(body: MigrateRestoreBody, db: AsyncSession = Depends(get_db)):
+    """
+    Smart Switch / factory reset 後の手動復旧エンドポイント。
+    旧 device_id + 新 device_id + enrollment_token を受け取り、デバイス紐付けを更新する。
+    """
+    device = await db.scalar(select(DeviceDB).where(DeviceDB.enrollment_token == body.enrollment_token))
+    if not device:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if device.token_revoked_at:
+        raise HTTPException(status_code=410, detail="Token has been revoked")
+
+    old_android = await db.scalar(
+        select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == body.old_device_id)
+    )
+    if not old_android:
+        raise HTTPException(status_code=404, detail="Old device not found")
+
+    now = datetime.now(timezone.utc)
+    old_android.status = "migrated"
+    old_android.migrated_at = now
+
+    new_device = AndroidDeviceDB(
+        device_id=body.new_device_id,
+        enrollment_token=body.enrollment_token,
+        manufacturer=old_android.manufacturer,
+        model=old_android.model,
+        android_version=old_android.android_version,
+        dealer_id=old_android.dealer_id,
+        store_id=old_android.store_id,
+        previous_device_id=body.old_device_id,
+        last_seen_at=now,
+    )
+    db.add(new_device)
+    await db.commit()
+
+    logger.info(f"migrate-restore | old={body.old_device_id[:8]}... | new={body.new_device_id[:8]}...")
+    return {"status": "migrated", "new_device_id": body.new_device_id}
+
+
+@router.post("/admin/device/{device_id}/restore-profile", summary="個別プロファイル再push（管理者）")
+async def admin_restore_profile(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """指定デバイスへプロファイルを再 push する（管理画面の個別ボタン）"""
+    ios_dev = await db.scalar(select(iOSDeviceDB).where(iOSDeviceDB.udid == device_id))
+    if ios_dev and ios_dev.enrollment_token:
+        portal_device = await db.scalar(
+            select(DeviceDB).where(DeviceDB.enrollment_token == ios_dev.enrollment_token)
+        )
+        if portal_device:
+            campaign = await db.scalar(select(CampaignDB).where(CampaignDB.id == portal_device.campaign_id))
+            if campaign:
+                from mdm.enrollment.mobileconfig import generate_mobileconfig
+                mobileconfig_data = generate_mobileconfig(campaign, ios_dev.enrollment_token)
+                install_cmd = mdm_commands.install_configuration_profile(mobileconfig_data)
+                await nanomdm_client.push_command(device_id, install_cmd)
+                if ios_dev.push_token and ios_dev.push_magic and ios_dev.topic:
+                    await send_mdm_push(ios_dev.push_token, ios_dev.push_magic, ios_dev.topic)
+                ios_dev.profile_status = "re_installing"
+                await db.commit()
+                return {"status": "re_installing", "device_id": device_id}
+
+    raise HTTPException(status_code=404, detail="Device not found or cannot restore")
+
+
+@router.post("/admin/bulk-restore", summary="全 missing デバイスへ一括再 push（管理者）")
+async def admin_bulk_restore(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    profile_status=missing の全 iOS デバイスへ InstallProfile を再 push する。
+    100件/分のバッチ送信でレート制限を回避する。
+    """
+    missing_devices = (await db.execute(
+        select(iOSDeviceDB).where(
+            iOSDeviceDB.profile_status == "missing",
+            iOSDeviceDB.status == "active",
+            iOSDeviceDB.push_token.isnot(None),
+        )
+    )).scalars().all()
+
+    background_tasks.add_task(_bulk_restore_task, [d.udid for d in missing_devices])
+    return {"status": "queued", "count": len(missing_devices)}
+
+
+async def _bulk_restore_task(udids: list[str]):
+    """100件/分でバッチ送信（APNs/NanoMDM レート制限対策）"""
+    import asyncio
+    from database import AsyncSessionLocal
+    BATCH_SIZE = 100
+    BATCH_INTERVAL = 60  # 秒
+
+    for i in range(0, len(udids), BATCH_SIZE):
+        batch = udids[i:i + BATCH_SIZE]
+        async with AsyncSessionLocal() as db:
+            for udid in batch:
+                ios_dev = await db.scalar(select(iOSDeviceDB).where(iOSDeviceDB.udid == udid))
+                if not ios_dev or not ios_dev.enrollment_token:
+                    continue
+                portal_device = await db.scalar(
+                    select(DeviceDB).where(DeviceDB.enrollment_token == ios_dev.enrollment_token)
+                )
+                if not portal_device:
+                    continue
+                campaign = await db.scalar(select(CampaignDB).where(CampaignDB.id == portal_device.campaign_id))
+                if not campaign:
+                    continue
+                from mdm.enrollment.mobileconfig import generate_mobileconfig
+                mobileconfig_data = generate_mobileconfig(campaign, ios_dev.enrollment_token)
+                install_cmd = mdm_commands.install_configuration_profile(mobileconfig_data)
+                try:
+                    await nanomdm_client.push_command(udid, install_cmd)
+                    if ios_dev.push_token and ios_dev.push_magic and ios_dev.topic:
+                        await send_mdm_push(ios_dev.push_token, ios_dev.push_magic, ios_dev.topic)
+                    ios_dev.profile_status = "re_installing"
+                except Exception as e:
+                    logger.error(f"bulk-restore failed for udid={udid[:8]}...: {e}")
+            await db.commit()
+
+        if i + BATCH_SIZE < len(udids):
+            await asyncio.sleep(BATCH_INTERVAL)
+
+    logger.info(f"bulk-restore completed | total={len(udids)}")
+
+
+@router.get("/admin/device/{device_id}/re-enroll-url", summary="再エンロールURL発行（管理者）")
+async def admin_get_reenroll_url(
+    device_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    指定デバイスの再エンロール URL を返す（管理画面のコピーボタン用）。
+    自動送付はしない。管理者が任意のチャネルで案内する。
+    """
+    ios_dev = await db.scalar(select(iOSDeviceDB).where(iOSDeviceDB.udid == device_id))
+    token = None
+    if ios_dev:
+        token = ios_dev.enrollment_token
+    else:
+        android_dev = await db.scalar(select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == device_id))
+        if android_dev:
+            token = android_dev.enrollment_token
+
+    if not token:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    portal_device = await db.scalar(select(DeviceDB).where(DeviceDB.enrollment_token == token))
+    if portal_device and portal_device.token_revoked_at:
+        raise HTTPException(status_code=410, detail="Token has been revoked")
+
+    base = str(request.base_url).rstrip("/")
+    url = f"{base}/mdm/re-enroll?token={token}"
+    return {"re_enroll_url": url, "enrollment_token": token}
+
 # ── エンドポイント ─────────────────────────────────────────────
 
 @router.get("/portal", response_class=HTMLResponse, summary="エンロールポータル")
@@ -711,8 +927,38 @@ async def optout_submit(
 </html>"""
         return HTMLResponse(content=html, status_code=404)
 
-    device.status = "inactive"
+    device.status = "opted_out"
+    device.token_revoked_at = datetime.now(timezone.utc)
     await db.commit()
+
+    # Android: DPCへ remove_mdm_profile コマンドをキュー
+    android_device = await db.scalar(
+        select(AndroidDeviceDB).where(
+            AndroidDeviceDB.enrollment_token == enrollment_token,
+            AndroidDeviceDB.status == "active",
+        )
+    )
+    if android_device:
+        await enqueue_remove_mdm_profile(db, android_device.device_id)
+        logger.info(f"MDM optout: remove_mdm_profile queued for Android | device={android_device.device_id[:8]}...")
+
+    # iOS: RemoveProfile コマンドをキュー（デバイスが次回 checkin 時に実行）
+    ios_device = await db.scalar(
+        select(iOSDeviceDB).where(
+            iOSDeviceDB.enrollment_token == enrollment_token,
+            iOSDeviceDB.status == "active",
+        )
+    )
+    if ios_device:
+        from mdm.nanomdm import commands as mdm_cmds
+        remove_cmd = mdm_cmds.remove_profile(f"com.platform.mdm.{enrollment_token}")
+        await nanomdm_client.push_command(ios_device.udid, remove_cmd)
+        if ios_device.push_token and ios_device.push_magic and ios_device.topic:
+            await send_mdm_push(ios_device.push_token, ios_device.push_magic, ios_device.topic)
+        ios_device.status = "opted_out"
+        ios_device.profile_status = "missing"
+        await db.commit()
+        logger.info(f"MDM optout: RemoveProfile queued for iOS | udid={ios_device.udid[:8]}...")
 
     logger.info(f"MDM optout | token={enrollment_token[:8]}... | device={device.id[:8]}...")
 
@@ -1059,6 +1305,13 @@ async def line_add_friend(token: str = Query(...)):
 
 JANET_CLICK_BASE = "https://click.j-a-net.jp"
 
+_USER_TOKEN_CHARS = string.ascii_letters + string.digits
+
+
+def _generate_user_token() -> str:
+    """ASP向け不透明ユーザートークンを生成する。形式: UT + 10桁英数字"""
+    return "UT" + "".join(secrets.choice(_USER_TOKEN_CHARS) for _ in range(10))
+
 
 @router.get("/affiliate/click/{campaign_id}", summary="アフィリエイトクリック追跡（JANet / smaad / A8.net 対応）")
 async def affiliate_click(
@@ -1097,6 +1350,8 @@ async def affiliate_click(
         (android_device.dealer_id if android_device else None)
         or (device.dealer_id if device else None)
     )
+    # user_token: device_id の代わりに ASP に渡す不透明トークン
+    user_token = android_device.user_token if android_device else None
 
     click = AffiliateClickDB(
         campaign_id=campaign_id,
@@ -1111,19 +1366,20 @@ async def affiliate_click(
     logger.info(
         f"Affiliate click | campaign={campaign_id[:8]}... "
         f"| device_id={str(device_id)[:8] if device_id else 'none'}"
+        f"| user_token={user_token[:8] if user_token else 'none'}"
     )
 
-    # 1. JANet: パスにdevice_idを直接付与
-    if campaign.janet_media_id and campaign.janet_original_id and device_id:
-        janet_url = f"{JANET_CLICK_BASE}/{campaign.janet_media_id}/{campaign.janet_original_id}/{device_id}"
+    # 1. JANet: パスに user_token を付与（device_id を ASP に渡さない）
+    if campaign.janet_media_id and campaign.janet_original_id and user_token:
+        janet_url = f"{JANET_CLICK_BASE}/{campaign.janet_media_id}/{campaign.janet_original_id}/{user_token}"
         return RedirectResponse(url=janet_url, status_code=302)
 
-    # 2. smaad / A8.net: テンプレートのdevice_idを置換
-    if campaign.click_url_template and device_id:
-        redirect_url = campaign.click_url_template.replace("{device_id}", device_id)
+    # 2. smaad / A8.net: テンプレートの {device_id} を user_token で置換
+    if campaign.click_url_template and user_token:
+        redirect_url = campaign.click_url_template.replace("{device_id}", user_token)
         return RedirectResponse(url=redirect_url, status_code=302)
 
-    # 3. フォールバック
+    # 3. フォールバック: device_id はあるが user_token がない（未登録デバイス）or 通常案件
     return RedirectResponse(url=campaign.destination_url, status_code=302)
 
 
@@ -1212,98 +1468,214 @@ async def adjust_postback(request: Request, db: AsyncSession = Depends(get_db)):
     return {"status": "ok"}
 
 
-@router.get("/affiliate/postback/{source}", summary="ASP S2Sポストバック受信（JANet / smaad / A8.net 共通）")
+# ── ASP パラメータ正規化マップ ───────────────────────────────────
+# 各ASPが使う「ユーザーID」「報酬額」「CV固有ID」「2段階通知フラグ」のパラメータ名を統一する
+_ASP_PARAM_MAP: dict[str, dict] = {
+    # source: {user_token_key, revenue_key, action_id_key, attestation_keys, has_2phase}
+    "janet": {
+        "user_token_key": "user_id",
+        "revenue_key": "commission",
+        "action_id_key": "action_id",
+        # attestation_flag=1 → pending, attestation_flag=0 → approved
+        "attestation_key": "attestation_flag",
+        "approved_value": "0",
+        "has_2phase": True,
+    },
+    "skyflag": {
+        "user_token_key": "suid",
+        "revenue_key": "price",
+        "action_id_key": "cv_id",
+        # install=1 → approved (no value = pending)
+        "attestation_key": "install",
+        "approved_value": "1",
+        "has_2phase": True,
+    },
+    "smaad": {
+        "user_token_key": "uid",
+        "revenue_key": "price",
+        "action_id_key": None,
+        "attestation_key": None,
+        "approved_value": None,
+        "has_2phase": False,
+    },
+    "a8": {
+        "user_token_key": "uid",
+        "revenue_key": "price",
+        "action_id_key": None,
+        "attestation_key": None,
+        "approved_value": None,
+        "has_2phase": False,
+    },
+}
+_ASP_PARAM_MAP_DEFAULT = {
+    "user_token_key": "uid",
+    "revenue_key": "price",
+    "action_id_key": None,
+    "attestation_key": None,
+    "approved_value": None,
+    "has_2phase": False,
+}
+
+
+def _normalize_asp_params(source: str, params: dict) -> dict:
+    """各ASPのパラメータを共通フォーマットに正規化する。"""
+    cfg = _ASP_PARAM_MAP.get(source, _ASP_PARAM_MAP_DEFAULT)
+
+    user_token = params.get(cfg["user_token_key"])
+    # JANetの旧形式 uid= にも対応
+    if not user_token:
+        user_token = params.get("uid")
+
+    price_str = params.get(cfg["revenue_key"], "0")
+    try:
+        revenue = float(price_str)
+    except (ValueError, TypeError):
+        revenue = 0.0
+
+    action_id = params.get(cfg["action_id_key"]) if cfg["action_id_key"] else None
+
+    # 2段階通知ステータス決定
+    if cfg["has_2phase"]:
+        attest_val = params.get(cfg["attestation_key"])
+        if attest_val is not None:
+            # JANet: flag=0→approved, flag=1→pending
+            # SKYFLAG: install=1→approved, なし→pending
+            attestation_status = "approved" if attest_val == cfg["approved_value"] else "pending"
+        else:
+            attestation_status = "pending"
+    else:
+        # smaad / A8.net: 2段階なし → 即 approved
+        attestation_status = "approved"
+
+    return {
+        "user_token": user_token,
+        "revenue": revenue,
+        "action_id": action_id,
+        "attestation_status": attestation_status,
+    }
+
+
+async def _award_points(db: AsyncSession, conversion: AffiliateConversionDB) -> None:
+    """ポイント付与（enable_points=True かつ approved のみ）。冪等。"""
+    if conversion.attestation_status != "approved":
+        return
+
+    campaign = await db.get(AffiliateCampaignDB, conversion.campaign_id)
+    if not campaign or not campaign.enable_points:
+        return
+
+    # 冪等性: conversion_id UNIQUE制約
+    existing_point = await db.scalar(
+        select(UserPointDB).where(UserPointDB.conversion_id == conversion.id)
+    )
+    if existing_point:
+        return
+
+    points = round(conversion.revenue_jpy * campaign.point_rate)
+    point_record = UserPointDB(
+        user_token=conversion.user_token or "",
+        conversion_id=conversion.id,
+        points=points,
+        awarded_at=datetime.now(timezone.utc),
+    )
+    db.add(point_record)
+    logger.info(
+        f"Points awarded | user_token={conversion.user_token} | points={points} | cv={conversion.id[:8]}..."
+    )
+
+
+@router.get("/affiliate/postback/{source}", summary="ASP S2Sポストバック受信（JANet / SKYFLAG / smaad / A8.net 共通）")
 async def asp_postback(
     source: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    JANet / smaad / A8.net 等 ASP からの成果通知（ポストバック）を受信する共通エンドポイント。
-    全ASP共通フロー: 広告主ページで成果発生 → ASPが弊社に通知 → UserID照合 → CV記録
+    各ASPからのCV通知を受信する共通エンドポイント。
 
-    【source の値】
-      janet  … https://your-server.com/mdm/affiliate/postback/janet?uid={uid}&price={price}
-      smaad  … https://your-server.com/mdm/affiliate/postback/smaad?uid={uid}&price={price}
-      a8     … https://your-server.com/mdm/affiliate/postback/a8?uid={uid}&price={price}
+    ASPパラメータを正規化して:
+      1. user_token で AndroidDeviceDB を照合
+      2. AffiliateConversion を記録（2段階通知に対応）
+      3. enable_points=True キャンペーンのみポイント付与
 
-    【共通パラメータ】
-      uid    = クリック時に付与した device_id（Android ID = ASP側 UserID）
-      price  = CV単価（円）
-      ad     = 原稿ID / 広告ID（任意）
-
-    ※ ASP管理画面のポストバックURL登録例（JANet）:
-      https://your-server.com/mdm/affiliate/postback/janet?uid={uid}&price={price}&ad={ad}
-    ※ smaad の場合: uid パラメータ名が異なる場合は変数名を合わせて登録
+    【対応ASP】
+      janet   … user_id / commission / action_id / attestation_flag (0=approved, 1=pending)
+      skyflag … suid / price / cv_id / install (1=approved, なし=pending)
+      smaad   … uid / price （2段階なし → 即approved）
+      a8      … uid / price （2段階なし → 即approved）
     """
     params = dict(request.query_params)
-    device_id = params.get("uid") or params.get("user_id")
-    price_str = params.get("price", "0")
-    ad_id = params.get("ad", "")
+    normalized = _normalize_asp_params(source, params)
 
-    try:
-        revenue = float(price_str)
-    except ValueError:
-        revenue = 0.0
+    user_token = normalized["user_token"]
+    revenue = normalized["revenue"]
+    action_id = normalized["action_id"]
+    attestation_status = normalized["attestation_status"]
 
-    if not device_id:
-        logger.warning(f"{source} postback: uid missing")
+    if not user_token:
+        logger.warning(f"{source} postback: user_token missing")
         return {"status": "ok"}  # ASPに 200 を返してリトライを防ぐ
 
-    # 直近クリックレコードを取得（device_id で照合）
-    click = await db.scalar(
-        select(AffiliateClickDB)
-        .where(
-            AffiliateClickDB.device_id == device_id,
-            AffiliateClickDB.converted == False,  # noqa: E712
-        )
-        .order_by(AffiliateClickDB.clicked_at.desc())
-        .limit(1)
+    # user_token → device を照合（device_id は外部に渡さない）
+    android_device = await db.scalar(
+        select(AndroidDeviceDB).where(AndroidDeviceDB.user_token == user_token)
     )
 
-    # 冪等性チェック: 同一 (device_id + source) の重複受信を防ぐ
-    existing = await db.scalar(
-        select(AffiliateConversionDB).where(
-            AffiliateConversionDB.click_token == (click.click_token if click else device_id),
-            AffiliateConversionDB.source == source,
+    # asp_action_id がある場合は冪等性チェック
+    if action_id:
+        existing = await db.scalar(
+            select(AffiliateConversionDB).where(
+                AffiliateConversionDB.asp_action_id == action_id,
+                AffiliateConversionDB.source == source,
+            )
         )
-    )
-    if existing:
-        logger.info(f"{source} postback duplicate skipped | device={device_id[:8]}...")
-        return {"status": "ok"}
+        if existing:
+            # Phase 2 (approved): ステータス更新のみ
+            if existing.attestation_status != "approved" and attestation_status == "approved":
+                existing.attestation_status = "approved"
+                await db.flush()
+                await _award_points(db, existing)
+                await db.commit()
+                logger.info(f"{source} postback phase2 approved | action={action_id}")
+            else:
+                logger.info(f"{source} postback duplicate skipped | action={action_id}")
+            return {"status": "ok"}
+
+    # 直近クリックレコードを取得（user_token 経由で device_id を解決）
+    click = None
+    if android_device:
+        click = await db.scalar(
+            select(AffiliateClickDB)
+            .where(
+                AffiliateClickDB.device_id == android_device.device_id,
+                AffiliateClickDB.converted == False,  # noqa: E712
+            )
+            .order_by(AffiliateClickDB.clicked_at.desc())
+            .limit(1)
+        )
 
     conversion = AffiliateConversionDB(
-        click_token=click.click_token if click else device_id,
+        click_token=click.click_token if click else None,
         campaign_id=click.campaign_id if click else "unknown",
         source=source,
         event_type="install",
         revenue_jpy=revenue,
         raw_payload=json.dumps(params)[:2000],
+        attestation_status=attestation_status,
+        asp_action_id=action_id,
+        user_token=user_token,
     )
     db.add(conversion)
 
     if click:
         click.converted = True
 
-        # 対応する InstallEventDB を billable に更新
-        install_event = await db.scalar(
-            select(InstallEventDB)
-            .where(
-                InstallEventDB.device_id == device_id,
-                InstallEventDB.campaign_id == click.campaign_id,
-            )
-            .order_by(InstallEventDB.created_at.desc())
-            .limit(1)
-        )
-        if install_event:
-            install_event.billing_status = "billable"
-            install_event.cpi_amount = revenue
-            install_event.postback_status = "success"
-
+    await db.flush()
+    await _award_points(db, conversion)
     await db.commit()
     logger.info(
-        f"{source} postback received | device={device_id[:8]}... "
-        f"| price={revenue} | ad={ad_id}"
+        f"{source} postback received | user_token={user_token[:8]}... "
+        f"| revenue={revenue} | action={action_id} | status={attestation_status}"
     )
     return {"status": "ok"}
 
@@ -1322,6 +1694,8 @@ class AffiliateCampaignCreate(BaseModel):
     janet_media_id: Optional[str] = None    # JANet メディアID
     janet_original_id: Optional[str] = None  # JANet 原稿ID
     click_url_template: Optional[str] = None  # smaad/A8.net等クリックURLテンプレート（{device_id}を置換）
+    enable_points: bool = False              # ポイント付与を行うか（デフォルト: しない）
+    point_rate: float = 1.0                  # 1円=何ポイント（還元率調整）
 
 
 @router.post("/admin/affiliate/campaigns", summary="アフィリエイト案件登録（管理者）")
@@ -2039,20 +2413,21 @@ class AndroidRegisterBody(BaseModel):
     gaid: Optional[str] = None       # Google Advertising ID
     dealer_id: Optional[str] = None  # 所属代理店ID
     store_id: Optional[str] = None   # 所属店舗ID（代理店内の複数店舗識別）
+    device_fingerprint: Optional[str] = None  # manufacturer:model:brand のハッシュ
 
 
 @router.post("/android/register", summary="Android DPCデバイス登録")
 async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends(get_db)):
     """
-    DPC APKが初回起動時に呼び出す。
-    デバイス情報とFCMトークンを登録してコマンドキューの準備をする。
+    DPC APKが初回起動時または機種変更後の再起動時に呼び出す。
+    enrollment_token が付いており、かつ新しい device_id の場合は機種変更として引き継ぎ処理を行う。
     """
     existing = await db.scalar(
         select(AndroidDeviceDB).where(AndroidDeviceDB.device_id == body.device_id)
     )
 
     if existing:
-        # FCMトークン・GAID・dealer_id・store_id 更新
+        # 同一デバイスの更新（FCMトークン・GAID等）
         existing.fcm_token = body.fcm_token or existing.fcm_token
         if body.gaid:
             existing.gaid = body.gaid
@@ -2060,11 +2435,63 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
             existing.dealer_id = body.dealer_id
         if body.store_id:
             existing.store_id = body.store_id
+        if body.device_fingerprint:
+            existing.device_fingerprint = body.device_fingerprint
         existing.last_seen_at = datetime.now(timezone.utc)
+        # user_token がない場合は生成（既存デバイスの後方互換）
+        if not existing.user_token:
+            existing.user_token = _generate_user_token()
         await db.commit()
         logger.info(f"Android device updated | device={body.device_id[:8]}...")
-        return {"status": "updated", "device_id": body.device_id}
+        return {"status": "updated", "device_id": body.device_id, "user_token": existing.user_token}
 
+    # --- 機種変更引き継ぎ処理 ---
+    # enrollment_token があり、かつ旧デバイスが存在する場合 → 機種変更
+    if body.enrollment_token:
+        old_device = await db.scalar(
+            select(AndroidDeviceDB).where(
+                AndroidDeviceDB.enrollment_token == body.enrollment_token,
+                AndroidDeviceDB.device_id != body.device_id,
+                AndroidDeviceDB.status == "active",
+            )
+        )
+        if old_device:
+            # fingerprint チェック（不一致の場合は suspicious フラグ）
+            suspicious = False
+            if body.device_fingerprint and old_device.device_fingerprint:
+                suspicious = body.device_fingerprint != old_device.device_fingerprint
+
+            # 旧デバイスを migrated に更新
+            old_device.status = "migrated"
+            old_device.migrated_at = datetime.now(timezone.utc)
+
+            # 新デバイスを作成（キャンペーン設定・dealer_id・store_id を引き継ぎ）
+            new_device = AndroidDeviceDB(
+                device_id=body.device_id,
+                enrollment_token=body.enrollment_token,
+                fcm_token=body.fcm_token,
+                manufacturer=body.manufacturer,
+                model=body.model,
+                android_version=body.android_version,
+                sdk_int=body.sdk_int,
+                gaid=body.gaid,
+                dealer_id=body.dealer_id or old_device.dealer_id,
+                store_id=body.store_id or old_device.store_id,
+                previous_device_id=old_device.device_id,
+                device_fingerprint=body.device_fingerprint,
+                migration_suspicious=suspicious,
+                last_seen_at=datetime.now(timezone.utc),
+            )
+            db.add(new_device)
+            await db.commit()
+            logger.info(
+                f"Android device migrated | old={old_device.device_id[:8]}... | "
+                f"new={body.device_id[:8]}... | suspicious={suspicious}"
+            )
+            return {"status": "migrated", "device_id": body.device_id, "suspicious": suspicious}
+
+    # --- 新規登録 ---
+    new_user_token = _generate_user_token()
     device = AndroidDeviceDB(
         device_id=body.device_id,
         enrollment_token=body.enrollment_token,
@@ -2076,11 +2503,13 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
         gaid=body.gaid,
         dealer_id=body.dealer_id,
         store_id=body.store_id,
+        device_fingerprint=body.device_fingerprint,
         last_seen_at=datetime.now(timezone.utc),
+        user_token=new_user_token,
     )
     db.add(device)
 
-    # DeviceDBのstatusもactiveに更新
+    # DeviceDB の status を active に更新
     if body.enrollment_token:
         portal_device = await db.scalar(
             select(DeviceDB).where(DeviceDB.enrollment_token == body.enrollment_token)
@@ -2090,8 +2519,8 @@ async def android_register(body: AndroidRegisterBody, db: AsyncSession = Depends
             portal_device.last_seen_at = datetime.now(timezone.utc)
 
     await db.commit()
-    logger.info(f"Android device registered | device={body.device_id[:8]}... | model={body.model}")
-    return {"status": "registered", "device_id": body.device_id}
+    logger.info(f"Android device registered | device={body.device_id[:8]}... | model={body.model} | user_token={new_user_token}")
+    return {"status": "registered", "device_id": body.device_id, "user_token": new_user_token}
 
 
 @router.get("/android/commands/{device_id}", summary="Android DPC コマンドポーリング")
@@ -2915,6 +3344,14 @@ async def ios_mdm_checkin(request: Request, db: AsyncSession = Depends(get_db)):
         existing.last_checkin_at = datetime.now(timezone.utc)
         await db.commit()
         logger.info(f"iOS device updated | udid={udid[:8]}... | event={event}")
+
+        # checkin のたびに ProfileList を自動キューイングしてプロファイル存在確認
+        if existing.enrollment_token:
+            profile_list_cmd = mdm_commands.get_profile_list()
+            await nanomdm_client.push_command(udid, profile_list_cmd)
+            if existing.push_token and existing.push_magic and existing.topic:
+                await send_mdm_push(existing.push_token, existing.push_magic, existing.topic)
+            logger.info(f"ProfileList queued | udid={udid[:8]}...")
     else:
         ios_dev = iOSDeviceDB(
             udid=udid,
@@ -2932,6 +3369,60 @@ async def ios_mdm_checkin(request: Request, db: AsyncSession = Depends(get_db)):
         db.add(ios_dev)
         await db.commit()
         logger.info(f"iOS device registered | udid={udid[:8]}... | model={product_name}")
+
+    return {"status": "ok"}
+
+
+@router.post("/ios/profile_list_result", summary="iOS ProfileList結果受信（NanoMDM Webhook）")
+async def ios_profile_list_result(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    NanoMDM が ProfileList コマンドの結果を返してくる Webhook。
+    com.platform.mdm.{enrollment_token} が存在しない場合は InstallProfile を再 push する。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    udid = body.get("UDID") or body.get("udid")
+    profiles = body.get("ProfileList", [])
+    if not udid:
+        return {"status": "ignored"}
+
+    ios_dev = await db.scalar(select(iOSDeviceDB).where(iOSDeviceDB.udid == udid))
+    if not ios_dev or not ios_dev.enrollment_token:
+        return {"status": "ignored"}
+
+    now = datetime.now(timezone.utc)
+    expected_id = f"com.platform.mdm.{ios_dev.enrollment_token}"
+    profile_ids = [p.get("PayloadIdentifier") for p in profiles]
+    profile_present = expected_id in profile_ids
+
+    ios_dev.last_profile_check_at = now
+    if profile_present:
+        ios_dev.profile_status = "present"
+        await db.commit()
+        logger.info(f"ProfileList: present | udid={udid[:8]}...")
+    else:
+        # プロファイルが消失 → InstallProfile を即時再 push
+        ios_dev.profile_status = "re_installing"
+        await db.commit()
+        logger.warning(f"ProfileList: MISSING → re-installing | udid={udid[:8]}...")
+
+        portal_device = await db.scalar(
+            select(DeviceDB).where(DeviceDB.enrollment_token == ios_dev.enrollment_token)
+        )
+        if portal_device:
+            campaign = await db.scalar(
+                select(CampaignDB).where(CampaignDB.id == portal_device.campaign_id)
+            )
+            if campaign:
+                from mdm.enrollment.mobileconfig import generate_mobileconfig
+                mobileconfig_data = generate_mobileconfig(campaign, ios_dev.enrollment_token)
+                install_cmd = mdm_commands.install_configuration_profile(mobileconfig_data)
+                await nanomdm_client.push_command(udid, install_cmd)
+                if ios_dev.push_token and ios_dev.push_magic and ios_dev.topic:
+                    await send_mdm_push(ios_dev.push_token, ios_dev.push_magic, ios_dev.topic)
 
     return {"status": "ok"}
 
@@ -3292,8 +3783,35 @@ async def list_conversions(
             "event_type": c.event_type,
             "revenue_jpy": c.revenue_jpy,
             "converted_at": c.converted_at.isoformat() if c.converted_at else None,
+            "attestation_status": c.attestation_status,
+            "asp_action_id": c.asp_action_id,
+            "user_token": c.user_token,
         }
         for c in rows.scalars().all()
+    ]
+
+
+@router.get("/admin/affiliate/points", summary="ユーザーポイント一覧（管理者）")
+async def list_user_points(
+    user_token: Optional[str] = Query(None),
+    limit: int = Query(default=100, le=500),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """ポイント付与履歴一覧。user_token でフィルタ可。"""
+    q = select(UserPointDB).order_by(UserPointDB.awarded_at.desc()).limit(limit)
+    if user_token:
+        q = q.where(UserPointDB.user_token == user_token)
+    rows = await db.execute(q)
+    return [
+        {
+            "id": p.id,
+            "user_token": p.user_token,
+            "conversion_id": p.conversion_id,
+            "points": p.points,
+            "awarded_at": p.awarded_at.isoformat() if p.awarded_at else None,
+        }
+        for p in rows.scalars().all()
     ]
 
 
@@ -7230,3 +7748,4 @@ setInterval(loadStats, 60000);
 </script>
 </body>
 </html>"""
+
