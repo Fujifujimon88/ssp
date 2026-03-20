@@ -74,12 +74,24 @@ async def lifespan(app: FastAPI):
                     logger.error(f"HealthCheck task failed: {e}")
 
     # DBマイグレーション自動実行（Vercelデプロイ時に未適用マイグレーションを適用）
+    # run_in_executor で別スレッドから実行することで asyncio.run() の衝突を回避
     try:
         from alembic.config import Config as AlembicConfig
         from alembic import command as alembic_command
-        alembic_cfg = AlembicConfig("alembic.ini")
-        alembic_command.upgrade(alembic_cfg, "head")
+        import asyncio as _asyncio
+
+        def _run_alembic():
+            alembic_cfg = AlembicConfig("alembic.ini")
+            alembic_command.upgrade(alembic_cfg, "head")
+
+        loop = _asyncio.get_event_loop()
+        await _asyncio.wait_for(
+            loop.run_in_executor(None, _run_alembic),
+            timeout=45.0,
+        )
         logger.info("Alembic upgrade head completed")
+    except _asyncio.TimeoutError:
+        logger.error("Alembic upgrade timed out after 45s — skipping")
     except Exception as e:
         logger.error(f"Alembic upgrade failed: {e}")
 
