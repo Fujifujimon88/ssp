@@ -48,6 +48,25 @@
 - `setExtraHTTPHeaders({ 'User-Agent': '...' })` は HTTP ヘッダーのみで `navigator.userAgent` は変わらない。
 - **修正**: `browser.newContext({ userAgent: '...' })` を使う。
 
+### 12. .vercelignore のパスは必ず `/` 始まりにする
+- `tasks/` と書くと `mdm/tasks/` など**全階層の同名ディレクトリ**が除外される。
+- `/tasks/` と書けばリポジトリルートの `tasks/` だけに限定される。
+- **適用範囲**: `.vercelignore` を編集するとき、常に絶対パス（`/` 始まり）で記述する。
+- **発生時の症状**: `ModuleNotFoundError: No module named 'mdm.tasks'` で Vercel 500。
+
+### 13. Alembic 自動マイグレーション（lifespan）を絶対に消すな
+- `main.py` の `lifespan` に Alembic upgrade コードがあり、Vercel デプロイ時に自動実行される。
+- 機能追加でコードを書き換えた際、lifespan 全体を上書きしてこのコードが消えた。
+- **症状**: DB にカラムが追加されず、ORM SELECT が 500 を返す（`column does not exist`）。
+- **修正**: lifespan に Alembic upgrade + health_check スケジューラーを必ず残す。
+- **確認**: 新機能追加後は `alembic current` で DB が head にいるか確認する。
+
+### 14. Alembic マイグレーションは冪等に書く（`IF NOT EXISTS`）
+- `op.create_index()` / `op.create_table()` は既存オブジェクトに対して `DuplicateTableError` を投げる。
+- DB が部分的に構築されている（前回の失敗など）と、マイグレーションが途中で止まる。
+- **修正**: `conn = op.get_bind()` + `sa.text("CREATE INDEX IF NOT EXISTS ...")` で冪等に書く。
+- **適用範囲**: 全ての新規マイグレーション。特に index 作成・table 作成操作。
+
 ### 11. MDM ダッシュボードのセクション順序
 - 最初の `.section h2` は「リアルタイム（今日）」セクション → index 0。
 - 「代理店 Top 5」は index 1、「アフィリエイト案件 Top 5」は index 2、「主要APIエンドポイント」は index 3。

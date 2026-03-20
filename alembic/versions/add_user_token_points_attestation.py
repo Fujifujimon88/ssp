@@ -3,6 +3,7 @@
 Revision ID: e5f6a7b8c9d0
 Revises: f4a5b6c7d8e9
 Create Date: 2026-03-20 00:00:00.000000
+
 """
 from typing import Sequence, Union
 
@@ -16,31 +17,64 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+
     # android_devices: user_token（ASPに渡す不透明UUID）
-    op.add_column("android_devices", sa.Column("user_token", sa.String(20), nullable=True))
-    op.create_index("ix_android_devices_user_token", "android_devices", ["user_token"], unique=True)
+    conn.execute(sa.text("""
+        ALTER TABLE android_devices
+        ADD COLUMN IF NOT EXISTS user_token VARCHAR(20)
+    """))
+    conn.execute(sa.text("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_android_devices_user_token
+        ON android_devices (user_token)
+    """))
 
     # affiliate_campaigns: ポイント付与設定
-    op.add_column("affiliate_campaigns", sa.Column("enable_points", sa.Boolean(), nullable=False, server_default="false"))
-    op.add_column("affiliate_campaigns", sa.Column("point_rate", sa.Float(), nullable=False, server_default="1.0"))
+    conn.execute(sa.text("""
+        ALTER TABLE affiliate_campaigns
+        ADD COLUMN IF NOT EXISTS enable_points BOOLEAN NOT NULL DEFAULT false
+    """))
+    conn.execute(sa.text("""
+        ALTER TABLE affiliate_campaigns
+        ADD COLUMN IF NOT EXISTS point_rate FLOAT NOT NULL DEFAULT 1.0
+    """))
 
     # affiliate_conversions: 2段階通知・ASP固有CV ID・user_token
-    op.add_column("affiliate_conversions", sa.Column("attestation_status", sa.String(20), nullable=True))
-    op.add_column("affiliate_conversions", sa.Column("asp_action_id", sa.String(128), nullable=True))
-    op.add_column("affiliate_conversions", sa.Column("user_token", sa.String(20), nullable=True))
-    op.create_index("ix_affiliate_conversions_asp_action_id", "affiliate_conversions", ["asp_action_id"])
+    conn.execute(sa.text("""
+        ALTER TABLE affiliate_conversions
+        ADD COLUMN IF NOT EXISTS attestation_status VARCHAR(20)
+    """))
+    conn.execute(sa.text("""
+        ALTER TABLE affiliate_conversions
+        ADD COLUMN IF NOT EXISTS asp_action_id VARCHAR(128)
+    """))
+    conn.execute(sa.text("""
+        ALTER TABLE affiliate_conversions
+        ADD COLUMN IF NOT EXISTS user_token VARCHAR(20)
+    """))
+    conn.execute(sa.text("""
+        CREATE INDEX IF NOT EXISTS ix_affiliate_conversions_asp_action_id
+        ON affiliate_conversions (asp_action_id)
+    """))
 
     # user_points: ポイント付与履歴テーブル（新規作成）
-    op.create_table(
-        "user_points",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("user_token", sa.String(20), nullable=False, index=True),
-        sa.Column("conversion_id", sa.String(36), sa.ForeignKey("affiliate_conversions.id"), nullable=False, unique=True),
-        sa.Column("points", sa.Float(), nullable=False, server_default="0.0"),
-        sa.Column("awarded_at", sa.DateTime(), nullable=True),
-    )
-    op.create_index("ix_user_points_user_token", "user_points", ["user_token"])
-    op.create_index("ix_user_points_conversion_id", "user_points", ["conversion_id"], unique=True)
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS user_points (
+            id VARCHAR(36) PRIMARY KEY,
+            user_token VARCHAR(20) NOT NULL,
+            conversion_id VARCHAR(36) NOT NULL UNIQUE REFERENCES affiliate_conversions(id),
+            points FLOAT NOT NULL DEFAULT 0.0,
+            awarded_at TIMESTAMP
+        )
+    """))
+    conn.execute(sa.text("""
+        CREATE INDEX IF NOT EXISTS ix_user_points_user_token
+        ON user_points (user_token)
+    """))
+    conn.execute(sa.text("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_user_points_conversion_id
+        ON user_points (conversion_id)
+    """))
 
 
 def downgrade() -> None:

@@ -9,4 +9,4 @@ __pycache__/
 tests/
 create_presentation.py
 *.pptx
-tasks/
+/tasks/
