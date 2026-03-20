@@ -161,6 +161,27 @@ async def _get_creative_ctrs(
     return ctrs
 
 
+def _dealer_allowed(store_number: int | None, camp: "AffiliateCampaignDB") -> bool:
+    """
+    店舗番号（store_number）ベースでwhitelist/blacklistを評価する。
+
+    - store_number が None → フィルタなし（全配信）
+    - blacklist に含まれる → 配信NG
+    - whitelist が設定されていて含まれない → 配信NG
+    - それ以外 → 配信OK
+    """
+    if store_number is None:
+        return True
+    sn = str(store_number)
+    whitelist = [p.strip() for p in (getattr(camp, "whitelist_partner_ids", None) or "").split(",") if p.strip()]
+    blacklist = [p.strip() for p in (getattr(camp, "blacklist_partner_ids", None) or "").split(",") if p.strip()]
+    if blacklist and sn in blacklist:
+        return False
+    if whitelist and sn not in whitelist:
+        return False
+    return True
+
+
 async def select_creative(
     db: AsyncSession,
     slot_type: str,
@@ -212,9 +233,12 @@ async def select_creative(
             dealer_id = device.dealer_id
 
     region = None
+    store_number: int | None = None
     if dealer_id:
         dealer = await db.get(DealerDB, dealer_id)
-        region = dealer.region if dealer else None
+        if dealer:
+            region = dealer.region
+            store_number = dealer.store_number
 
     # フリークエンシーキャップ計算（店舗枠・通常枠で共用）
     capped_creative_ids: set[str] = set()
@@ -261,17 +285,8 @@ async def select_creative(
         )
         store_candidates = store_rows.all()
 
-        # whitelist/blacklist_partner_ids フィルタ
-        def _dealer_allowed(d_id: str, camp: AffiliateCampaignDB) -> bool:
-            whitelist = [p.strip() for p in (getattr(camp, "whitelist_partner_ids", None) or "").split(",") if p.strip()]
-            blacklist = [p.strip() for p in (getattr(camp, "blacklist_partner_ids", None) or "").split(",") if p.strip()]
-            if blacklist and d_id in blacklist:
-                return False
-            if whitelist and d_id not in whitelist:
-                return False
-            return True
-
-        store_candidates = [r for r in store_candidates if _dealer_allowed(dealer_id, r[1])]
+        # whitelist/blacklist_partner_ids フィルタ（store_numberで評価）
+        store_candidates = [r for r in store_candidates if _dealer_allowed(store_number, r[1])]
 
         # フリークエンシーキャップ適用
         store_candidates = [r for r in store_candidates if r[0].id not in capped_creative_ids]
@@ -334,6 +349,13 @@ async def select_creative(
 
     rows = await db.execute(q)
     candidates = rows.all()
+
+    if not candidates:
+        return None
+
+    # whitelist/blacklist_partner_ids フィルタ（全広告種別に適用）
+    if store_number is not None:
+        candidates = [r for r in candidates if _dealer_allowed(store_number, r[1])]
 
     if not candidates:
         return None
