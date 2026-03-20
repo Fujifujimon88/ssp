@@ -3225,10 +3225,13 @@ async def list_android_devices(
     return [
         {
             "device_id": d.device_id,
+            "user_token": d.user_token,
+            "enrollment_token": d.enrollment_token,
             "model": d.model,
             "android_version": d.android_version,
             "status": d.status,
             "has_fcm": bool(d.fcm_token),
+            "migration_suspicious": bool(getattr(d, "migration_suspicious", False)),
             "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
             "registered_at": d.registered_at.isoformat(),
         }

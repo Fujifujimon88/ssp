@@ -183,6 +183,8 @@
     <a href="/dealers" data-section="dealers" onclick="showSection('dealers'); return false;">🏬 代理店・店舗管理</a>
     <a href="/campaigns" data-section="campaigns" onclick="showSection('campaigns'); return false;">📣 キャンペーン管理</a>
     <a href="/affiliate-campaigns" data-section="affiliate-campaigns" onclick="showSection('affiliate-campaigns'); return false;">🤝 アフィリエイトキャンペーン</a>
+    <a href="/asp-cv-report" data-section="asp-cv-report" onclick="showSection('asp-cv-report'); return false;">📊 ASP CVレポート</a>
+    <a href="/affiliate-points" data-section="affiliate-points" onclick="showSection('affiliate-points'); return false;">⭐ ポイント付与履歴</a>
     <a href="/creatives" data-section="creatives" onclick="showSection('creatives'); return false;">🎨 クリエイティブ</a>
     <a href="/devices" data-section="devices" onclick="showSection('devices'); return false;">📲 デバイス管理</a>
     <a href="/billing" data-section="billing" onclick="showSection('billing'); return false;">💰 収益・請求</a>
@@ -340,6 +342,8 @@
               <th>カテゴリ</th>
               <th>課金モデル</th>
               <th>CPI単価（円）</th>
+              <th>JANet</th>
+              <th>ポイント</th>
               <th>ID</th>
             </tr>
           </thead>
@@ -347,6 +351,65 @@
         </table>
         <div id="affiliate-campaigns-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">
           登録されていません。「+ 新規登録」から追加してください。
+        </div>
+      </div>
+    </section>
+
+    <!-- ASP CV レポートセクション -->
+    <section id="asp-cv-report" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">ASP CV レポート</h2>
+        <button class="btn" onclick="loadAspConversions()" style="font-size:13px">🔄 更新</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">JANet / SKYFLAG / smaad / A8.net からのCV通知ログ。attestation_status で2段階通知の進捗を確認できます。</p>
+      <div class="table-wrap">
+        <div id="asp-cv-loading" class="loading">読み込み中...</div>
+        <table id="asp-cv-table" style="display:none">
+          <thead>
+            <tr>
+              <th>ASP</th>
+              <th>user_token</th>
+              <th>action_id</th>
+              <th>金額（円）</th>
+              <th>ステータス</th>
+              <th>CV日時</th>
+            </tr>
+          </thead>
+          <tbody id="asp-cv-tbody"></tbody>
+        </table>
+        <div id="asp-cv-empty" style="display:none;text-align:center;padding:32px;color:var(--muted);font-size:14px">
+          CVデータがありません
+        </div>
+      </div>
+    </section>
+
+    <!-- ポイント付与履歴 -->
+    <section id="affiliate-points" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:15px">ポイント付与履歴</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="points-filter-token" type="text" placeholder="user_token でフィルタ"
+            style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;width:200px"
+            onkeydown="if(event.key==='Enter') loadPointHistory()">
+          <button class="btn" onclick="loadPointHistory()" style="font-size:13px">🔄 更新</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">CV承認後にユーザーへ付与されたポイントの一覧。キャンペーンの「ポイント付与」が有効な場合のみ記録されます。</p>
+      <div class="table-wrap">
+        <div id="points-loading" class="loading">読み込み中...</div>
+        <table id="points-table" style="display:none">
+          <thead>
+            <tr>
+              <th>user_token</th>
+              <th>付与ポイント</th>
+              <th>conversion_id</th>
+              <th>付与日時</th>
+            </tr>
+          </thead>
+          <tbody id="points-tbody"></tbody>
+        </table>
+        <div id="points-empty" style="display:none;text-align:center;padding:32px;color:var(--muted);font-size:14px">
+          ポイント付与履歴がありません
         </div>
       </div>
     </section>
@@ -395,7 +458,7 @@
       <div id="devices-android">
         <div id="android-loading" class="loading">読み込み中...</div>
         <table id="android-table" style="display:none">
-          <thead><tr><th>デバイスID</th><th>モデル</th><th>Androidバージョン</th><th>FCM</th><th>最終接続</th><th>操作</th></tr></thead>
+          <thead><tr><th>デバイスID</th><th>user_token</th><th>モデル</th><th>Androidバージョン</th><th>FCM</th><th>最終接続</th><th>操作</th></tr></thead>
           <tbody id="android-tbody"></tbody>
         </table>
         <div id="android-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">Androidデバイスが登録されていません。</div>
@@ -1123,6 +1186,27 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       <input name="reward_amount" type="number" min="0" step="1" placeholder="CPI単価（円）例: 400" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" required>
       <input name="appsflyer_dev_key" placeholder="AppsFlyer Dev Key（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
       <input name="adjust_app_token" placeholder="Adjust App Token（省略可）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <!-- JANet連携 -->
+      <details style="border:1px solid var(--border);border-radius:6px;padding:10px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--muted);list-style:none">🤝 JANet連携設定（省略可）</summary>
+        <div style="display:grid;gap:8px;margin-top:10px">
+          <input name="janet_media_id" placeholder="JANet メディアID（例: 99901）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+          <input name="janet_original_id" placeholder="JANet 原稿ID（例: 88801）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+          <p style="font-size:11px;color:var(--muted);margin:0">設定するとクリックURLが <code>click.j-a-net.jp/{メディアID}/{原稿ID}/{user_token}</code> になります。</p>
+        </div>
+      </details>
+      <!-- ポイント付与設定 -->
+      <details style="border:1px solid var(--border);border-radius:6px;padding:10px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--muted);list-style:none">🎁 ポイント付与設定（デフォルト: なし）</summary>
+        <div style="display:grid;gap:8px;margin-top:10px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
+            <input name="enable_points" type="checkbox" style="width:16px;height:16px">
+            ポイント付与を有効にする
+          </label>
+          <input name="point_rate" type="number" min="0.1" step="0.1" value="1.0" placeholder="還元レート（1円 = 何ポイント）" style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+          <p style="font-size:11px;color:var(--muted);margin:0">CVのapproved確認後のみ付与されます。</p>
+        </div>
+      </details>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
       <div id="affiliate-campaign-result" style="font-size:13px"></div>
     </form>
@@ -2176,8 +2260,12 @@ async function loadAndroidDevices() {
           ? '<span style="color:#3b82f6;font-size:11px">🔵 migrated</span> '
           : '';
       const lastSeen = d.last_seen_at ? d.last_seen_at.slice(0,16).replace('T',' ') : '-';
+      const tokenCell = d.user_token
+        ? `<span style="font-family:monospace;font-size:11px;color:var(--green)" title="${d.user_token}">${d.user_token}</span>`
+        : `<span style="color:var(--muted);font-size:11px">未発行</span>`;
       return `<tr>
         <td style="font-family:monospace;font-size:12px">${d.device_id.slice(0,8)}…${suspiciousBadge}</td>
+        <td>${tokenCell}</td>
         <td>${d.model || '-'}</td>
         <td>${d.android_version || '-'}</td>
         <td>${fcmBadge}</td>
@@ -2481,7 +2569,72 @@ async function loadAffiliateCampaigns() {
         <td style="color:var(--muted)">${c.category}</td>
         <td style="color:var(--muted)">${c.reward_type.toUpperCase()}</td>
         <td>¥${Number(c.reward_amount).toLocaleString()}</td>
+        <td style="font-size:11px">${c.janet_media_id ? `✓ ${c.janet_media_id}` : '<span style="color:var(--muted)">—</span>'}</td>
+        <td style="font-size:11px">${c.enable_points ? `✓ ×${c.point_rate}` : '<span style="color:var(--muted)">—</span>'}</td>
         <td style="font-family:monospace;font-size:11px;color:var(--muted)">${c.id.slice(0,8)}…</td>
+      </tr>`).join('');
+    table.style.display = '';
+  } catch (e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+async function loadAspConversions() {
+  const loading = document.getElementById('asp-cv-loading');
+  const table   = document.getElementById('asp-cv-table');
+  const empty   = document.getElementById('asp-cv-empty');
+  const tbody   = document.getElementById('asp-cv-tbody');
+  loading.style.display = 'block';
+  table.style.display   = 'none';
+  empty.style.display   = 'none';
+  try {
+    const res = await fetch('/mdm/admin/affiliate/conversions?limit=100', { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const cvs = await res.json();
+    loading.style.display = 'none';
+    if (cvs.length === 0) { empty.style.display = 'block'; return; }
+    const statusBadge = (s) => {
+      if (!s) return '<span style="color:var(--muted)">—</span>';
+      const color = s === 'approved' ? 'var(--green)' : s === 'rejected' ? 'var(--red)' : 'var(--yellow)';
+      return `<span style="color:${color};font-weight:600">${s}</span>`;
+    };
+    tbody.innerHTML = cvs.map(c => `
+      <tr>
+        <td style="font-weight:600">${c.source}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${c.user_token ? c.user_token.slice(0,12) + '…' : '—'}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${c.asp_action_id ? c.asp_action_id.slice(0,16) : '—'}</td>
+        <td>¥${Number(c.revenue_jpy).toLocaleString()}</td>
+        <td>${statusBadge(c.attestation_status)}</td>
+        <td style="font-size:11px;color:var(--muted)">${c.converted_at ? c.converted_at.slice(0,16).replace('T',' ') : '—'}</td>
+      </tr>`).join('');
+    table.style.display = '';
+  } catch (e) {
+    loading.textContent = '読み込みエラー';
+  }
+}
+
+async function loadPointHistory() {
+  const loading = document.getElementById('points-loading');
+  const table   = document.getElementById('points-table');
+  const empty   = document.getElementById('points-empty');
+  const tbody   = document.getElementById('points-tbody');
+  loading.style.display = 'block';
+  table.style.display   = 'none';
+  empty.style.display   = 'none';
+  try {
+    const filterToken = document.getElementById('points-filter-token').value.trim();
+    const qs = filterToken ? `?user_token=${encodeURIComponent(filterToken)}` : '';
+    const res = await fetch(`/mdm/admin/affiliate/points${qs}`, { headers: adminHeaders() });
+    if (!res.ok) throw new Error(res.status);
+    const pts = await res.json();
+    loading.style.display = 'none';
+    if (pts.length === 0) { empty.style.display = 'block'; return; }
+    tbody.innerHTML = pts.map(p => `
+      <tr>
+        <td style="font-family:monospace;font-size:11px;color:var(--green)">${p.user_token}</td>
+        <td style="font-weight:600">${p.points.toLocaleString()} pt</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${p.conversion_id.slice(0,16)}…</td>
+        <td style="font-size:11px;color:var(--muted)">${p.awarded_at ? p.awarded_at.slice(0,16).replace('T',' ') : '—'}</td>
       </tr>`).join('');
     table.style.display = '';
   } catch (e) {
@@ -2500,6 +2653,10 @@ document.getElementById('affiliate-campaign-form').addEventListener('submit', as
     reward_amount:     parseFloat(f.reward_amount.value),
     appsflyer_dev_key: f.appsflyer_dev_key.value || null,
     adjust_app_token:  f.adjust_app_token.value  || null,
+    janet_media_id:    f.janet_media_id.value    || null,
+    janet_original_id: f.janet_original_id.value || null,
+    enable_points:     f.enable_points.checked,
+    point_rate:        parseFloat(f.point_rate.value) || 1.0,
   };
   const res = await fetch('/mdm/admin/affiliate/campaigns', {
     method: 'POST',
@@ -3325,6 +3482,8 @@ loadAdminStats();
 loadDealers();
 loadCampaigns();
 loadAffiliateCampaigns();
+loadAspConversions();
+loadPointHistory();
 loadMdmStats();
 loadStoreAdDelivery();
 loadLockscreenAnalytics();
