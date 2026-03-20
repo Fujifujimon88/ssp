@@ -72,6 +72,16 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.error(f"HealthCheck task failed: {e}")
 
+    # DBマイグレーション自動実行（Vercelデプロイ時に未適用マイグレーションを適用）
+    try:
+        from alembic.config import Config as AlembicConfig
+        from alembic import command as alembic_command
+        alembic_cfg = AlembicConfig("alembic.ini")
+        alembic_command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic upgrade head completed")
+    except Exception as e:
+        logger.error(f"Alembic upgrade failed: {e}")
+
     # DSP登録（開発: モックDSP / 本番: HttpDSPに差し替え）
     for dsp in create_mock_dsps():
         auction_engine.register_dsp(dsp.dsp_id, dsp)

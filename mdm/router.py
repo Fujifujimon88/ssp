@@ -394,25 +394,29 @@ PORTAL_HTML = """<!DOCTYPE html>
             consent_items: getCheckedItems(),
           }})
         }});
-        var data = await res.json();
-        if (data.mobileconfig_url) {{
-          // ページ遷移せずにインライン完了UIを表示（window.location.href = mobileconfig_url だと
-          // Safariがページ遷移し /admin に飛んでしまう問題を防ぐ）
-          document.body.innerHTML =
-            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f7;font-family:-apple-system,sans-serif;padding:20px">' +
-            '<div style="text-align:center;max-width:400px;width:100%">' +
-            '<div style="font-size:64px;margin-bottom:16px">&#x2705;</div>' +
-            '<h1 style="font-size:22px;font-weight:700;margin-bottom:12px">同意が完了しました</h1>' +
-            '<p style="color:#6e6e73;font-size:15px;line-height:1.6;margin-bottom:32px">プロファイルをダウンロードして、設定アプリでインストールしてください。</p>' +
-            '<a href="' + data.mobileconfig_url + '" style="display:block;padding:16px;background:#007aff;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600;margin-bottom:12px">&#x1F4E5; プロファイルをダウンロード</a>' +
-            (data.line_add_friend_url ? '<a href="' + data.line_add_friend_url + '" style="display:block;padding:16px;background:#06c755;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600">&#x1F4F2; LINEで友だち追加</a>' : '') +
-            '</div></div>';
+        if (!res.ok) {{
+          var errData = {{}};
+          try {{ errData = await res.json(); }} catch(_) {{}}
+          throw new Error(errData.detail || ("HTTP " + res.status));
         }}
+        var data = await res.json();
+        if (!data.mobileconfig_url) {{ throw new Error("mobileconfig_url missing"); }}
+        // ページ遷移せずにインライン完了UIを表示（window.location.href = mobileconfig_url だと
+        // Safariがページ遷移し /admin に飛んでしまう問題を防ぐ）
+        document.body.innerHTML =
+          '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f7;font-family:-apple-system,sans-serif;padding:20px">' +
+          '<div style="text-align:center;max-width:400px;width:100%">' +
+          '<div style="font-size:64px;margin-bottom:16px">&#x2705;</div>' +
+          '<h1 style="font-size:22px;font-weight:700;margin-bottom:12px">同意が完了しました</h1>' +
+          '<p style="color:#6e6e73;font-size:15px;line-height:1.6;margin-bottom:32px">プロファイルをダウンロードして、設定アプリでインストールしてください。</p>' +
+          '<a href="' + data.mobileconfig_url + '" style="display:block;padding:16px;background:#007aff;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600;margin-bottom:12px">&#x1F4E5; プロファイルをダウンロード</a>' +
+          (data.line_add_friend_url ? '<a href="' + data.line_add_friend_url + '" style="display:block;padding:16px;background:#06c755;color:#fff;border-radius:14px;text-decoration:none;font-size:17px;font-weight:600">&#x1F4F2; LINEで友だち追加</a>' : '') +
+          '</div></div>';
       }} catch(err) {{
         btn.textContent = "同意してダウンロード";
         btn.classList.remove("btn-disabled");
         btn.classList.add("btn-primary");
-        alert("エラーが発生しました。もう一度お試しください。");
+        alert("エラーが発生しました。もう一度お試しください。\n(" + err.message + ")");
       }}
       return false;
     }}
@@ -728,21 +732,26 @@ async def device_consent(request: Request, db: AsyncSession = Depends(get_db)):
         consent_given=True,
         status="pending",
     )
-    db.add(device)
-    await db.commit()
-    await db.refresh(device)
+    try:
+        db.add(device)
+        await db.commit()
+        await db.refresh(device)
 
-    # ユーザーが実際にチェックした項目を記録（consent_version 2.0）
-    consent_log = ConsentLogDB(
-        enrollment_token=device.enrollment_token,
-        dealer_id=dealer_id,
-        consent_version=CONSENT_VERSION,
-        consent_items=json.dumps(sorted(consent_items)),
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    )
-    db.add(consent_log)
-    await db.commit()
+        # ユーザーが実際にチェックした項目を記録（consent_version 2.0）
+        consent_log = ConsentLogDB(
+            enrollment_token=device.enrollment_token,
+            dealer_id=dealer_id,
+            consent_version=CONSENT_VERSION,
+            consent_items=json.dumps(sorted(consent_items)),
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        db.add(consent_log)
+        await db.commit()
+    except Exception as e:
+        logger.error(f"device_consent DB error: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="データベースエラーが発生しました。しばらく後にお試しください。")
 
     logger.info(f"MDM consent | token={device.enrollment_token[:8]}... | platform={platform} | dealer={dealer_id}")
 
