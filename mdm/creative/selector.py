@@ -261,6 +261,18 @@ async def select_creative(
         )
         store_candidates = store_rows.all()
 
+        # whitelist/blacklist_partner_ids フィルタ
+        def _dealer_allowed(d_id: str, camp: AffiliateCampaignDB) -> bool:
+            whitelist = [p.strip() for p in (getattr(camp, "whitelist_partner_ids", None) or "").split(",") if p.strip()]
+            blacklist = [p.strip() for p in (getattr(camp, "blacklist_partner_ids", None) or "").split(",") if p.strip()]
+            if blacklist and d_id in blacklist:
+                return False
+            if whitelist and d_id not in whitelist:
+                return False
+            return True
+
+        store_candidates = [r for r in store_candidates if _dealer_allowed(dealer_id, r[1])]
+
         # フリークエンシーキャップ適用
         store_candidates = [r for r in store_candidates if r[0].id not in capped_creative_ids]
 

@@ -201,6 +201,13 @@
     <a href="/dsp-configs" data-section="dsp-configs" onclick="showSection('dsp-configs'); return false;">🔌 DSP設定</a>
     <a href="/ios-widget" data-section="ios-widget" onclick="showSection('ios-widget'); return false;">📱 iOSウィジェット</a>
     <a href="/agencies" data-section="agencies" onclick="showSection('agencies'); return false;">🏢 代理店組織管理</a>
+    <a href="/agency-list" data-section="agency-list" onclick="showSection('agency-list'); return false;">📊 代理店一覧</a>
+    <a href="/store-list" data-section="store-list" onclick="showSection('store-list'); return false;">🏪 店舗一覧</a>
+
+    <div class="section-label" style="margin-top:16px">パートナーポータル</div>
+    <a href="/agency-portal" target="_blank">🏢 代理店ポータル →</a>
+    <a href="/dealer-portal" target="_blank">🏪 店舗ポータル →</a>
+    <a href="/portal/login" target="_blank">🔑 ポータルログイン →</a>
 
     <details style="margin-top:16px">
       <summary class="section-label" style="cursor:pointer;list-style:none">SSP管理 ▸</summary>
@@ -855,6 +862,72 @@
       </div>
     </section>
 
+    <!-- 代理店一覧 -->
+    <section id="agency-list" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <h2 style="font-size:15px;margin:0">代理店一覧</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="month" id="agency-list-period" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--text)" onchange="loadAgencyList()">
+          <button class="btn btn-ghost" style="font-size:12px" onclick="loadAgencyList()">🔄 更新</button>
+        </div>
+      </div>
+      <div id="agency-list-loading" class="loading" style="display:none">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="agency-list-table">
+          <thead>
+            <tr>
+              <th>ログインID</th>
+              <th>代理店名</th>
+              <th>店舗数</th>
+              <th>クリック数</th>
+              <th>CV数</th>
+              <th>獲得金額</th>
+              <th>代理店取り分</th>
+              <th>店舗一覧</th>
+            </tr>
+          </thead>
+          <tbody id="agency-list-tbody">
+            <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:32px">月を選択してください</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 店舗一覧 -->
+    <section id="store-list" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <h2 style="font-size:15px;margin:0">店舗一覧</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="store-list-agency-filter" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--text)" onchange="renderStoreListTable()">
+            <option value="">--- すべての代理店 ---</option>
+          </select>
+          <input type="month" id="store-list-period" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--text)" onchange="loadStoreList()">
+          <button class="btn btn-ghost" style="font-size:12px" onclick="loadStoreList()">🔄 更新</button>
+        </div>
+      </div>
+      <div id="store-list-loading" class="loading" style="display:none">読み込み中...</div>
+      <div class="table-wrap">
+        <table id="store-list-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>ログインID</th>
+              <th>代理店</th>
+              <th>店舗名</th>
+              <th>クリック数</th>
+              <th>CV数</th>
+              <th>獲得金額</th>
+              <th>代理店取り分</th>
+              <th>詳細</th>
+            </tr>
+          </thead>
+          <tbody id="store-list-tbody">
+            <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">月を選択してください</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- API連携ガイド -->
     <section id="api-guide" class="card" style="margin-bottom:24px">
       <h2 style="font-size:15px;margin-bottom:16px">API連携クイックスタート</h2>
@@ -1019,6 +1092,66 @@ curl http://localhost:8000/api/slots/SLOT_ID/tag \
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">登録する</button>
       <div id="dealer-result" style="font-size:13px;color:var(--green)"></div>
     </form>
+  </div>
+</div>
+
+<!-- 店舗実績詳細モーダル -->
+<div class="modal-overlay" id="dealer-detail-modal">
+  <div class="modal" style="max-width:640px;width:95%">
+    <span class="modal-close" onclick="closeModal('dealer-detail-modal')">&times;</span>
+    <h2 id="dealer-detail-title">店舗実績</h2>
+    <div id="dealer-detail-loading" class="loading">読み込み中...</div>
+    <div id="dealer-detail-body" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:16px 0">
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">CV数</div>
+          <div id="dd-cv" style="font-size:20px;font-weight:700;color:var(--green)">-</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">収益</div>
+          <div id="dd-revenue" style="font-size:20px;font-weight:700">-</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:12px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">代理店取り分</div>
+          <div id="dd-share" style="font-size:20px;font-weight:700;color:var(--blue)">-</div>
+        </div>
+      </div>
+      <h3 style="font-size:13px;margin-bottom:8px">キャンペーン別</h3>
+      <div class="table-wrap" style="max-height:200px;overflow-y:auto">
+        <table id="dd-campaign-table" style="font-size:12px">
+          <thead><tr><th>キャンペーン</th><th>CV</th><th>収益</th><th>取り分</th></tr></thead>
+          <tbody id="dd-campaign-tbody"></tbody>
+        </table>
+      </div>
+      <div id="dd-stores-section" style="display:none;margin-top:16px">
+        <h3 style="font-size:13px;margin-bottom:8px">同代理店の他店舗</h3>
+        <div class="table-wrap" style="max-height:180px;overflow-y:auto">
+          <table style="font-size:12px">
+            <thead><tr><th>店舗名</th><th>店舗コード</th><th>CV</th><th>収益</th><th>取り分</th></tr></thead>
+            <tbody id="dd-stores-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ポータルログイン設定モーダル（代理店・店舗共用） -->
+<div class="modal-overlay" id="portal-login-modal">
+  <div class="modal" style="max-width:420px">
+    <span class="modal-close" onclick="closeModal('portal-login-modal')">&times;</span>
+    <h2 id="portal-login-modal-title">ポータルログイン設定</h2>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px">ログインIDとパスワードを設定します。パスワードは8文字以上必要です。</p>
+    <input type="hidden" id="portal-login-target-id">
+    <input type="hidden" id="portal-login-target-type">
+    <div style="display:grid;gap:10px">
+      <input id="portal-login-id" placeholder="ログインID（例: agency001）"
+        style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <input id="portal-login-pw" type="password" placeholder="パスワード（8文字以上）"
+        style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+      <button class="btn btn-primary" style="justify-content:center" onclick="savePortalLogin()">保存する</button>
+      <div id="portal-login-result" style="font-size:13px"></div>
+    </div>
   </div>
 </div>
 
@@ -1556,6 +1689,8 @@ function showSection(id) {
     'dsp-configs': '/dsp-configs',
     'ios-widget': '/ios-widget',
     'agencies': '/agencies',
+    'agency-list': '/agency-list',
+    'store-list': '/store-list',
     'enrolled-users': '/enrolled-users',
     'overview': '/overview',
     'publishers': '/publishers',
@@ -1563,6 +1698,20 @@ function showSection(id) {
   };
   const newUrl = SECTION_PATHS[id] || '/admin';
   history.replaceState(null, '', newUrl);
+
+  // セクション別の遅延ロード
+  const _nowM = new Date();
+  const _thisMon = `${_nowM.getFullYear()}-${String(_nowM.getMonth()+1).padStart(2,'0')}`;
+  if (id === 'agency-list') {
+    const el = document.getElementById('agency-list-period');
+    if (!el.value) el.value = _thisMon;
+    loadAgencyList();
+  }
+  if (id === 'store-list') {
+    const el = document.getElementById('store-list-period');
+    if (!el.value) el.value = _thisMon;
+    loadStoreList();
+  }
 }
 
 // ── 管理者キー管理 ─────────────────────────────────────────
@@ -1852,6 +2001,7 @@ async function loadDealers() {
         <td><span class="status-${d.status}">${d.status}</span></td>
         <td style="font-size:12px;color:var(--muted)">${d.region || '-'}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost" style="font-size:11px" onclick="showDealerDetail('${d.id}')">📊 実績</button>
           <button class="btn btn-ghost" style="font-size:11px" onclick="showQrModal('${d.store_code}','${d.name}','${d.id}')">📱 QR</button>
           <button class="btn btn-ghost" style="font-size:11px" onclick="setDealerRegion('${d.id}','${d.region||''}')">🌏 リージョン</button>
         </td>
@@ -1875,6 +2025,206 @@ function showDealerModal() {
   document.getElementById('dealer-result').textContent = '';
   document.getElementById('dealer-form').reset();
   document.getElementById('dealer-modal').classList.add('open');
+}
+
+async function showDealerDetail(dealerId) {
+  document.getElementById('dealer-detail-loading').style.display = 'block';
+  document.getElementById('dealer-detail-body').style.display = 'none';
+  document.getElementById('dealer-detail-title').textContent = '店舗実績';
+  document.getElementById('dealer-detail-modal').classList.add('open');
+  try {
+    const r = await fetch(`/mdm/admin/dealers/${dealerId}/detail`, { headers: adminHeaders() });
+    const d = await r.json();
+    document.getElementById('dealer-detail-title').textContent = `${d.dealer_name} (${d.store_code}) — ${d.period}`;
+    document.getElementById('dd-cv').textContent = d.conversions ?? 0;
+    document.getElementById('dd-revenue').textContent = `¥${(d.revenue_jpy || 0).toLocaleString()}`;
+    document.getElementById('dd-share').textContent = `¥${(d.dealer_share_jpy || 0).toLocaleString()}`;
+
+    // キャンペーン別
+    const ctbody = document.getElementById('dd-campaign-tbody');
+    ctbody.innerHTML = (d.by_campaign || []).map(c =>
+      `<tr>
+        <td>${c.campaign_name}</td>
+        <td>${c.cv_count}</td>
+        <td>¥${(c.revenue_jpy || 0).toLocaleString()}</td>
+        <td>¥${(c.dealer_share_jpy || 0).toLocaleString()}</td>
+      </tr>`
+    ).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">CVなし</td></tr>';
+
+    // 同代理店の配下店舗
+    const stores = d.stores || [];
+    const storesSection = document.getElementById('dd-stores-section');
+    if (stores.length > 1) {
+      document.getElementById('dd-stores-tbody').innerHTML = stores.map(s =>
+        `<tr>
+          <td>${s.dealer_name}</td>
+          <td><code style="font-size:11px">${s.store_code}</code></td>
+          <td>${s.cv_count}</td>
+          <td>¥${(s.revenue_jpy || 0).toLocaleString()}</td>
+          <td>¥${(s.dealer_share_jpy || 0).toLocaleString()}</td>
+        </tr>`
+      ).join('');
+      storesSection.style.display = 'block';
+    } else {
+      storesSection.style.display = 'none';
+    }
+
+    document.getElementById('dealer-detail-loading').style.display = 'none';
+    document.getElementById('dealer-detail-body').style.display = 'block';
+  } catch(e) {
+    document.getElementById('dealer-detail-loading').textContent = 'エラー: ' + e.message;
+  }
+}
+
+// ── 代理店一覧 / 店舗一覧 ──────────────────────────────────────────
+let _agencyListData = null;
+
+async function _fetchAgencyReport(periodElId) {
+  const period = document.getElementById(periodElId).value;
+  if (!period) return null;
+  const [y, m] = period.split('-');
+  const r = await fetch(`/mdm/admin/affiliate/report-agencies?year=${y}&month=${m}`, { headers: adminHeaders() });
+  if (!r.ok) throw new Error(await r.text());
+  return await r.json();
+}
+
+async function loadAgencyList() {
+  const loadEl = document.getElementById('agency-list-loading');
+  loadEl.style.display = 'block';
+  try {
+    const d = await _fetchAgencyReport('agency-list-period');
+    _agencyListData = d;
+    loadEl.style.display = 'none';
+    if (!d) return;
+    const tbody = document.getElementById('agency-list-tbody');
+    if (!d.agencies.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:32px">データなし</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.agencies.map(a =>
+      `<tr>
+        <td style="font-family:monospace;font-size:12px;color:var(--muted)">${a.login_id || '-'}</td>
+        <td style="font-weight:600">${a.agency_name}</td>
+        <td style="color:var(--muted)">${a.store_count}</td>
+        <td>${(a.clicks||0).toLocaleString()}</td>
+        <td style="font-weight:600;color:var(--green)">${(a.conversions||0).toLocaleString()}</td>
+        <td>¥${(a.revenue_jpy||0).toLocaleString()}</td>
+        <td style="font-weight:600;color:var(--blue)">¥${(a.dealer_share_jpy||0).toLocaleString()}</td>
+        <td style="display:flex;gap:4px;flex-wrap:wrap">
+          <button class="btn btn-ghost" style="font-size:11px" onclick="showSection('store-list');document.getElementById('store-list-agency-filter').value='${a.agency_id}';document.getElementById('store-list-period').value=document.getElementById('agency-list-period').value;loadStoreList()">店舗一覧</button>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="openPortalLoginModal('agency','${a.agency_id}','${a.agency_name}','${a.login_id||''}')">🔑 ログイン設定</button>
+        </td>
+      </tr>`
+    ).join('');
+    // 店舗一覧のフィルタも更新
+    const sel = document.getElementById('store-list-agency-filter');
+    sel.innerHTML = '<option value="">--- すべての代理店 ---</option>' +
+      d.agencies.map(a => `<option value="${a.agency_id}">${a.agency_name}</option>`).join('');
+  } catch(e) {
+    loadEl.textContent = 'エラー: ' + e.message;
+  }
+}
+
+async function loadStoreList() {
+  const loadEl = document.getElementById('store-list-loading');
+  loadEl.style.display = 'block';
+  try {
+    // 同じAPIを使う（agency-list-periodが設定済みならそちらを再利用）
+    const period = document.getElementById('store-list-period').value ||
+                   document.getElementById('agency-list-period').value;
+    if (!period) { loadEl.style.display = 'none'; return; }
+    const [y, m] = period.split('-');
+    const r = await fetch(`/mdm/admin/affiliate/report-agencies?year=${y}&month=${m}`, { headers: adminHeaders() });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    _agencyListData = d;
+    loadEl.style.display = 'none';
+    // フィルタ更新
+    const sel = document.getElementById('store-list-agency-filter');
+    const prevVal = sel.value;
+    sel.innerHTML = '<option value="">--- すべての代理店 ---</option>' +
+      d.agencies.map(a => `<option value="${a.agency_id}">${a.agency_name}</option>`).join('');
+    sel.value = prevVal;
+    renderStoreListTable();
+  } catch(e) {
+    loadEl.textContent = 'エラー: ' + e.message;
+  }
+}
+
+function renderStoreListTable() {
+  if (!_agencyListData) return;
+  const filterVal = document.getElementById('store-list-agency-filter').value;
+  let stores = [];
+  let idx = 1;
+  for (const ag of _agencyListData.agencies) {
+    if (filterVal && String(ag.agency_id) !== filterVal) continue;
+    for (const s of (ag.stores || [])) {
+      stores.push({ ...s, agency_name: ag.agency_name, idx: idx++ });
+    }
+  }
+  const tbody = document.getElementById('store-list-tbody');
+  if (!stores.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">データなし</td></tr>';
+    return;
+  }
+  tbody.innerHTML = stores.map(s =>
+    `<tr>
+      <td style="color:var(--muted)">${s.idx}</td>
+      <td style="font-family:monospace;font-size:12px;color:var(--muted)">${s.login_id || '-'}</td>
+      <td style="font-size:12px;color:var(--muted)">${s.agency_name}</td>
+      <td style="font-weight:600">${s.dealer_name}</td>
+      <td>${(s.clicks||0).toLocaleString()}</td>
+      <td style="font-weight:600;color:var(--green)">${(s.conversions||0).toLocaleString()}</td>
+      <td>¥${(s.revenue_jpy||0).toLocaleString()}</td>
+      <td style="font-weight:600;color:var(--blue)">¥${(s.dealer_share_jpy||0).toLocaleString()}</td>
+      <td style="display:flex;gap:4px;flex-wrap:wrap">
+        <button class="btn btn-ghost" style="font-size:11px" onclick="showDealerDetail('${s.dealer_id}')">📊 詳細</button>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="openPortalLoginModal('dealer','${s.dealer_id}','${s.dealer_name}','${s.login_id||''}')">🔑 ログイン設定</button>
+      </td>
+    </tr>`
+  ).join('');
+}
+
+function openPortalLoginModal(type, id, name, currentLoginId) {
+  document.getElementById('portal-login-target-type').value = type;
+  document.getElementById('portal-login-target-id').value = id;
+  document.getElementById('portal-login-modal-title').textContent =
+    (type === 'agency' ? '🏢 代理店' : '🏪 店舗') + `「${name}」ポータルログイン設定`;
+  document.getElementById('portal-login-id').value = currentLoginId || '';
+  document.getElementById('portal-login-pw').value = '';
+  document.getElementById('portal-login-result').textContent = '';
+  document.getElementById('portal-login-modal').classList.add('open');
+}
+
+async function savePortalLogin() {
+  const type = document.getElementById('portal-login-target-type').value;
+  const id = document.getElementById('portal-login-target-id').value;
+  const loginId = document.getElementById('portal-login-id').value.trim();
+  const password = document.getElementById('portal-login-pw').value;
+  const resultEl = document.getElementById('portal-login-result');
+
+  const url = type === 'agency'
+    ? `/mdm/admin/agencies/${id}/password`
+    : `/mdm/admin/dealers/${id}/password`;
+
+  try {
+    const r = await fetch(url, {
+      method: 'PUT',
+      headers: adminHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ login_id: loginId, password }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      resultEl.style.color = 'var(--green)';
+      resultEl.textContent = `✓ 保存しました（login_id: ${d.login_id}）`;
+    } else {
+      resultEl.style.color = 'var(--red)';
+      resultEl.textContent = d.detail || 'エラーが発生しました';
+    }
+  } catch(e) {
+    resultEl.style.color = 'var(--red)';
+    resultEl.textContent = 'ネットワークエラー: ' + e.message;
+  }
 }
 
 document.getElementById('dealer-form').addEventListener('submit', async (e) => {

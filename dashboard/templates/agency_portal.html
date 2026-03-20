@@ -183,10 +183,10 @@
         </div>
         <table id="revenue-table">
           <thead>
-            <tr><th>店舗名</th><th>IMP</th><th>クリック</th><th>収益</th></tr>
+            <tr><th>店舗名</th><th>IMP</th><th>クリック</th><th>収益</th><th>代理店取り分</th></tr>
           </thead>
           <tbody id="revenue-tbody">
-            <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">月を選択してください</td></tr>
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">月を選択してください</td></tr>
           </tbody>
         </table>
       </div>
@@ -306,8 +306,9 @@ async function loadRevenue() {
         <td>${fmt(s.impressions)}</td>
         <td>${fmt(s.clicks)}</td>
         <td style="font-weight:600;color:var(--accent)">${fmtYen(s.revenue_jpy)}</td>
+        <td style="font-weight:600;color:var(--green)">${fmtYen(s.dealer_share_jpy || 0)}</td>
       </tr>
-    `).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">データなし</td></tr>';
+    `).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">データなし</td></tr>';
   } catch(e) { console.error(e); }
 }
 

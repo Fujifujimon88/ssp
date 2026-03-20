@@ -92,6 +92,11 @@
         <div class="value revenue">¥{{ "{:,.0f}".format(report.revenue_jpy) }}</div>
         <div class="sub">{{ report.period }}</div>
       </div>
+      <div class="card">
+        <div class="label">代理店取り分</div>
+        <div class="value revenue">¥{{ "{:,.0f}".format(report.dealer_share_jpy) }}</div>
+        <div class="sub">{{ report.period }}</div>
+      </div>
     </div>
 
     <!-- エンロール用QRコード -->
@@ -108,16 +113,17 @@
     <div class="section">
       <h2>案件別成果（{{ report.period }}）</h2>
       <table>
-        <tr><th>案件名</th><th>報酬タイプ</th><th>CV数</th><th>収益</th></tr>
+        <tr><th>案件名</th><th>報酬タイプ</th><th>CV数</th><th>収益</th><th>代理店取り分</th></tr>
         {% for c in report.by_campaign %}
         <tr>
           <td>{{ c.campaign_name }}</td>
           <td>{{ c.reward_type | upper }}</td>
           <td>{{ c.cv_count }}</td>
           <td class="revenue">¥{{ "{:,.0f}".format(c.revenue_jpy) }}</td>
+          <td class="revenue">¥{{ "{:,.0f}".format(c.dealer_share_jpy) }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="muted" style="padding:16px">今月のCVはまだありません</td></tr>
+        <tr><td colspan="5" class="muted" style="padding:16px">今月のCVはまだありません</td></tr>
         {% endfor %}
       </table>
     </div>

@@ -1064,6 +1064,48 @@ async def list_dealers(
     return [{"id": d.id, "name": d.name, "store_code": d.store_code, "status": d.status, "agency_id": d.agency_id} for d in dealers]
 
 
+@router.get("/admin/dealers/{dealer_id}/detail", summary="店舗別実績詳細（管理者）")
+async def dealer_detail(
+    dealer_id: str,
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """店舗単体の月次CV・収益・代理店取り分サマリー。同一代理店の配下店舗も一覧返却。"""
+    now = datetime.now(timezone.utc)
+    y = year or now.year
+    m = month or now.month
+
+    report = await get_dealer_monthly_report(db, dealer_id, y, m)
+    if not report:
+        raise HTTPException(status_code=404, detail="Dealer not found")
+
+    # 同一代理店の配下店舗も取得
+    dealer = await db.get(DealerDB, dealer_id)
+    stores = []
+    if dealer and dealer.agency_id is not None:
+        siblings = (await db.scalars(
+            select(DealerDB)
+            .where(DealerDB.agency_id == dealer.agency_id, DealerDB.status == "active")
+            .order_by(DealerDB.store_number)
+        )).all()
+        for s in siblings:
+            sr = await get_dealer_monthly_report(db, s.id, y, m)
+            if sr:
+                stores.append({
+                    "dealer_id": s.id,
+                    "dealer_name": s.name,
+                    "store_code": s.store_code,
+                    "cv_count": sr["conversions"],
+                    "revenue_jpy": sr["revenue_jpy"],
+                    "dealer_share_jpy": sr["dealer_share_jpy"],
+                })
+
+    report["stores"] = stores
+    return report
+
+
 @router.get("/admin/enrolled-users", summary="エンロールユーザー一覧（代理店/店舗フィルター付き）")
 async def list_enrolled_users(
     dealer_id: Optional[str] = Query(None, description="店舗IDで絞り込み"),
@@ -3765,6 +3807,91 @@ async def monthly_revenue_report(
     y = year or now.year
     m = month or now.month
     return await calculate_monthly_revenue(db, y, m)
+
+
+@router.get("/admin/affiliate/report-agencies", summary="代理店企業別月次実績サマリー（管理者）")
+async def agencies_monthly_report(
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """代理店企業（AgencyDB）ごとに配下店舗のCV・収益・代理店取り分を集計して返す。"""
+    from collections import defaultdict
+    from db_models import AgencyDB  # noqa
+
+    now = datetime.now(timezone.utc)
+    y = year or now.year
+    m = month or now.month
+
+    # 全店舗レポートを取得
+    all_dealer_reports = await get_all_dealers_report(db, y, m)
+
+    # 全代理店を取得
+    agencies = (await db.scalars(select(AgencyDB).order_by(AgencyDB.id))).all()
+    agency_map = {ag.id: ag for ag in agencies}
+
+    # 店舗をagency_idでグループ化
+    agency_totals = defaultdict(lambda: {
+        "clicks": 0, "conversions": 0, "revenue_jpy": 0.0, "dealer_share_jpy": 0.0,
+        "store_count": 0, "stores": [],
+    })
+
+    # 全店舗のagency_idを取得
+    dealers = (await db.scalars(select(DealerDB))).all()
+    dealer_agency = {d.id: d.agency_id for d in dealers}
+    dealer_login = {d.id: d.login_id for d in dealers}
+
+    for report in all_dealer_reports:
+        agency_id = dealer_agency.get(report["dealer_id"])
+        t = agency_totals[agency_id]
+        t["clicks"] += report.get("clicks", 0)
+        t["conversions"] += report.get("conversions", 0)
+        t["revenue_jpy"] += report.get("revenue_jpy", 0.0)
+        t["dealer_share_jpy"] += report.get("dealer_share_jpy", 0.0)
+        t["store_count"] += 1
+        t["stores"].append({
+            "dealer_id": report["dealer_id"],
+            "dealer_name": report["dealer_name"],
+            "store_code": report["store_code"],
+            "login_id": dealer_login.get(report["dealer_id"], ""),
+            "clicks": report.get("clicks", 0),
+            "conversions": report.get("conversions", 0),
+            "revenue_jpy": report.get("revenue_jpy", 0.0),
+            "dealer_share_jpy": report.get("dealer_share_jpy", 0.0),
+        })
+
+    result = []
+    for ag in agencies:
+        t = agency_totals[ag.id]
+        result.append({
+            "agency_id": ag.id,
+            "login_id": ag.login_id or "",
+            "agency_name": ag.name,
+            "store_count": t["store_count"],
+            "clicks": t["clicks"],
+            "conversions": t["conversions"],
+            "revenue_jpy": round(t["revenue_jpy"], 2),
+            "dealer_share_jpy": round(t["dealer_share_jpy"], 2),
+            "stores": t["stores"],
+        })
+
+    # 未所属店舗（agency_id=None）があれば追加
+    unassigned = agency_totals.get(None)
+    if unassigned and unassigned["store_count"] > 0:
+        result.append({
+            "agency_id": None,
+            "login_id": "",
+            "agency_name": "（未所属）",
+            "store_count": unassigned["store_count"],
+            "clicks": unassigned["clicks"],
+            "conversions": unassigned["conversions"],
+            "revenue_jpy": round(unassigned["revenue_jpy"], 2),
+            "dealer_share_jpy": round(unassigned["dealer_share_jpy"], 2),
+            "stores": unassigned["stores"],
+        })
+
+    return {"period": f"{y:04d}-{m:02d}", "agencies": result}
 
 
 @router.get("/admin/affiliate/report/{dealer_id}", summary="代理店別月次精算レポート（管理者）")
@@ -7551,12 +7678,16 @@ async def agency_revenue(
             )
         )
         r = row.one()
+        # アフィリエイトCV由来の代理店取り分を加算
+        affiliate_report = await get_dealer_monthly_report(db, dealer.id, year, month)
+        dealer_share = affiliate_report.get("dealer_share_jpy", 0.0) if affiliate_report else 0.0
         result.append({
             "store_name": dealer.name,
             "store_code": dealer.store_code,
             "impressions": r.impressions or 0,
             "clicks": int(r.clicks or 0),
             "revenue_jpy": int((r.revenue or 0) / 1000),
+            "dealer_share_jpy": dealer_share,
         })
 
     gross = sum(r["revenue_jpy"] for r in result)

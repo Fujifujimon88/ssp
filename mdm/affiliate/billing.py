@@ -176,18 +176,23 @@ async def get_dealer_monthly_report(
     )
     by_campaign = []
     total_revenue = 0.0
+    total_dealer_share = 0.0
     total_cv = 0
     for row in cv_rows.all():
         campaign = await db.get(AffiliateCampaignDB, row.campaign_id)
         rev = float(row.revenue or 0)
+        dealer_rate = float(getattr(campaign, "dealer_revenue_rate", 0) or 0)
+        dealer_share = round(rev * dealer_rate / 100, 2) if dealer_rate > 0 else 0.0
         by_campaign.append({
             "campaign_id": row.campaign_id,
             "campaign_name": campaign.name if campaign else "Unknown",
             "reward_type": campaign.reward_type if campaign else "?",
             "cv_count": row.cv_count,
             "revenue_jpy": rev,
+            "dealer_share_jpy": dealer_share,
         })
         total_revenue += rev
+        total_dealer_share += dealer_share
         total_cv += row.cv_count
 
     return {
@@ -201,6 +206,7 @@ async def get_dealer_monthly_report(
         "clicks": clicks or 0,
         "conversions": total_cv,
         "revenue_jpy": total_revenue,
+        "dealer_share_jpy": round(total_dealer_share, 2),
         "by_campaign": by_campaign,
     }
 
