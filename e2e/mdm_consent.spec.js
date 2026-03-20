@@ -129,13 +129,15 @@ test.describe("MDM エンロール同意ポータル", () => {
   test("mobileconfig エンドポイントが有効なトークンで 200 を返す", async ({ request }) => {
     // 同意してトークンを取得
     const storeCode = `e2e-mc-${Date.now()}`;
-    await request.post("/mdm/admin/dealers", {
+    const dealerRes = await request.post("/mdm/admin/dealers", {
       headers: { "X-Admin-Key": ADMIN_KEY, "Content-Type": "application/json" },
       data: { name: "E2E MC確認店", store_code: storeCode },
     });
+    const { id: dealerId } = await dealerRes.json();
 
     const consentRes = await request.post("/mdm/device/consent", {
       data: {
+        dealer_id: dealerId,
         age_group: "30s",
         user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
         consent_items: [

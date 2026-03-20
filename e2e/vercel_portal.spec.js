@@ -75,9 +75,12 @@ test.describe("mobileconfig ダウンロードと中身の検証", () => {
   let token;
 
   test.beforeAll(async ({ request }) => {
+    // PORTAL_URL に含まれる dealer_id を使用（dealer=c229b92e-... の部分）
+    const dealerId = new URL(PORTAL_URL).searchParams.get("dealer");
     const res = await request.post(`${BASE}/mdm/device/consent`, {
       headers: { "Content-Type": "application/json" },
       data: {
+        dealer_id: dealerId,
         user_agent:
           "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
         consent_items: [

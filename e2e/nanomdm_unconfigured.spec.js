@@ -54,9 +54,32 @@ test.describe("A. システム全体の健全性（NanoMDMなし）", () => {
 // B. NanoMDM不要のiOS機能 — 正常動作を確認
 // ─────────────────────────────────────────────────────────────
 test.describe("B. NanoMDM不要のiOS機能（正常動作）", () => {
+  let dealerId;
+  test.beforeAll(async ({ request }) => {
+    // STORE001 の dealer_id を取得（なければ作成）
+    const listRes = await request.get("/mdm/admin/dealers", {
+      headers: { "X-Admin-Key": ADMIN_KEY },
+    });
+    const dealers = await listRes.json();
+    const store001 = Array.isArray(dealers)
+      ? dealers.find((d) => d.store_code === STORE_CODE)
+      : null;
+    if (store001) {
+      dealerId = store001.id;
+    } else {
+      const res = await request.post("/mdm/admin/dealers", {
+        headers: { "X-Admin-Key": ADMIN_KEY },
+        data: { name: "テスト店舗", store_code: STORE_CODE },
+      });
+      const d = await res.json();
+      dealerId = d.id;
+    }
+  });
+
   test("同意API POST /mdm/device/consent → 200 + mobileconfig_url 返る", async ({ request }) => {
     const res = await request.post("/mdm/device/consent", {
       data: {
+        dealer_id: dealerId,
         consent_items: ALL_CONSENT_ITEMS,
         age_group: "30s",
         user_agent:

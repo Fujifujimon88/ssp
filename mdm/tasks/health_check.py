@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_models import AndroidDeviceDB, CampaignDB, DeviceDB, iOSDeviceDB
 from mdm.nanomdm import client as nanomdm_client
+from utils import utcnow
 from mdm.nanomdm import commands as mdm_commands
 from mdm.nanomdm.apns import send_mdm_push
 
@@ -27,7 +28,7 @@ async def run_health_check(db: AsyncSession) -> dict:
     定期ヘルスチェックのメインエントリーポイント。
     main.py の startup イベントから asyncio.create_task でスケジュールされる。
     """
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     results = {
         "ios_apns_pushed": 0,
         "ios_profile_restored": 0,

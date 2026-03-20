@@ -25,10 +25,11 @@ const ALL_CONSENT_ITEMS = [
 // ─── ヘルパー ─────────────────────────────────────────────────────
 
 /** 同意登録して enrollment_token を取得する */
-async function createEnrollmentToken(request) {
+async function createEnrollmentToken(request, dealerId) {
   const res = await request.post(`${BASE_URL}/mdm/device/consent`, {
     headers: { "Content-Type": "application/json" },
     data: {
+      dealer_id: dealerId,
       user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 7)",
       consent_items: ALL_CONSENT_ITEMS,
     },
@@ -50,10 +51,19 @@ async function registerAndroidDevice(request, deviceId, extraBody = {}) {
 // ─── テスト ───────────────────────────────────────────────────────
 
 test.describe("MDMプロファイル消失防止 E2E", () => {
+  let dealerId;
+  test.beforeAll(async ({ request }) => {
+    const res = await request.post(`${BASE_URL}/mdm/admin/dealers`, {
+      headers: ADMIN_HEADERS,
+      data: { name: `E2E再エンロールテスト店舗-${Date.now()}`, store_code: `e2e-recovery-${Date.now()}` },
+    });
+    const d = await res.json();
+    dealerId = d.id;
+  });
 
   test("GET /mdm/re-enroll - 有効tokenで再エンロール情報が取得できる", async ({ request }) => {
     // 1. 同意登録で enrollment_token を取得
-    const token = await createEnrollmentToken(request);
+    const token = await createEnrollmentToken(request, dealerId);
 
     // 2. re-enroll
     const reRes = await request.get(`${BASE_URL}/mdm/re-enroll?token=${token}`);
@@ -64,7 +74,7 @@ test.describe("MDMプロファイル消失防止 E2E", () => {
 
   test("POST /mdm/android/register - enrollment_token付きで機種変更が成功する", async ({ request }) => {
     // 1. 同意登録で enrollment_token を取得
-    const token = await createEnrollmentToken(request);
+    const token = await createEnrollmentToken(request, dealerId);
     const oldDeviceId = `e2e-migrate-old-${Date.now()}`;
     const newDeviceId = `e2e-migrate-new-${Date.now()}`;
 
@@ -86,7 +96,7 @@ test.describe("MDMプロファイル消失防止 E2E", () => {
 
   test("GET /mdm/admin/device/{device_id}/re-enroll-url - 管理者がURLを取得できる", async ({ request }) => {
     // 1. 同意登録 + Android デバイス登録
-    const token = await createEnrollmentToken(request);
+    const token = await createEnrollmentToken(request, dealerId);
     const deviceId = `e2e-admin-url-${Date.now()}`;
     const regRes = await registerAndroidDevice(request, deviceId, { enrollment_token: token });
     expect(regRes.ok()).toBeTruthy();

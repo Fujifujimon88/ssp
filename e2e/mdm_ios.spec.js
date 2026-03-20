@@ -74,9 +74,20 @@ test.describe("エンロールポータル iOS UA検出", () => {
 // 2. 同意登録 → mobileconfig URL 取得
 // ─────────────────────────────────────────────────────────────
 test.describe("同意登録 API /mdm/device/consent", () => {
+  let dealerId;
+  test.beforeAll(async ({ request }) => {
+    const res = await request.post("/mdm/admin/dealers", {
+      headers: { "X-Admin-Key": process.env.ADMIN_API_KEY || "change-me-admin-key" },
+      data: { name: `E2E同意テスト店舗-${Date.now()}`, store_code: `e2e-consent-${Date.now()}` },
+    });
+    const d = await res.json();
+    dealerId = d.id;
+  });
+
   test("全同意項目チェックで mobileconfig_url が返る", async ({ request }) => {
     const res = await request.post("/mdm/device/consent", {
       data: {
+        dealer_id: dealerId,
         consent_items: ALL_CONSENT_ITEMS,
         age_group: "20s",
         user_agent:

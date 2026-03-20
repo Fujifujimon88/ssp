@@ -7249,23 +7249,35 @@ async def list_campaigns_for_assignment(
         .where(AffiliateCampaignDB.status == "active")
         .order_by(AffiliateCampaignDB.created_at.desc())
     )).all()
+    if not rows:
+        return {"campaigns": []}
+
+    # 全キャンペーンの静止画クリエイティブを一括取得（N+1 回避）
+    campaign_ids = [c.id for c in rows]
+    creative_rows = (await db.execute(
+        select(CreativeDB.campaign_id, CreativeDB.image_url)
+        .where(
+            CreativeDB.campaign_id.in_(campaign_ids),
+            CreativeDB.type == "image",
+            CreativeDB.status == "active",
+        )
+    )).all()
+    # campaign_id → image_url の辞書（最初の1件を使用）
+    creative_by_campaign: dict[str, str | None] = {}
+    for row in creative_rows:
+        if row.campaign_id not in creative_by_campaign:
+            creative_by_campaign[row.campaign_id] = row.image_url
+
     result = []
     for c in rows:
-        # 静止画クリエイティブの有無を確認
-        creative = await db.scalar(
-            select(CreativeDB).where(
-                CreativeDB.campaign_id == c.id,
-                CreativeDB.type == "image",
-                CreativeDB.status == "active",
-            ).limit(1)
-        )
+        image_url = creative_by_campaign.get(c.id)
         result.append({
             "id": c.id,
             "name": c.name,
             "category": c.category,
             "reward_amount": c.reward_amount,
-            "has_image": creative is not None,
-            "image_url": creative.image_url if creative else None,
+            "has_image": image_url is not None,
+            "image_url": image_url,
         })
     return {"campaigns": result}
 

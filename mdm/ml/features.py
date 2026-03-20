@@ -10,6 +10,8 @@ APPI準拠: 同意フォームで data_collection に同意済みのデバイス
 """
 import logging
 from datetime import datetime, timedelta, timezone
+
+from utils import utcnow
 from typing import Optional
 
 from sqlalchemy import func, select, case
@@ -37,7 +39,7 @@ async def compute_user_features(db: AsyncSession) -> int:
     Returns:
         更新したデバイス数
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    cutoff = utcnow() - timedelta(days=30)
 
     # ── Step 1: impression基本集計 ───────────────────────────────
     base_agg = (
@@ -171,7 +173,7 @@ async def compute_user_features(db: AsyncSession) -> int:
     result = await db.execute(stmt)
     rows = result.all()
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     updated_count = 0
 
     for row in rows:

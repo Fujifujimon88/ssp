@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auction.engine import AuctionResult
 from cache import incr_impression_counter
 from db_models import ImpressionDB
+from utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ async def record_auction(
         bid_count=len(result.all_bids),
         duration_ms=result.duration_ms,
         filled=result.winner is not None,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=utcnow(),
     )
     db.add(imp)
     await db.commit()

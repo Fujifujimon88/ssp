@@ -236,7 +236,7 @@ class AffiliateConversionDB(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     click_token: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
-    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_campaigns.id"), index=True)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("affiliate_campaigns.id"), index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(20), default="manual")  # appsflyer/adjust/manual/janet/skyflag/smaad/a8
     event_type: Mapped[str] = mapped_column(String(50), default="install")
     revenue_jpy: Mapped[float] = mapped_column(Float, default=0.0)

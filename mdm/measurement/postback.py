@@ -8,6 +8,8 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from utils import utcnow
+
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -192,7 +194,7 @@ async def trigger_postbacks(
             request_url=APPSFLYER_S2S_URL,
             response_status=200 if af_success else None,
             success=af_success,
-            attempted_at=datetime.now(timezone.utc),
+            attempted_at=utcnow(),
         )
         db.add(log)
         results.append(af_success)
@@ -206,7 +208,7 @@ async def trigger_postbacks(
             request_url=ADJUST_S2S_URL,
             response_status=200 if adj_success else None,
             success=adj_success,
-            attempted_at=datetime.now(timezone.utc),
+            attempted_at=utcnow(),
         )
         db.add(log)
         results.append(adj_success)
@@ -220,7 +222,7 @@ async def trigger_postbacks(
             request_url=campaign.postback_url_template[:500],
             response_status=200 if asp_success else None,
             success=asp_success,
-            attempted_at=datetime.now(timezone.utc),
+            attempted_at=utcnow(),
         )
         db.add(log)
         results.append(asp_success)
@@ -282,7 +284,7 @@ async def check_vta(
         return
 
     # VTAウィンドウの開始時刻を計算
-    window_start = datetime.now(timezone.utc) - timedelta(hours=campaign.vta_window_hours)
+    window_start = utcnow() - timedelta(hours=campaign.vta_window_hours)
 
     # デバイスのインプレッション履歴を検索（キャンペーン紐付きクリエイティブ経由）
     from db_models import CreativeDB

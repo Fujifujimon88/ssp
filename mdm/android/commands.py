@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_models import AndroidCommandDB, AndroidDeviceDB
+from utils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ async def get_pending_commands(db: AsyncSession, device_id: str) -> list[Android
     commands = list(result.scalars().all())
 
     if commands:
-        now = datetime.now(timezone.utc)
+        now = utcnow()
         ids = [cmd.id for cmd in commands]
         await db.execute(
             update(AndroidCommandDB)
@@ -97,7 +98,7 @@ async def acknowledge_command(db: AsyncSession, command_id: str, success: bool =
         return False
 
     cmd.status = "acknowledged" if success else "failed"
-    cmd.acked_at = datetime.now(timezone.utc)
+    cmd.acked_at = utcnow()
     await db.commit()
     logger.info(f"Command acked | id={command_id} | success={success}")
     return True
@@ -110,7 +111,7 @@ async def update_device_last_seen(db: AsyncSession, device_id: str) -> None:
     )
     device = result.scalar_one_or_none()
     if device:
-        device.last_seen_at = datetime.now(timezone.utc)
+        device.last_seen_at = utcnow()
         await db.commit()
 
 

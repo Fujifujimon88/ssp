@@ -174,10 +174,15 @@ test.describe("代理店組織管理 UI (/agencies)", () => {
     await setAdminKeyInBrowser(page);
 
     const newName = `UI代理店-${Date.now()}`;
-    await page.getByRole("button", { name: /代理店登録/ }).click();
+    // showAgencyModal() を呼ぶボタンを明示的に選択（showDealerModal() と区別）
+    await page.locator("button[onclick='showAgencyModal()']").click();
     await page.locator("#agency-form [name=name]").fill(newName);
     await page.locator("#agency-form [name=contact_email]").fill("ui-test@example.com");
-    await page.locator("#agency-form button[type=submit]").click();
+    const [res] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/mdm/admin/agencies") && r.request().method() === "POST", { timeout: 15_000 }),
+      page.locator("#agency-form button[type=submit]").click(),
+    ]);
+    expect(res.status(), `POST /mdm/admin/agencies → ${res.status()}`).toBe(200);
 
     // 成功メッセージ確認
     await expect(page.locator("#agency-result")).toContainText("登録完了");

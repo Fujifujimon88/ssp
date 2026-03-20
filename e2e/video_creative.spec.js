@@ -23,22 +23,15 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("動画クリエイティブ API", () => {
   test.beforeAll(async ({ request }) => {
-    // ディーラー作成
-    const dealerRes = await request.post("/mdm/admin/dealers", {
+    // アフィリエイトキャンペーン作成（CreativeDB.campaign_id は affiliate_campaigns.id を参照）
+    const campRes = await request.post("/mdm/admin/affiliate/campaigns", {
       data: {
-        name: `E2E動画テスト店舗-${UID}`,
-        store_code: `VIDEO-E2E-${UID}`,
-        address: "大阪府テスト市1-1-1",
+        name: `E2E動画キャンペーン-${UID}`,
+        category: "app",
+        destination_url: "https://example.com/video-lp",
+        reward_type: "cpi",
+        reward_amount: 500,
       },
-      headers: ADMIN_HEADERS,
-    });
-    expect(dealerRes.ok()).toBeTruthy();
-    const dealer = await dealerRes.json();
-    dealerId = dealer.id;
-
-    // キャンペーン作成
-    const campRes = await request.post("/mdm/admin/campaigns", {
-      data: { name: `E2E動画キャンペーン-${UID}`, dealer_id: dealerId },
       headers: ADMIN_HEADERS,
     });
     expect(campRes.ok()).toBeTruthy();
