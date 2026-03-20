@@ -91,6 +91,8 @@ class DealerDB(Base):
     region: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     # CV計測方法デフォルト（NULL=キャンペーン設定に従う / "install" / "app_open"）
     default_cv_trigger: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    login_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    hashed_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     devices: Mapped[list["DeviceDB"]] = relationship("DeviceDB", back_populates="dealer")
     ad_assignments: Mapped[list["StoreAdAssignmentDB"]] = relationship("StoreAdAssignmentDB", back_populates="dealer")
@@ -672,6 +674,8 @@ class AgencyDB(Base):
     # 代理店ごとのテイクレート（0.0〜1.0）。精算時に使用。
     take_rate     = Column(Float, nullable=False, default=0.175)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    login_id       = Column(String(64), nullable=True, unique=True, index=True)
+    hashed_password = Column(String(255), nullable=True)
 
 
 # ── 収益精算（BKD-12） ─────────────────────────────────────────────────

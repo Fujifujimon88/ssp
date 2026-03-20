@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>代理店・店舗ポータル ログイン</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f172a; --surface: #1e293b; --border: #334155;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #6366f1;
+      --red: #ef4444;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 40px; width: 100%; max-width: 400px;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+    .logo h1 { font-size: 20px; font-weight: 700; }
+    .badge { background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 99px; font-size: 11px; }
+    .subtitle { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    input {
+      width: 100%; padding: 10px 12px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); font-size: 14px; outline: none;
+      transition: border-color .15s;
+    }
+    input:focus { border-color: var(--accent); }
+    .field { margin-bottom: 18px; }
+    .btn {
+      width: 100%; padding: 11px; border: none; border-radius: 8px;
+      background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: opacity .15s; margin-top: 8px;
+    }
+    .btn:hover { opacity: .85; }
+    .error {
+      background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3);
+      border-radius: 8px; padding: 10px 14px; font-size: 13px;
+      color: var(--red); margin-top: 16px;
+    }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 20px; text-align: center; line-height: 1.7; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>代理店・店舗ポータル</h1>
+    <span class="badge">Portal</span>
+  </div>
+  <p class="subtitle">IDとパスワードでログインしてください</p>
+
+  <form method="post" action="/portal/login">
+    <div class="field">
+      <label for="login_id">ログインID</label>
+      <input id="login_id" name="login_id" type="text" placeholder="ログインIDを入力" autocomplete="username" required autofocus>
+    </div>
+    <div class="field">
+      <label for="password">パスワード</label>
+      <input id="password" name="password" type="password" placeholder="パスワードを入力" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn">ログイン</button>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+  </form>
+
+  <p class="hint">ログイン情報は管理者にお問い合わせください。</p>
+</div>
+</body>
+</html>

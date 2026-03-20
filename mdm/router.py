@@ -7425,6 +7425,57 @@ async def agency_revenue(
     }
 
 
+# ── ポータル認証管理（BKD-11-PW） ──────────────────────────────────────────
+
+
+@router.put("/admin/agencies/{agency_id}/password", summary="代理店ポータルパスワード設定")
+async def set_agency_portal_password(
+    agency_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """管理者が代理店のポータルログイン情報（login_id + password）を設定する"""
+    from auth import hash_password as _hash
+    agency = await db.get(AgencyDB, agency_id)
+    if not agency:
+        raise HTTPException(status_code=404, detail="Agency not found")
+    login_id = (body.get("login_id") or "").strip()
+    password = body.get("password") or ""
+    if not login_id or not password:
+        raise HTTPException(status_code=400, detail="login_id と password は必須です")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password は8文字以上にしてください")
+    agency.login_id = login_id
+    agency.hashed_password = _hash(password)
+    await db.commit()
+    return {"id": agency_id, "login_id": login_id, "ok": True}
+
+
+@router.put("/admin/dealers/{dealer_id}/password", summary="店舗ポータルパスワード設定")
+async def set_dealer_portal_password(
+    dealer_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin_key),
+):
+    """管理者が店舗のポータルログイン情報（login_id + password）を設定する"""
+    from auth import hash_password as _hash
+    dealer = await db.get(DealerDB, dealer_id)
+    if not dealer:
+        raise HTTPException(status_code=404, detail="Dealer not found")
+    login_id = (body.get("login_id") or "").strip()
+    password = body.get("password") or ""
+    if not login_id or not password:
+        raise HTTPException(status_code=400, detail="login_id と password は必須です")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password は8文字以上にしてください")
+    dealer.login_id = login_id
+    dealer.hashed_password = _hash(password)
+    await db.commit()
+    return {"id": dealer_id, "login_id": login_id, "ok": True}
+
+
 _AGENCY_PORTAL_HTML = """\
 <!DOCTYPE html>
 <html lang="ja">

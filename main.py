@@ -44,6 +44,7 @@ from db_models import AdSlotDB, ImpressionDB, PublisherDB
 from dsp.mock_dsp import create_mock_dsps
 from mdm.dsp.ssp_node import router as openrtb_router
 from mdm.router import router as mdm_router
+from portal.router import router as portal_router
 from publisher.router import router as publisher_router
 
 logging.basicConfig(
@@ -110,6 +111,7 @@ templates = Jinja2Templates(directory="dashboard/templates")
 app.include_router(publisher_router)
 app.include_router(mdm_router)
 app.include_router(openrtb_router)
+app.include_router(portal_router)
 
 # Vercel の X-Forwarded-Proto ヘッダーを信頼し request.base_url が https:// を返すようにする
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
