@@ -823,6 +823,19 @@ async def download_mobileconfig(
                     default_search_provider=sc.get("default_search_provider", "Google"),
                 )
 
+    # LINE友だち追加URLをX-Next-Urlヘッダーで返す（JSがリダイレクト）
+    base = str(request.base_url).rstrip("/")
+
+    # PayloadContent が空だと iOS が「空のプロファイル」エラーを出すため
+    # キャンペーン未設定時はデフォルト WebClip を最低1件追加する
+    if not vpn and not webclips and not safari:
+        webclips = [WebClipConfig(
+            url=f"{base}/mdm/line/add-friend?token={token}",
+            label="サービス登録",
+            full_screen=False,
+            is_removable=True,
+        )]
+
     config_bytes = generate_mobileconfig(
         profile_name=profile_name,
         enrollment_token=token,
@@ -837,9 +850,6 @@ async def download_mobileconfig(
     await db.commit()
 
     logger.info(f"MDM mobileconfig downloaded | token={token[:8]}...")
-
-    # LINE友だち追加URLをX-Next-Urlヘッダーで返す（JSがリダイレクト）
-    base = str(request.base_url).rstrip("/")
     next_url = f"{base}/mdm/line/add-friend?token={token}"
 
     return Response(
