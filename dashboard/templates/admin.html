@@ -188,6 +188,7 @@
     <a href="/affiliate-points" data-section="affiliate-points" onclick="showSection('affiliate-points'); return false;">⭐ ポイント付与履歴</a>
     <a href="/creatives" data-section="creatives" onclick="showSection('creatives'); return false;">🎨 クリエイティブ</a>
     <a href="/devices" data-section="devices" onclick="showSection('devices'); return false;">📲 デバイス管理</a>
+    <a href="/enrolled-users" data-section="enrolled-users" onclick="showSection('enrolled-users'); return false;">👤 エンロールユーザー</a>
     <a href="/billing" data-section="billing" onclick="showSection('billing'); return false;">💰 収益・請求</a>
     <a href="/wifi-triggers" data-section="wifi-triggers" onclick="showSection('wifi-triggers'); return false;">🌐 Wi-Fiトリガー</a>
     <a href="/time-slots" data-section="time-slots" onclick="showSection('time-slots'); return false;">⏱ 時間帯単価</a>
@@ -477,6 +478,43 @@
         </table>
         <div id="ios-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">iOSデバイスが登録されていません。</div>
       </div>
+    </section>
+
+    <!-- エンロールユーザー一覧 -->
+    <section id="enrolled-users" class="card" style="margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h2 style="font-size:15px">👤 エンロールユーザー一覧</h2>
+        <button class="btn btn-ghost" style="font-size:12px" onclick="loadEnrolledUsers()">更新</button>
+      </div>
+      <!-- フィルター -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <select id="eu-dealer-filter" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;min-width:180px" onchange="loadEnrolledUsers()">
+          <option value="">全店舗</option>
+        </select>
+        <select id="eu-platform-filter" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" onchange="loadEnrolledUsers()">
+          <option value="">全プラットフォーム</option>
+          <option value="ios">iOS</option>
+          <option value="android">Android</option>
+        </select>
+        <span id="eu-count" style="font-size:13px;color:var(--muted);align-self:center"></span>
+      </div>
+      <div id="eu-loading" class="loading">読み込み中...</div>
+      <table id="eu-table" style="display:none">
+        <thead>
+          <tr>
+            <th>エンロール日時</th>
+            <th>OS</th>
+            <th>モデル</th>
+            <th>年代</th>
+            <th>DL</th>
+            <th>ステータス</th>
+            <th>店舗名</th>
+            <th>店舗コード</th>
+          </tr>
+        </thead>
+        <tbody id="eu-tbody"></tbody>
+      </table>
+      <div id="eu-empty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:14px">ユーザーが登録されていません。</div>
     </section>
 
     <!-- 収益・請求レポート -->
@@ -1518,6 +1556,7 @@ function showSection(id) {
     'dsp-configs': '/dsp-configs',
     'ios-widget': '/ios-widget',
     'agencies': '/agencies',
+    'enrolled-users': '/enrolled-users',
     'overview': '/overview',
     'publishers': '/publishers',
     'api-guide': '/api-guide',
@@ -1728,6 +1767,68 @@ async function updateStatus(pubId, newStatus) {
 
 // ── MDM 代理店 ─────────────────────────────────────────────
 let _dealersCache = [];
+
+async function loadEnrolledUsers() {
+  const dealerId = document.getElementById('eu-dealer-filter').value;
+  const platform = document.getElementById('eu-platform-filter').value;
+  document.getElementById('eu-loading').style.display = 'block';
+  document.getElementById('eu-table').style.display = 'none';
+  document.getElementById('eu-empty').style.display = 'none';
+  document.getElementById('eu-count').textContent = '';
+
+  let url = '/mdm/admin/enrolled-users?limit=500';
+  if (dealerId) url += `&dealer_id=${encodeURIComponent(dealerId)}`;
+  if (platform) url += `&platform=${encodeURIComponent(platform)}`;
+
+  try {
+    const r = await fetch(url, { headers: adminHeaders() });
+    if (!r.ok) { document.getElementById('eu-loading').textContent = 'エラー: ' + r.status; return; }
+    const users = await r.json();
+    document.getElementById('eu-loading').style.display = 'none';
+    document.getElementById('eu-count').textContent = `${users.length} 件`;
+
+    if (!users.length) {
+      document.getElementById('eu-empty').style.display = 'block';
+      return;
+    }
+
+    const platformIcon = { ios: '🍎', android: '🤖', unknown: '❓' };
+    const statusColor = { active: 'var(--green)', pending: 'var(--yellow)', unenrolled: 'var(--muted)', opted_out: 'var(--red)' };
+    const ageLabel = { '10s': '10代', '20s': '20代', '30s': '30代', '40s': '40代', '50s': '50代以上' };
+
+    document.getElementById('eu-tbody').innerHTML = users.map(u => {
+      const dt = u.enrolled_at ? new Date(u.enrolled_at).toLocaleString('ja-JP', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) : '-';
+      const icon = platformIcon[u.platform] || '❓';
+      const color = statusColor[u.status] || 'var(--muted)';
+      const dl = u.mobileconfig_downloaded ? '<span style="color:var(--green)">✓ DL済</span>' : '<span style="color:var(--muted)">未</span>';
+      return `<tr>
+        <td style="font-size:12px;color:var(--muted)">${dt}</td>
+        <td>${icon} ${u.platform}</td>
+        <td style="font-size:12px">${u.device_model || '-'}</td>
+        <td style="font-size:12px">${ageLabel[u.age_group] || u.age_group || '-'}</td>
+        <td>${dl}</td>
+        <td style="color:${color};font-size:12px">${u.status}</td>
+        <td style="font-weight:600">${u.dealer_name || '<span style="color:var(--muted)">未紐付け</span>'}</td>
+        <td style="font-size:11px;color:var(--muted);font-family:monospace">${u.store_code || '-'}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('eu-table').style.display = 'table';
+
+    // 店舗フィルタードロップダウンを dealers キャッシュで更新（初回のみ）
+    const sel = document.getElementById('eu-dealer-filter');
+    if (sel.options.length <= 1 && _dealersCache && _dealersCache.length) {
+      _dealersCache.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = `${d.name} (${d.store_code})`;
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) {
+    document.getElementById('eu-loading').textContent = 'ネットワークエラー';
+    console.error(e);
+  }
+}
 
 async function loadDealers() {
   document.getElementById('dealers-loading').style.display = 'block';
@@ -3693,6 +3794,7 @@ loadAffiliateCampaigns();
 loadAspConversions();
 loadPointHistory();
 loadMdmStats();
+loadEnrolledUsers();
 loadStoreAdDelivery();
 loadLockscreenAnalytics();
 loadWifiTriggers();

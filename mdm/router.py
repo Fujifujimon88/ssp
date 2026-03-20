@@ -1061,7 +1061,58 @@ async def list_dealers(
 ):
     rows = await db.execute(select(DealerDB).order_by(DealerDB.created_at.desc()))
     dealers = rows.scalars().all()
-    return [{"id": d.id, "name": d.name, "store_code": d.store_code, "status": d.status} for d in dealers]
+    return [{"id": d.id, "name": d.name, "store_code": d.store_code, "status": d.status, "agency_id": d.agency_id} for d in dealers]
+
+
+@router.get("/admin/enrolled-users", summary="エンロールユーザー一覧（代理店/店舗フィルター付き）")
+async def list_enrolled_users(
+    dealer_id: Optional[str] = Query(None, description="店舗IDで絞り込み"),
+    agency_id: Optional[int] = Query(None, description="代理店IDで絞り込み"),
+    platform: Optional[str] = Query(None, description="ios / android / unknown"),
+    limit: int = Query(200, le=1000),
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_admin_key),
+):
+    """
+    DeviceDB（同意・エンロール済みユーザー）を店舗・代理店で絞り込んで返す。
+    dealer_id = DealerDB.id（店舗ID）
+    agency_id = AgencyDB.id（代理店会社ID） → DealerDB.agency_id 経由で絞り込む
+    """
+    stmt = (
+        select(DeviceDB, DealerDB)
+        .outerjoin(DealerDB, DeviceDB.dealer_id == DealerDB.id)
+        .order_by(DeviceDB.enrolled_at.desc())
+    )
+    if dealer_id:
+        stmt = stmt.where(DeviceDB.dealer_id == dealer_id)
+    if agency_id:
+        stmt = stmt.where(DealerDB.agency_id == agency_id)
+    if platform:
+        stmt = stmt.where(DeviceDB.platform == platform)
+    stmt = stmt.limit(limit)
+
+    rows = await db.execute(stmt)
+    results = rows.all()
+
+    return [
+        {
+            "id": d.id,
+            "enrollment_token": d.enrollment_token[:8] + "...",
+            "platform": d.platform,
+            "device_model": d.device_model,
+            "os_version": d.os_version,
+            "age_group": d.age_group,
+            "status": d.status,
+            "mobileconfig_downloaded": d.mobileconfig_downloaded,
+            "enrolled_at": d.enrolled_at.isoformat() if d.enrolled_at else None,
+            "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+            "dealer_id": d.dealer_id,
+            "dealer_name": dealer.name if dealer else None,
+            "store_code": dealer.store_code if dealer else None,
+            "agency_id": dealer.agency_id if dealer else None,
+        }
+        for d, dealer in results
+    ]
 
 
 class WifiTriggerRuleCreate(BaseModel):
@@ -4581,6 +4632,60 @@ async def dealer_push(
     }
 
 
+@router.get("/dealer/devices", summary="店舗エンロールユーザー一覧（店舗ポータル用）")
+async def dealer_list_devices(
+    api_key: str = Query(...),
+    limit: int = Query(200, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    """店舗の api_key で認証し、その店舗にエンロールしたユーザー一覧を返す。"""
+    dealer = await db.scalar(
+        select(DealerDB).where(DealerDB.api_key == api_key, DealerDB.status == "active")
+    )
+    if not dealer:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    rows = await db.execute(
+        select(DeviceDB)
+        .where(DeviceDB.dealer_id == dealer.id)
+        .order_by(DeviceDB.enrolled_at.desc())
+        .limit(limit)
+    )
+    devices = rows.scalars().all()
+
+    total = await db.scalar(
+        select(func.count(DeviceDB.id)).where(DeviceDB.dealer_id == dealer.id)
+    ) or 0
+    active = await db.scalar(
+        select(func.count(DeviceDB.id)).where(
+            DeviceDB.dealer_id == dealer.id,
+            DeviceDB.status == "active",
+        )
+    ) or 0
+
+    return {
+        "dealer_id": dealer.id,
+        "dealer_name": dealer.name,
+        "store_code": dealer.store_code,
+        "total_enrolled": total,
+        "active_devices": active,
+        "devices": [
+            {
+                "id": d.id,
+                "platform": d.platform,
+                "device_model": d.device_model,
+                "os_version": d.os_version,
+                "age_group": d.age_group,
+                "status": d.status,
+                "mobileconfig_downloaded": d.mobileconfig_downloaded,
+                "enrolled_at": d.enrolled_at.isoformat() if d.enrolled_at else None,
+                "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+            }
+            for d in devices
+        ],
+    }
+
+
 @router.get("/dealer/webclips", summary="代理店WebClip一覧取得")
 async def dealer_get_webclips(
     api_key: str = Query(...),
@@ -7518,6 +7623,68 @@ async def set_dealer_portal_password(
     return {"id": dealer_id, "login_id": login_id, "ok": True}
 
 
+@router.get("/agency/enrolled-users", summary="代理店エンロールユーザー一覧（店舗フィルター付き）")
+async def agency_enrolled_users(
+    api_key: str = Query(...),
+    dealer_id: Optional[str] = Query(None, description="店舗IDで絞り込み"),
+    platform: Optional[str] = Query(None, description="ios / android"),
+    limit: int = Query(500, le=2000),
+    db: AsyncSession = Depends(get_db),
+):
+    """代理店の api_key で認証し、傘下の全店舗のエンロールユーザー一覧を返す。"""
+    agency = await _verify_agency_key_query(api_key, db)
+
+    # 傘下の店舗IDリスト
+    dealers_rows = await db.execute(
+        select(DealerDB).where(DealerDB.agency_id == agency.id)
+    )
+    dealers = dealers_rows.scalars().all()
+    dealer_map = {d.id: {"name": d.name, "store_code": d.store_code} for d in dealers}
+    dealer_ids = list(dealer_map.keys())
+
+    if not dealer_ids:
+        return {"agency_name": agency.name, "total": 0, "devices": []}
+
+    stmt = (
+        select(DeviceDB)
+        .where(DeviceDB.dealer_id.in_(dealer_ids))
+        .order_by(DeviceDB.enrolled_at.desc())
+    )
+    if dealer_id:
+        stmt = stmt.where(DeviceDB.dealer_id == dealer_id)
+    if platform:
+        stmt = stmt.where(DeviceDB.platform == platform)
+    stmt = stmt.limit(limit)
+
+    devices = (await db.scalars(stmt)).all()
+    total = await db.scalar(
+        select(func.count(DeviceDB.id)).where(DeviceDB.dealer_id.in_(dealer_ids))
+    ) or 0
+
+    return {
+        "agency_name": agency.name,
+        "total": total,
+        "dealers": [{"id": d.id, "name": d.name, "store_code": d.store_code} for d in dealers],
+        "devices": [
+            {
+                "id": dev.id,
+                "platform": dev.platform,
+                "device_model": dev.device_model,
+                "os_version": dev.os_version,
+                "age_group": dev.age_group,
+                "status": dev.status,
+                "mobileconfig_downloaded": dev.mobileconfig_downloaded,
+                "enrolled_at": dev.enrolled_at.isoformat() if dev.enrolled_at else None,
+                "last_seen_at": dev.last_seen_at.isoformat() if dev.last_seen_at else None,
+                "dealer_id": dev.dealer_id,
+                "dealer_name": dealer_map.get(dev.dealer_id, {}).get("name"),
+                "store_code": dealer_map.get(dev.dealer_id, {}).get("store_code"),
+            }
+            for dev in devices
+        ],
+    }
+
+
 _AGENCY_PORTAL_HTML = """\
 <!DOCTYPE html>
 <html lang="ja">
@@ -7627,9 +7794,10 @@ _AGENCY_PORTAL_HTML = """\
 <div class="layout">
   <nav>
     <div class="section-label">\u30e1\u30cb\u30e5\u30fc</div>
-    <a href="#summary" class="active">&#128202; \u30b5\u30de\u30ea\u30fc</a>
-    <a href="#stores">&#127978; \u5e97\u8217\u4e00\u89a7</a>
-    <a href="#revenue">&#128176; \u53ce\u76ca\u30ec\u30dd\u30fc\u30c8</a>
+    <a href="#" onclick="showSection('summary')" class="active" id="nav-summary">&#128202; \u30b5\u30de\u30ea\u30fc</a>
+    <a href="#" onclick="showSection('stores')" id="nav-stores">&#127978; \u5e97\u8217\u4e00\u89a7</a>
+    <a href="#" onclick="showSection('users')" id="nav-users">&#128100; \u30e6\u30fc\u30b6\u30fc\u4e00\u89a7</a>
+    <a href="#" onclick="showSection('revenue')" id="nav-revenue">&#128176; \u53ce\u76ca\u30ec\u30dd\u30fc\u30c8</a>
   </nav>
 
   <main>

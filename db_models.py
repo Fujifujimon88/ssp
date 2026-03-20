@@ -25,7 +25,7 @@ class PublisherDB(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     api_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     monthly_revenue_usd: Mapped[float] = mapped_column(Float, default=0.0)
 
     slots: Mapped[list["AdSlotDB"]] = relationship("AdSlotDB", back_populates="publisher")
@@ -45,7 +45,7 @@ class AdSlotDB(Base):
     sizes: Mapped[str] = mapped_column(Text, default="")  # JSON: [[300,250],[728,90]]
     tag_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     publisher: Mapped["PublisherDB"] = relationship("PublisherDB", back_populates="slots")
     impressions: Mapped[list["ImpressionDB"]] = relationship("ImpressionDB", back_populates="slot")
@@ -64,7 +64,7 @@ class ImpressionDB(Base):
     bid_count: Mapped[int] = mapped_column(Integer, default=0)
     duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
     filled: Mapped[bool] = mapped_column(Boolean, default=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True)
 
     slot: Mapped["AdSlotDB"] = relationship("AdSlotDB", back_populates="impressions")
 
@@ -82,7 +82,7 @@ class DealerDB(Base):
     address: Mapped[str] = mapped_column(String(500), nullable=True)
     api_key: Mapped[str] = mapped_column(String(64), unique=True, index=True, default=_uuid)
     status: Mapped[str] = mapped_column(String(20), default="active")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # 代理店（AgencyDB）との紐付け
     agency_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agencies.id"), nullable=True, index=True)
     # 代理店内での店舗番号（1, 2, 3...）
@@ -110,7 +110,7 @@ class CampaignDB(Base):
     eru_nage_scenario_id: Mapped[str] = mapped_column(String(100), nullable=True)  # エル投げシナリオID
     line_liff_url: Mapped[str] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     safari_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON: Safari設定
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -131,7 +131,7 @@ class DeviceDB(Base):
     age_group: Mapped[str] = mapped_column(String(10), nullable=True)   # 10s/20s/30s/40s
     consent_given: Mapped[bool] = mapped_column(Boolean, default=False)
     mobileconfig_downloaded: Mapped[bool] = mapped_column(Boolean, default=False)
-    enrolled_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/active/unenrolled/opted_out
     re_enroll_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -184,7 +184,7 @@ class AffiliateCampaignDB(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")
     # 担当代理店 ID（nullable: 直販キャンペーンは NULL）
     agency_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agencies.id"), nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     # CV計測方法: "install"=Method1（プリインストール完了でCV）/ "app_open"=Method2（プッシュ通知タップでCV）
     cv_trigger: Mapped[str] = mapped_column(String(20), default="install")
     # 直接ASPポストバックURLテンプレート（A8.net/smaad等）
@@ -224,7 +224,7 @@ class AffiliateClickDB(Base):
     dealer_id: Mapped[str] = mapped_column(String(36), index=True, nullable=True)
     click_token: Mapped[str] = mapped_column(String(64), unique=True, index=True, default=_uuid)
     platform: Mapped[str] = mapped_column(String(10), nullable=True)
-    clicked_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    clicked_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True)
     converted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     campaign: Mapped["AffiliateCampaignDB"] = relationship("AffiliateCampaignDB", back_populates="clicks")
@@ -241,7 +241,7 @@ class AffiliateConversionDB(Base):
     event_type: Mapped[str] = mapped_column(String(50), default="install")
     revenue_jpy: Mapped[float] = mapped_column(Float, default=0.0)
     raw_payload: Mapped[str] = mapped_column(Text, nullable=True)       # JSONポストバック保存
-    converted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    converted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True)
     # ASP共通: 2段階通知ステータス（pending/approved/rejected）
     attestation_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
     # ASP固有CV ID（冪等性キー: action_id=JANet, cv_id=SKYFLAG）
@@ -260,7 +260,7 @@ class UserPointDB(Base):
     user_token: Mapped[str] = mapped_column(String(20), index=True)
     conversion_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_conversions.id"), unique=True, index=True)
     points: Mapped[float] = mapped_column(Float, default=0.0)  # 付与ポイント数
-    awarded_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    awarded_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     conversion: Mapped["AffiliateConversionDB"] = relationship("AffiliateConversionDB", back_populates="points")
 
@@ -284,7 +284,7 @@ class AndroidDeviceDB(Base):
     dealer_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)  # 所属代理店
     store_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)   # 所属店舗
     status: Mapped[str] = mapped_column(String(20), default="active")             # active/unenrolled/migrated
-    registered_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    registered_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     previous_device_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     migrated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -308,7 +308,7 @@ class AndroidCommandDB(Base):
     payload: Mapped[str] = mapped_column(Text, nullable=True)     # JSON
     status: Mapped[str] = mapped_column(String(20), default="pending")
     # pending / sent / acknowledged / failed
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     acked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     # アトリビューション追跡: サーバー側でキャンペーン・店舗を保存
@@ -338,7 +338,7 @@ class iOSDeviceDB(Base):
     serial_number: Mapped[str] = mapped_column(String(64), index=True, nullable=True)
     enrolled: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(20), default="pending")         # pending/active/unenrolled
-    enrolled_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     last_checkin_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     profile_status: Mapped[str] = mapped_column(String(20), default="unknown")  # unknown/present/missing/re_installing
     last_profile_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -358,7 +358,7 @@ class MDMCommandDB(Base):
     payload: Mapped[str] = mapped_column(Text, nullable=True)   # JSON
     status: Mapped[str] = mapped_column(String(20), default="queued")
     # queued / sent / acknowledged / error / not_now
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     result: Mapped[str] = mapped_column(Text, nullable=True)    # デバイスからの返答JSON
 
@@ -401,7 +401,7 @@ class CreativeDB(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")
     # active / paused / rejected
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True
     )
 
     campaign: Mapped["AffiliateCampaignDB"] = relationship(
@@ -433,7 +433,7 @@ class MdmAdSlotDB(Base):
     targeting_json: Mapped[str] = mapped_column(Text, nullable=True)      # JSON
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
 
     impressions: Mapped[list["MdmImpressionDB"]] = relationship(
@@ -468,7 +468,7 @@ class MdmImpressionDB(Base):
     dismiss_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     hour_of_day: Mapped[Optional[int]] = mapped_column(SmallInteger(), nullable=True)
     served_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
