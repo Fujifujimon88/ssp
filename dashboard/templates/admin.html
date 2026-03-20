@@ -177,31 +177,31 @@
     </div>
 
     <div class="section-label">MDM管理</div>
-    <a href="#mdm-dashboard" data-section="mdm-dashboard" class="active" onclick="showSection('mdm-dashboard'); return false;">📊 MDMダッシュボード</a>
-    <a href="#lockscreen-analytics" data-section="lockscreen-analytics" onclick="showSection('lockscreen-analytics'); return false;">🔒 ロック画面CTR</a>
-    <a href="#store-ad-delivery" data-section="store-ad-delivery" onclick="showSection('store-ad-delivery'); return false;">🏪 店舗別広告配信</a>
-    <a href="#dealers" data-section="dealers" onclick="showSection('dealers'); return false;">🏬 代理店・店舗管理</a>
-    <a href="#campaigns" data-section="campaigns" onclick="showSection('campaigns'); return false;">📣 キャンペーン管理</a>
-    <a href="#affiliate-campaigns" data-section="affiliate-campaigns" onclick="showSection('affiliate-campaigns'); return false;">🤝 アフィリエイトキャンペーン</a>
-    <a href="#creatives" data-section="creatives" onclick="showSection('creatives'); return false;">🎨 クリエイティブ</a>
-    <a href="#devices" data-section="devices" onclick="showSection('devices'); return false;">📲 デバイス管理</a>
-    <a href="#billing" data-section="billing" onclick="showSection('billing'); return false;">💰 収益・請求</a>
-    <a href="#wifi-triggers" data-section="wifi-triggers" onclick="showSection('wifi-triggers'); return false;">🌐 Wi-Fiトリガー</a>
+    <a href="/mdm-dashboard" data-section="mdm-dashboard" class="active" onclick="showSection('mdm-dashboard'); return false;">📊 MDMダッシュボード</a>
+    <a href="/lockscreen-analytics" data-section="lockscreen-analytics" onclick="showSection('lockscreen-analytics'); return false;">🔒 ロック画面CTR</a>
+    <a href="/store-ad-delivery" data-section="store-ad-delivery" onclick="showSection('store-ad-delivery'); return false;">🏪 店舗別広告配信</a>
+    <a href="/dealers" data-section="dealers" onclick="showSection('dealers'); return false;">🏬 代理店・店舗管理</a>
+    <a href="/campaigns" data-section="campaigns" onclick="showSection('campaigns'); return false;">📣 キャンペーン管理</a>
+    <a href="/affiliate-campaigns" data-section="affiliate-campaigns" onclick="showSection('affiliate-campaigns'); return false;">🤝 アフィリエイトキャンペーン</a>
+    <a href="/creatives" data-section="creatives" onclick="showSection('creatives'); return false;">🎨 クリエイティブ</a>
+    <a href="/devices" data-section="devices" onclick="showSection('devices'); return false;">📲 デバイス管理</a>
+    <a href="/billing" data-section="billing" onclick="showSection('billing'); return false;">💰 収益・請求</a>
+    <a href="/wifi-triggers" data-section="wifi-triggers" onclick="showSection('wifi-triggers'); return false;">🌐 Wi-Fiトリガー</a>
     <a href="/time-slots" data-section="time-slots" onclick="showSection('time-slots'); return false;">⏱ 時間帯単価</a>
     <a href="/experiments" data-section="experiments" onclick="showSection('experiments'); return false;">🧪 A/Bテスト</a>
-    <a href="#ad-slots" data-section="ad-slots" onclick="showSection('ad-slots'); return false;">📦 広告枠管理</a>
-    <a href="#analytics" data-section="analytics" onclick="showSection('analytics'); return false;">📈 アナリティクス</a>
-    <a href="#consent-logs" data-section="consent-logs" onclick="showSection('consent-logs'); return false;">📋 同意ログ</a>
-    <a href="#invoices" data-section="invoices" onclick="showSection('invoices'); return false;">🧾 精算一覧</a>
-    <a href="#ml-pipeline" data-section="ml-pipeline" onclick="showSection('ml-pipeline'); return false;">🤖 ML管理</a>
-    <a href="#dsp-configs" data-section="dsp-configs" onclick="showSection('dsp-configs'); return false;">🔌 DSP設定</a>
-    <a href="#ios-widget" data-section="ios-widget" onclick="showSection('ios-widget'); return false;">📱 iOSウィジェット</a>
+    <a href="/ad-slots" data-section="ad-slots" onclick="showSection('ad-slots'); return false;">📦 広告枠管理</a>
+    <a href="/analytics" data-section="analytics" onclick="showSection('analytics'); return false;">📈 アナリティクス</a>
+    <a href="/consent-logs" data-section="consent-logs" onclick="showSection('consent-logs'); return false;">📋 同意ログ</a>
+    <a href="/invoices" data-section="invoices" onclick="showSection('invoices'); return false;">🧾 精算一覧</a>
+    <a href="/ml-pipeline" data-section="ml-pipeline" onclick="showSection('ml-pipeline'); return false;">🤖 ML管理</a>
+    <a href="/dsp-configs" data-section="dsp-configs" onclick="showSection('dsp-configs'); return false;">🔌 DSP設定</a>
+    <a href="/ios-widget" data-section="ios-widget" onclick="showSection('ios-widget'); return false;">📱 iOSウィジェット</a>
 
     <details style="margin-top:16px">
       <summary class="section-label" style="cursor:pointer;list-style:none">SSP管理 ▸</summary>
-      <a href="#overview" data-section="overview" onclick="showSection('overview'); return false;">📈 RTB概要</a>
-      <a href="#publishers" data-section="publishers" onclick="showSection('publishers'); return false;">📰 パブリッシャー</a>
-      <a href="#api-guide" data-section="api-guide" onclick="showSection('api-guide'); return false;">🔗 API連携</a>
+      <a href="/overview" data-section="overview" onclick="showSection('overview'); return false;">📈 RTB概要</a>
+      <a href="/publishers" data-section="publishers" onclick="showSection('publishers'); return false;">📰 パブリッシャー</a>
+      <a href="/api-guide" data-section="api-guide" onclick="showSection('api-guide'); return false;">🔗 API連携</a>
     </details>
 
     <div class="section-label" style="margin-top:16px">DSP状況</div>
@@ -1315,9 +1315,32 @@ function showSection(id) {
   document.querySelectorAll('nav a[data-section]').forEach(a => a.classList.remove('active'));
   const navLink = document.querySelector(`nav a[data-section="${id}"]`);
   if (navLink) navLink.classList.add('active');
-  // URL更新: 独立パスを持つセクションはクリーンURLで、それ以外はハッシュで管理
-  const STANDALONE_PATHS = { 'time-slots': '/time-slots', 'experiments': '/experiments' };
-  const newUrl = STANDALONE_PATHS[id] ? STANDALONE_PATHS[id] : '/admin#' + id;
+  // URL更新: 全セクションをクリーンURLで管理
+  const SECTION_PATHS = {
+    'mdm-dashboard': '/mdm-dashboard',
+    'lockscreen-analytics': '/lockscreen-analytics',
+    'store-ad-delivery': '/store-ad-delivery',
+    'dealers': '/dealers',
+    'campaigns': '/campaigns',
+    'affiliate-campaigns': '/affiliate-campaigns',
+    'creatives': '/creatives',
+    'devices': '/devices',
+    'billing': '/billing',
+    'wifi-triggers': '/wifi-triggers',
+    'time-slots': '/time-slots',
+    'experiments': '/experiments',
+    'ad-slots': '/ad-slots',
+    'analytics': '/analytics',
+    'consent-logs': '/consent-logs',
+    'invoices': '/invoices',
+    'ml-pipeline': '/ml-pipeline',
+    'dsp-configs': '/dsp-configs',
+    'ios-widget': '/ios-widget',
+    'overview': '/overview',
+    'publishers': '/publishers',
+    'api-guide': '/api-guide',
+  };
+  const newUrl = SECTION_PATHS[id] || '/admin';
   history.replaceState(null, '', newUrl);
 }
 

@@ -234,20 +234,39 @@ async def admin(request: Request):
     )
 
 
-@app.get("/time-slots", response_class=HTMLResponse, summary="時間帯単価管理")
-async def time_slots_page(request: Request):
-    return templates.TemplateResponse(
-        "admin.html",
-        {"request": request, "version": APP_VERSION, "initial_section": "time-slots"}
-    )
+def _admin_section(section: str):
+    """管理画面の各セクション用レスポンスを生成するヘルパー"""
+    async def handler(request: Request):
+        return templates.TemplateResponse(
+            "admin.html",
+            {"request": request, "version": APP_VERSION, "initial_section": section}
+        )
+    return handler
 
-
-@app.get("/experiments", response_class=HTMLResponse, summary="A/Bテスト管理")
-async def experiments_page(request: Request):
-    return templates.TemplateResponse(
-        "admin.html",
-        {"request": request, "version": APP_VERSION, "initial_section": "experiments"}
-    )
+# MDM管理セクション個別ルート
+app.add_api_route("/mdm-dashboard",        _admin_section("mdm-dashboard"),        response_class=HTMLResponse)
+app.add_api_route("/lockscreen-analytics", _admin_section("lockscreen-analytics"),  response_class=HTMLResponse)
+app.add_api_route("/store-ad-delivery",    _admin_section("store-ad-delivery"),     response_class=HTMLResponse)
+app.add_api_route("/dealers",              _admin_section("dealers"),               response_class=HTMLResponse)
+app.add_api_route("/campaigns",            _admin_section("campaigns"),             response_class=HTMLResponse)
+app.add_api_route("/affiliate-campaigns",  _admin_section("affiliate-campaigns"),   response_class=HTMLResponse)
+app.add_api_route("/creatives",            _admin_section("creatives"),             response_class=HTMLResponse)
+app.add_api_route("/devices",              _admin_section("devices"),               response_class=HTMLResponse)
+app.add_api_route("/billing",              _admin_section("billing"),               response_class=HTMLResponse)
+app.add_api_route("/wifi-triggers",        _admin_section("wifi-triggers"),         response_class=HTMLResponse)
+app.add_api_route("/time-slots",           _admin_section("time-slots"),            response_class=HTMLResponse)
+app.add_api_route("/experiments",          _admin_section("experiments"),           response_class=HTMLResponse)
+app.add_api_route("/ad-slots",             _admin_section("ad-slots"),              response_class=HTMLResponse)
+app.add_api_route("/analytics",            _admin_section("analytics"),             response_class=HTMLResponse)
+app.add_api_route("/consent-logs",         _admin_section("consent-logs"),          response_class=HTMLResponse)
+app.add_api_route("/invoices",             _admin_section("invoices"),              response_class=HTMLResponse)
+app.add_api_route("/ml-pipeline",          _admin_section("ml-pipeline"),           response_class=HTMLResponse)
+app.add_api_route("/dsp-configs",          _admin_section("dsp-configs"),           response_class=HTMLResponse)
+app.add_api_route("/ios-widget",           _admin_section("ios-widget"),            response_class=HTMLResponse)
+# SSP管理セクション
+app.add_api_route("/overview",             _admin_section("overview"),              response_class=HTMLResponse)
+app.add_api_route("/publishers",           _admin_section("publishers"),            response_class=HTMLResponse)
+app.add_api_route("/api-guide",            _admin_section("api-guide"),             response_class=HTMLResponse)
 
 
 # ── DSP別統計API ───────────────────────────────────────────────
