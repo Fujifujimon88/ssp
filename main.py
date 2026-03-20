@@ -145,6 +145,17 @@ def _require_basic_auth(credentials: HTTPBasicCredentials = Depends(_http_basic)
     return credentials
 
 
+# ── 管理画面IP制限 ───────────────────────────────────────────────
+_ADMIN_ALLOWED_IPS = {"14.8.3.97"}
+
+def _require_admin_ip(request: Request) -> None:
+    # Vercel は X-Forwarded-For の先頭がクライアントIP
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (request.client.host if request.client else "")
+    if client_ip not in _ADMIN_ALLOWED_IPS:
+        raise HTTPException(status_code=403, detail="アクセスが拒否されました")
+
+
 @app.get("/", include_in_schema=False)
 async def root():
     return RedirectResponse(url="/admin")
@@ -284,7 +295,7 @@ async def dashboard(request: Request):
 
 # ── 管理画面（全パブリッシャー一覧）──────────────────────────
 
-@app.get("/admin", response_class=HTMLResponse, summary="管理画面")
+@app.get("/admin", response_class=HTMLResponse, summary="管理画面", dependencies=[Depends(_require_admin_ip)])
 async def admin(request: Request):
     return templates.TemplateResponse(
         "admin.html",
@@ -301,33 +312,35 @@ def _admin_section(section: str):
         )
     return handler
 
+_admin_ip_dep = [Depends(_require_admin_ip)]
+
 # MDM管理セクション個別ルート
-app.add_api_route("/mdm-dashboard",        _admin_section("mdm-dashboard"),        response_class=HTMLResponse)
-app.add_api_route("/lockscreen-analytics", _admin_section("lockscreen-analytics"),  response_class=HTMLResponse)
-app.add_api_route("/store-ad-delivery",    _admin_section("store-ad-delivery"),     response_class=HTMLResponse, dependencies=[Depends(_require_basic_auth)])
-app.add_api_route("/dealers",              _admin_section("dealers"),               response_class=HTMLResponse)
-app.add_api_route("/campaigns",            _admin_section("campaigns"),             response_class=HTMLResponse)
-app.add_api_route("/affiliate-campaigns",  _admin_section("affiliate-campaigns"),   response_class=HTMLResponse)
-app.add_api_route("/asp-cv-report",        _admin_section("asp-cv-report"),         response_class=HTMLResponse)
-app.add_api_route("/affiliate-points",     _admin_section("affiliate-points"),      response_class=HTMLResponse)
-app.add_api_route("/creatives",            _admin_section("creatives"),             response_class=HTMLResponse)
-app.add_api_route("/devices",              _admin_section("devices"),               response_class=HTMLResponse)
-app.add_api_route("/billing",              _admin_section("billing"),               response_class=HTMLResponse)
-app.add_api_route("/wifi-triggers",        _admin_section("wifi-triggers"),         response_class=HTMLResponse)
-app.add_api_route("/time-slots",           _admin_section("time-slots"),            response_class=HTMLResponse)
-app.add_api_route("/experiments",          _admin_section("experiments"),           response_class=HTMLResponse)
-app.add_api_route("/ad-slots",             _admin_section("ad-slots"),              response_class=HTMLResponse)
-app.add_api_route("/analytics",            _admin_section("analytics"),             response_class=HTMLResponse)
-app.add_api_route("/consent-logs",         _admin_section("consent-logs"),          response_class=HTMLResponse)
-app.add_api_route("/invoices",             _admin_section("invoices"),              response_class=HTMLResponse)
-app.add_api_route("/ml-pipeline",          _admin_section("ml-pipeline"),           response_class=HTMLResponse)
-app.add_api_route("/dsp-configs",          _admin_section("dsp-configs"),           response_class=HTMLResponse)
-app.add_api_route("/ios-widget",           _admin_section("ios-widget"),            response_class=HTMLResponse)
-app.add_api_route("/agencies",             _admin_section("agencies"),              response_class=HTMLResponse)
+app.add_api_route("/mdm-dashboard",        _admin_section("mdm-dashboard"),        response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/lockscreen-analytics", _admin_section("lockscreen-analytics"),  response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/store-ad-delivery",    _admin_section("store-ad-delivery"),     response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/dealers",              _admin_section("dealers"),               response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/campaigns",            _admin_section("campaigns"),             response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/affiliate-campaigns",  _admin_section("affiliate-campaigns"),   response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/asp-cv-report",        _admin_section("asp-cv-report"),         response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/affiliate-points",     _admin_section("affiliate-points"),      response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/creatives",            _admin_section("creatives"),             response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/devices",              _admin_section("devices"),               response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/billing",              _admin_section("billing"),               response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/wifi-triggers",        _admin_section("wifi-triggers"),         response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/time-slots",           _admin_section("time-slots"),            response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/experiments",          _admin_section("experiments"),           response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/ad-slots",             _admin_section("ad-slots"),              response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/analytics",            _admin_section("analytics"),             response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/consent-logs",         _admin_section("consent-logs"),          response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/invoices",             _admin_section("invoices"),              response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/ml-pipeline",          _admin_section("ml-pipeline"),           response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/dsp-configs",          _admin_section("dsp-configs"),           response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/ios-widget",           _admin_section("ios-widget"),            response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/agencies",             _admin_section("agencies"),              response_class=HTMLResponse, dependencies=_admin_ip_dep)
 # SSP管理セクション
-app.add_api_route("/overview",             _admin_section("overview"),              response_class=HTMLResponse)
-app.add_api_route("/publishers",           _admin_section("publishers"),            response_class=HTMLResponse)
-app.add_api_route("/api-guide",            _admin_section("api-guide"),             response_class=HTMLResponse)
+app.add_api_route("/overview",             _admin_section("overview"),              response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/publishers",           _admin_section("publishers"),            response_class=HTMLResponse, dependencies=_admin_ip_dep)
+app.add_api_route("/api-guide",            _admin_section("api-guide"),             response_class=HTMLResponse, dependencies=_admin_ip_dep)
 
 
 # ── DSP別統計API ───────────────────────────────────────────────
