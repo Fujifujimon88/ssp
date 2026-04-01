@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     basic_auth_user: str = "ssp-admin"
     basic_auth_password: str = "change-me-basic-auth-password"
 
+    # 管理画面IP制限（カンマ区切りで複数指定可）
+    admin_allowed_ips: str = "14.8.3.97"
+
     # アプリ
     app_env: str = "development"
     ssp_endpoint: str = "http://localhost:8000"

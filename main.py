@@ -146,12 +146,10 @@ def _require_basic_auth(credentials: HTTPBasicCredentials = Depends(_http_basic)
 
 
 # ── 管理画面IP制限 ───────────────────────────────────────────────
-_ADMIN_ALLOWED_IPS = {"14.8.3.97"}
+_ADMIN_ALLOWED_IPS = {ip.strip() for ip in settings.admin_allowed_ips.split(",") if ip.strip()}
 
 def _require_admin_ip(request: Request) -> None:
-    # Vercel は X-Forwarded-For の先頭がクライアントIP
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (request.client.host if request.client else "")
+    client_ip = request.client.host if request.client else ""
     if client_ip not in _ADMIN_ALLOWED_IPS:
         raise HTTPException(status_code=403, detail="アクセスが拒否されました")
 
@@ -312,7 +310,7 @@ def _admin_section(section: str):
         )
     return handler
 
-_admin_ip_dep = [Depends(_require_admin_ip)]
+_admin_ip_dep = (Depends(_require_admin_ip),)
 
 # MDM管理セクション個別ルート
 app.add_api_route("/mdm-dashboard",        _admin_section("mdm-dashboard"),        response_class=HTMLResponse, dependencies=_admin_ip_dep)
