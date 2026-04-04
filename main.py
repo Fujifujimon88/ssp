@@ -128,7 +128,23 @@ app.include_router(openrtb_router)
 app.include_router(portal_router)
 
 # Vercel の X-Forwarded-Proto ヘッダーを信頼し request.base_url が https:// を返すようにする
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+_trusted = settings.proxy_trusted_hosts
+_trusted_hosts: list[str] | str = (
+    _trusted if _trusted == "*"
+    else [h.strip() for h in _trusted.split(",") if h.strip()]
+)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_trusted_hosts)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.app_env != "development":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 # ── Basic認証（ダッシュボード保護）─────────────────────────────
 _http_basic = HTTPBasic()
@@ -262,7 +278,9 @@ async def serve_ad(token: str):
     if not data:
         raise HTTPException(status_code=404, detail="Invalid ad token")
     adm = data.get("adm", "")
-    return HTMLResponse(content=adm)
+    response = HTMLResponse(content=adm)
+    response.headers["Content-Security-Policy"] = "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'"
+    return response
 
 
 # ── レポートAPI ────────────────────────────────────────────────

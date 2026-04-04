@@ -8,10 +8,12 @@
 - `AndroidDeviceDB.created_at` → 実際は `registered_at`
 - **教訓**: PK 名がテーブルによって違う。クエリ書く前に db_models.py を必ず確認。
 
-### 2. asyncio.gather で同一 DB セッション共有は禁止
+### 2. asyncio.gather / BackgroundTasks で同一 DB セッション共有は禁止
 - `asyncio.gather(func_a(db), func_b(db))` → `InvalidRequestError: This session is provisioning a new connection`
-- **修正**: 逐次 await に変更する。
-- **適用範囲**: analytics/report.py, main.py の reports/range など全箇所。
+- `background_tasks.add_task(func, db)` → リクエスト完了後にセッションが閉じられ、トランザクション不整合・二重課金が発生。
+- **修正（gather）**: 逐次 await に変更する。
+- **修正（BackgroundTasks）**: 各タスク関数内で `async with AsyncSessionLocal() as db:` で独自セッションを作成する。`db` パラメータは渡さない。
+- **適用範囲**: analytics/report.py, main.py の reports/range, mdm/router.py の install_confirmed など全箇所。
 
 ### 3. Vercel サーバーレスで workers:1 が必須
 - workers:2 以上だと同一 Vercel インスタンスに並列リクエストが届き DB セッション競合が発生。

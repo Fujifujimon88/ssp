@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 def verify_signature(body: bytes, signature: str) -> bool:
     """LINE Webhook署名検証（HMAC-SHA256）"""
     if not settings.line_channel_secret:
-        logger.debug("LINE: channel_secret未設定のため署名検証スキップ")
-        return True
+        logger.warning("LINE: channel_secret未設定のため署名検証拒否")
+        return False
 
     expected = hmac.new(
         settings.line_channel_secret.encode("utf-8"),

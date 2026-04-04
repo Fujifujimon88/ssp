@@ -34,7 +34,7 @@ class TestFinalizeBilling:
     @pytest.mark.asyncio
     async def test_postback_success_transitions_to_billable(self):
         """ポストバック成功 → billable に遷移"""
-        from mdm.router import finalize_billing
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         event = self._make_event(billing_status="pending", postback_status="success")
         invoice = self._make_invoice()
@@ -43,7 +43,7 @@ class TestFinalizeBilling:
         db.get.side_effect = [event, MagicMock()]  # event, campaign
         db.scalar.return_value = invoice
 
-        await finalize_billing("test-event-id", db)
+        await finalize_billing(db, "test-event-id")
 
         assert event.billing_status == "billable"
         db.commit.assert_called_once()
@@ -51,39 +51,39 @@ class TestFinalizeBilling:
     @pytest.mark.asyncio
     async def test_already_billable_is_idempotent(self):
         """既にbillable → 何もしない（冪等）"""
-        from mdm.router import finalize_billing
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         event = self._make_event(billing_status="billable", postback_status="success")
         db = AsyncMock()
         db.get.return_value = event
 
-        await finalize_billing("test-event-id", db)
+        await finalize_billing(db, "test-event-id")
 
         db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_already_paid_is_idempotent(self):
         """既にpaid → 何もしない（冪等）"""
-        from mdm.router import finalize_billing
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         event = self._make_event(billing_status="paid", postback_status="success")
         db = AsyncMock()
         db.get.return_value = event
 
-        await finalize_billing("test-event-id", db)
+        await finalize_billing(db, "test-event-id")
 
         db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_postback_failed_within_48h_stays_pending(self):
         """ポストバック失敗 + 24h以内 → pendingのまま"""
-        from mdm.router import finalize_billing
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         event = self._make_event(billing_status="pending", postback_status="failed", hours_ago=24)
         db = AsyncMock()
         db.get.return_value = event
 
-        await finalize_billing("test-event-id", db)
+        await finalize_billing(db, "test-event-id")
 
         assert event.billing_status == "pending"
         db.commit.assert_not_called()
@@ -91,7 +91,7 @@ class TestFinalizeBilling:
     @pytest.mark.asyncio
     async def test_postback_failed_after_48h_transitions_to_billable(self):
         """ポストバック失敗 + 48h以上経過 → billableに遷移"""
-        from mdm.router import finalize_billing
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         event = self._make_event(billing_status="pending", postback_status="failed", hours_ago=49)
         invoice = self._make_invoice()
@@ -100,32 +100,34 @@ class TestFinalizeBilling:
         db.get.side_effect = [event, MagicMock()]
         db.scalar.return_value = invoice
 
-        await finalize_billing("test-event-id", db)
+        await finalize_billing(db, "test-event-id")
 
         assert event.billing_status == "billable"
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_invoice_cpi_count_incremented(self):
-        """InvoiceDB の cpi_count が加算される"""
-        from mdm.router import finalize_billing
+        """InvoiceDB の既存レコードにアトミック加算（db.execute が呼ばれる）"""
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         event = self._make_event(postback_status="success")
         invoice = self._make_invoice(cpi_count=5, gross=2000)
+        invoice.id = "test-invoice-id"
 
         db = AsyncMock()
         db.get.side_effect = [event, MagicMock()]
         db.scalar.return_value = invoice
 
-        await finalize_billing("test-event-id", db)
+        await finalize_billing(db, "test-event-id")
 
-        assert invoice.cpi_count == 6
-        assert invoice.gross_revenue_jpy == 2400  # 2000 + 400
+        # アトミック更新のため db.execute が呼ばれる（in-memory変更ではない）
+        db.execute.assert_called_once()
+        db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_new_invoice_created_when_none_exists(self):
         """当月のInvoiceDBがない場合 → 新規作成"""
-        from mdm.router import finalize_billing
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         event = self._make_event(postback_status="success")
         campaign = MagicMock()
@@ -135,7 +137,7 @@ class TestFinalizeBilling:
         db.get.side_effect = [event, campaign]
         db.scalar.return_value = None  # invoice not found
 
-        await finalize_billing("test-event-id", db)
+        await finalize_billing(db, "test-event-id")
 
         db.add.assert_called_once()
         db.commit.assert_called_once()
@@ -143,13 +145,13 @@ class TestFinalizeBilling:
     @pytest.mark.asyncio
     async def test_event_not_found_does_not_raise(self):
         """install_event_id が存在しない場合 → 例外を投げない"""
-        from mdm.router import finalize_billing
+        from mdm.router import _finalize_billing_impl as finalize_billing
 
         db = AsyncMock()
         db.get.return_value = None
 
         # 例外が発生しないことを確認
-        await finalize_billing("nonexistent-id", db)
+        await finalize_billing(db, "nonexistent-id")
         db.commit.assert_not_called()
 
 

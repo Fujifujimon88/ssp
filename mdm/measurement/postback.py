@@ -123,18 +123,21 @@ async def send_direct_asp_postback(
         return False
 
     try:
-        url = campaign.postback_url_template.format(
-            device_id=urllib.parse.quote(install_event.device_id, safe=""),
-            enrollment_token=urllib.parse.quote(device.enrollment_token or "", safe=""),
-            dealer_id=urllib.parse.quote(install_event.dealer_id or "", safe=""),
-            store_id=urllib.parse.quote(install_event.store_id or "", safe=""),
-            amount=int(install_event.cpi_amount),
-            install_ts=install_event.install_ts,
-            package_name=urllib.parse.quote(install_event.package_name, safe=""),
-            event_type=urllib.parse.quote(event_type, safe=""),
-        )
-    except KeyError as exc:
-        logger.warning(f"send_direct_asp_postback: invalid template variable {exc}")
+        url = campaign.postback_url_template
+        replacements = {
+            "{device_id}": urllib.parse.quote(install_event.device_id, safe=""),
+            "{enrollment_token}": urllib.parse.quote(device.enrollment_token or "", safe=""),
+            "{dealer_id}": urllib.parse.quote(install_event.dealer_id or "", safe=""),
+            "{store_id}": urllib.parse.quote(install_event.store_id or "", safe=""),
+            "{amount}": str(int(install_event.cpi_amount)),
+            "{install_ts}": str(install_event.install_ts),
+            "{package_name}": urllib.parse.quote(install_event.package_name, safe=""),
+            "{event_type}": urllib.parse.quote(event_type, safe=""),
+        }
+        for placeholder, value in replacements.items():
+            url = url.replace(placeholder, value)
+    except Exception as exc:
+        logger.warning(f"send_direct_asp_postback: template error {exc}")
         return False
 
     try:
@@ -153,7 +156,6 @@ async def send_direct_asp_postback(
 
 async def trigger_postbacks(
     install_event_id: str,
-    db: AsyncSession,
     event_type: str = "install",
 ) -> None:
     """インストールイベントに対して登録済み計測パートナーへポストバックを送信する。
@@ -164,7 +166,22 @@ async def trigger_postbacks(
     - postback_url_template が設定されていれば直接ASPへ送信
     - 各送信結果を PostbackLogDB に記録
     - install_event の postback_status / billing_status を更新する
+
+    NOTE: バックグラウンドタスクから呼ばれるため、自前で DB セッションを作成する。
+    リクエストスコープの AsyncSession を共有すると InvalidRequestError になる。
     """
+    from database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        await _trigger_postbacks_impl(db, install_event_id, event_type)
+
+
+async def _trigger_postbacks_impl(
+    db: "AsyncSession",
+    install_event_id: str,
+    event_type: str,
+) -> None:
+    """trigger_postbacks の実処理（セッション注入可能、テスト用）。"""
     install_event = await db.get(InstallEventDB, install_event_id)
     if install_event is None:
         logger.error(f"trigger_postbacks: install_event not found | id={install_event_id}")
@@ -255,7 +272,6 @@ async def check_vta(
     package_name: str,
     campaign_id: str,
     install_event_id: str,
-    db: AsyncSession,
 ) -> None:
     """View-Through Attribution（BKD-09）。
 
@@ -266,7 +282,23 @@ async def check_vta(
     2. キャンペーンの vta_window_hours 以内の MdmImpressionDB を検索
     3. マッチすれば attribution_type="view_through" に更新し、
        cpi_amount = reward_amount * vta_cpi_rate で再計算する
+
+    NOTE: バックグラウンドタスクから呼ばれるため、自前で DB セッションを作成する。
     """
+    from database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        await _check_vta_impl(db, device_id, package_name, campaign_id, install_event_id)
+
+
+async def _check_vta_impl(
+    db: "AsyncSession",
+    device_id: str,
+    package_name: str,
+    campaign_id: str,
+    install_event_id: str,
+) -> None:
+    """check_vta の実処理（セッション注入可能、テスト用）。"""
     install_event = await db.get(InstallEventDB, install_event_id)
     if install_event is None:
         logger.warning(f"check_vta: install_event not found | id={install_event_id}")

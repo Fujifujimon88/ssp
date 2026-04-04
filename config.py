@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # 管理画面IP制限（カンマ区切りで複数指定可）
     admin_allowed_ips: str = "14.8.3.97"
 
+    # ProxyHeaders 信頼するホスト（カンマ区切り、"*" で全許可）
+    proxy_trusted_hosts: str = "127.0.0.1"
+
     # アプリ
     app_env: str = "development"
     ssp_endpoint: str = "http://localhost:8000"
@@ -43,6 +46,9 @@ class Settings(BaseSettings):
     # エル投げ API（.env で設定）
     eru_nage_api_url: str = "https://api.eru-nage.example.com"
     eru_nage_api_key: str = ""
+
+    # ASPポストバック認証シークレット（空文字 = 検証スキップ ※開発用）
+    asp_postback_secret: str = ""
 
     # FCM（Firebase Cloud Messaging）Android Push通知 - HTTP v1 API
     fcm_project_id: str = ""           # Firebase プロジェクトID（例: my-project-12345）

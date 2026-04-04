@@ -5,8 +5,10 @@ ADT-03 — OpenRTB 2.5 インバウンド SSP ノード
 自社フロア価格と対決させて second-price オークションを実施する。
 Win notice は GET /openrtb/win/{auction_id}?price={clearing_price} で受け取る。
 """
+import html
 import logging
 import os
+import secrets as _secrets
 import uuid
 from typing import Optional
 
@@ -15,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from db_models import DspWinLogDB, MdmAdSlotDB
 
@@ -109,6 +112,15 @@ class OrtbBidResponse(BaseModel):
     nbr: Optional[int] = None  # No bid reason
 
 
+def _verify_win_secret(provided: str) -> None:
+    """Win Noticeのシークレットを検証する。"""
+    expected = settings.asp_postback_secret  # 既存のconfig設定を再利用
+    if not expected:
+        return  # 開発環境: 検証スキップ
+    if not _secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail="invalid win secret")
+
+
 def _verify_api_key(x_openrtb_apikey: str = Header(default="")) -> str:
     if x_openrtb_apikey not in ALLOWED_API_KEYS:
         raise HTTPException(status_code=401, detail="Invalid DSP API key")
@@ -149,7 +161,8 @@ async def receive_bid_request(
 
         # Win notice URL を生成
         server_url = os.getenv("SSP_ENDPOINT", "https://mdm.example.com")
-        nurl = f"{server_url}/openrtb/win/{auction_id}?price=${{AUCTION_PRICE}}&imp_id={imp.id}"
+        win_secret = settings.asp_postback_secret
+        nurl = f"{server_url}/openrtb/win/{auction_id}?price=${{AUCTION_PRICE}}&imp_id={imp.id}&secret={win_secret}"
 
         # クリエイティブを選択してBidResponseを構築
         from mdm.creative.selector import select_creative
@@ -182,12 +195,14 @@ async def receive_win_notice(
     auction_id: str,
     price: float = 0.0,
     imp_id: str = "",
+    secret: str = "",
     db: AsyncSession = Depends(get_db),
 ):
     """
     DSPが落札した場合にWin noticeを受け取る。
     Clearing priceを記録してDspWinLogDBに保存する。
     """
+    _verify_win_secret(secret)
     clearing_price_jpy = price
     take_rate = 0.175  # 17.5%（平均）
     platform_revenue_jpy = clearing_price_jpy * (1 - take_rate)
@@ -208,10 +223,10 @@ async def receive_win_notice(
 
 def _build_adm(creative: dict, server_url: str) -> str:
     """簡易ADM（Ad Markup）を生成する。実際はHTMLバナーを返す。"""
-    title   = creative.get("title", "")
-    img_url = creative.get("image_url", "")
+    title   = html.escape(creative.get("title", ""), quote=True)
+    img_url = html.escape(creative.get("image_url", ""), quote=True)
     # selector.py が返すキーは click_url（cta_url ではない）
-    cta_url = creative.get("click_url") or creative.get("cta_url", "#")
+    cta_url = html.escape(creative.get("click_url") or creative.get("cta_url", "#"), quote=True)
     return (
         f'<a href="{cta_url}" target="_blank">'
         f'<img src="{img_url}" alt="{title}" width="320" height="480" />'

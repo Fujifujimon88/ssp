@@ -46,9 +46,9 @@ async def calculate_monthly_revenue(
           "total_conversions": 42,
         }
     """
-    start = datetime(year, month, 1)
+    start = datetime(year, month, 1)  # naive UTC（DB格納値に合わせる）
     last_day = monthrange(year, month)[1]
-    end = datetime(year, month, last_day, 23, 59, 59)
+    end = datetime(year, month, last_day, 23, 59, 59, 999999)  # マイクロ秒も含める
 
     # 期間内のCV合計収益
     total = await db.scalar(
@@ -122,9 +122,9 @@ async def get_dealer_monthly_report(
           "by_campaign": [...],
         }
     """
-    start = datetime(year, month, 1)
+    start = datetime(year, month, 1)  # naive UTC（DB格納値に合わせる）
     last_day = monthrange(year, month)[1]
-    end = datetime(year, month, last_day, 23, 59, 59)
+    end = datetime(year, month, last_day, 23, 59, 59, 999999)  # マイクロ秒も含める
 
     dealer = await db.get(DealerDB, dealer_id)
     if not dealer:

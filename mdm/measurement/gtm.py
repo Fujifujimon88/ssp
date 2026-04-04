@@ -3,6 +3,11 @@
 広告主がGTMコンテナIDを登録すると、WebクリップLPにGTMスニペットが
 自動挿入される。広告主の既存GA4/CVタグがそのまま動作する。
 """
+import html
+import logging
+import re
+
+logger = logging.getLogger(__name__)
 
 _GTM_SNIPPET_HEAD = """\
 <!-- Google Tag Manager -->
@@ -113,6 +118,10 @@ def build_lp_html(
         HTML文字列
     """
     if gtm_container_id:
+        if not re.match(r'^GTM-[A-Z0-9]+$', gtm_container_id):
+            logger.warning(f"Invalid GTM container ID: {gtm_container_id}")
+            gtm_container_id = None
+    if gtm_container_id:
         gtm_head = _GTM_SNIPPET_HEAD.format(container_id=gtm_container_id)
         gtm_body = _GTM_SNIPPET_BODY.format(container_id=gtm_container_id)
     else:
@@ -120,13 +129,13 @@ def build_lp_html(
         gtm_body = ""
 
     return _LP_TEMPLATE.format(
-        title=title,
-        description=description,
-        cta_url=cta_url,
-        cta_label=cta_label,
-        gtm_head=gtm_head,
-        gtm_body=gtm_body,
-        campaign_id=campaign_id,
-        enrollment_token=enrollment_token,
-        click_token=click_token,
+        title=html.escape(title),
+        description=html.escape(description),
+        cta_url=html.escape(cta_url, quote=True),
+        cta_label=html.escape(cta_label),
+        gtm_head=gtm_head,  # 内部生成なのでエスケープ不要
+        gtm_body=gtm_body,  # 同上
+        campaign_id=html.escape(campaign_id, quote=True),
+        enrollment_token=html.escape(enrollment_token, quote=True),
+        click_token=html.escape(click_token, quote=True),
     )

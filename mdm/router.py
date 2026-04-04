@@ -31,8 +31,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Form, Header, HTTPExcep
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 import ipaddress
 from urllib.parse import urlparse
-from pydantic import BaseModel, field_validator
-from sqlalchemy import Integer, func, select
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import Integer, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_admin_key
@@ -1545,6 +1545,7 @@ async def affiliate_click(
 async def appsflyer_postback(request: Request, db: AsyncSession = Depends(get_db)):
     """AppsFlyerからのインストール通知を受信してCV記録する"""
     body = await request.json()
+    _verify_postback_secret(body)
     click_token = body.get("af_customer_user_id") or body.get("customer_user_id")
     app_id = body.get("app_id", "")
 
@@ -1560,11 +1561,20 @@ async def appsflyer_postback(request: Request, db: AsyncSession = Depends(get_db
             logger.info(f"AppsFlyer CV duplicate skipped | token={str(click_token)[:8]}...")
             return {"status": "ok"}
 
-    campaign = await db.scalar(
-        select(AffiliateCampaignDB)
-        .where(AffiliateCampaignDB.appsflyer_dev_key != None)
-        .limit(1)
-    )
+    # AppsFlyer devkey でキャンペーンを照合
+    af_dev_key = body.get("devkey") or body.get("dev_key")
+    if af_dev_key:
+        campaign = await db.scalar(
+            select(AffiliateCampaignDB)
+            .where(AffiliateCampaignDB.appsflyer_dev_key == af_dev_key)
+            .limit(1)
+        )
+    else:
+        campaign = await db.scalar(
+            select(AffiliateCampaignDB)
+            .where(AffiliateCampaignDB.appsflyer_dev_key != None)
+            .limit(1)
+        )
 
     conversion = AffiliateConversionDB(
         click_token=click_token,
@@ -1592,6 +1602,7 @@ async def appsflyer_postback(request: Request, db: AsyncSession = Depends(get_db
 async def adjust_postback(request: Request, db: AsyncSession = Depends(get_db)):
     """AdjustからのCV通知を受信して記録する"""
     body = await request.json()
+    _verify_postback_secret(body)
     click_token = body.get("partner_params", {}).get("enrollment_token")
 
     # 冪等性チェック: 同一 click_token + source の重複受信を防ぐ
@@ -1606,11 +1617,22 @@ async def adjust_postback(request: Request, db: AsyncSession = Depends(get_db)):
             logger.info(f"Adjust CV duplicate skipped | token={str(click_token)[:8]}...")
             return {"status": "ok"}
 
+    # campaign_id で照合（adjust_app_token が一致するキャンペーン）
+    adjust_token = body.get("app_token")
+    campaign = None
+    if adjust_token:
+        campaign = await db.scalar(
+            select(AffiliateCampaignDB)
+            .where(AffiliateCampaignDB.adjust_app_token == adjust_token)
+            .limit(1)
+        )
+
     conversion = AffiliateConversionDB(
         click_token=click_token,
-        campaign_id=body.get("app_token") or None,
+        campaign_id=campaign.id if campaign else (adjust_token or None),
         source="adjust",
         event_type=body.get("event", "install"),
+        revenue_jpy=float(campaign.reward_amount) if campaign else 0.0,
         raw_payload=json.dumps(body)[:2000],
     )
     db.add(conversion)
@@ -1675,6 +1697,16 @@ _ASP_PARAM_MAP_DEFAULT = {
 }
 
 
+def _verify_postback_secret(params: dict) -> None:
+    """ASPポストバックのシークレットトークンを検証する。"""
+    secret = settings.asp_postback_secret
+    if not secret:
+        return  # 開発環境: 検証スキップ
+    provided = params.get("secret", "")
+    if not secrets.compare_digest(provided, secret):
+        raise HTTPException(status_code=403, detail="invalid postback secret")
+
+
 def _normalize_asp_params(source: str, params: dict) -> dict:
     """各ASPのパラメータを共通フォーマットに正規化する。"""
     cfg = _ASP_PARAM_MAP.get(source, _ASP_PARAM_MAP_DEFAULT)
@@ -1718,6 +1750,11 @@ async def _award_points(db: AsyncSession, conversion: AffiliateConversionDB) -> 
     if conversion.attestation_status != "approved":
         return
 
+    # user_token が空の場合はポイント付与をスキップ
+    if not conversion.user_token:
+        logger.info(f"Points skipped: user_token empty | cv={conversion.id[:8]}...")
+        return
+
     campaign = await db.get(AffiliateCampaignDB, conversion.campaign_id)
     if not campaign or not campaign.enable_points:
         return
@@ -1731,7 +1768,7 @@ async def _award_points(db: AsyncSession, conversion: AffiliateConversionDB) -> 
 
     points = round(conversion.revenue_jpy * campaign.point_rate)
     point_record = UserPointDB(
-        user_token=conversion.user_token or "",
+        user_token=conversion.user_token,
         conversion_id=conversion.id,
         points=points,
         awarded_at=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -1763,6 +1800,7 @@ async def asp_cv_postback(
       それ以外 → smaad / a8（即approved）
     """
     params = dict(request.query_params)
+    _verify_postback_secret(params)
     click_token = params.get("id")
     if not click_token:
         logger.warning("asp_cv_postback: id (click_token) missing")
@@ -1822,12 +1860,19 @@ async def asp_cv_postback(
     user_token = (normalized.get("user_token") or
                   (click.enrollment_token if click else None) or "")
 
+    # revenue をサーバー側で検証: campaign.reward_amount を優先
+    server_revenue = revenue  # フォールバック: ASP提供値
+    if click and click.campaign_id:
+        _campaign = await db.get(AffiliateCampaignDB, click.campaign_id)
+        if _campaign and _campaign.reward_amount > 0:
+            server_revenue = float(_campaign.reward_amount)
+
     conversion = AffiliateConversionDB(
         click_token=click_token,
         campaign_id=click.campaign_id if click else None,
         source=source,
         event_type="install",
-        revenue_jpy=revenue,
+        revenue_jpy=server_revenue,
         raw_payload=json.dumps(params)[:2000],
         attestation_status=attestation_status,
         asp_action_id=action_id,
@@ -1869,6 +1914,7 @@ async def asp_postback(
       a8      … uid / price （2段階なし → 即approved）
     """
     params = dict(request.query_params)
+    _verify_postback_secret(params)
     normalized = _normalize_asp_params(source, params)
 
     user_token = normalized["user_token"]
@@ -1918,12 +1964,19 @@ async def asp_postback(
             .limit(1)
         )
 
+    # revenue をサーバー側で検証: campaign.reward_amount を優先
+    server_revenue = revenue  # フォールバック: ASP提供値
+    if click and click.campaign_id:
+        _campaign = await db.get(AffiliateCampaignDB, click.campaign_id)
+        if _campaign and _campaign.reward_amount > 0:
+            server_revenue = float(_campaign.reward_amount)
+
     conversion = AffiliateConversionDB(
         click_token=click.click_token if click else None,
         campaign_id=click.campaign_id if click else None,
         source=source,
         event_type="install",
-        revenue_jpy=revenue,
+        revenue_jpy=server_revenue,
         raw_payload=json.dumps(params)[:2000],
         attestation_status=attestation_status,
         asp_action_id=action_id,
@@ -1939,7 +1992,7 @@ async def asp_postback(
     await db.commit()
     logger.info(
         f"{source} postback received | user_token={user_token[:8]}... "
-        f"| revenue={revenue} | action={action_id} | status={attestation_status}"
+        f"| revenue={server_revenue} | action={action_id} | status={attestation_status}"
     )
     return {"status": "ok"}
 
@@ -1949,7 +2002,7 @@ class AffiliateCampaignCreate(BaseModel):
     category: str = "app"
     destination_url: str
     reward_type: str = "cpi"
-    reward_amount: float = 0.0
+    reward_amount: float = Field(0.0, ge=0.0, le=1_000_000)
     appsflyer_dev_key: Optional[str] = None
     adjust_app_token: Optional[str] = None
     gtm_container_id: Optional[str] = None
@@ -1959,9 +2012,9 @@ class AffiliateCampaignCreate(BaseModel):
     janet_original_id: Optional[str] = None  # JANet 原稿ID
     click_url_template: Optional[str] = None  # smaad/A8.net等クリックURLテンプレート（{device_id}を置換）
     enable_points: bool = False              # ポイント付与を行うか（デフォルト: しない）
-    point_rate: float = 1.0                  # 1円=何ポイント（還元率調整）
-    dealer_revenue_rate: float = 0.0         # 代理店獲得金額率 (%)
-    user_point_rate: float = 0.0             # ユーザー獲得ポイント率 (%)
+    point_rate: float = Field(1.0, ge=0.0, le=100.0)                  # 1円=何ポイント（還元率調整）
+    dealer_revenue_rate: float = Field(0.0, ge=0.0, le=100.0)         # 代理店獲得金額率 (%)
+    user_point_rate: float = Field(0.0, ge=0.0, le=100.0)             # ユーザー獲得ポイント率 (%)
     tracking_url: Optional[str] = None       # トラッキングURL（マクロ対応）
     blacklist_partner_ids: Optional[str] = None   # 除外パートナーID（カンマ区切り）
     whitelist_partner_ids: Optional[str] = None   # 許可パートナーID（カンマ区切り）
@@ -2467,7 +2520,7 @@ async def mdm_stats(
 # ── CPI インストール確認 (BKD-03 / BKD-04) ────────────────────
 
 
-async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
+async def finalize_billing(install_event_id: str) -> None:
     """
     インストール確認後にCPI課金を確定させる（BKD-billing-01）。
 
@@ -2478,7 +2531,17 @@ async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
 
     billing_status が既に "billable" または "paid" なら何もしない（冪等）。
     billable に遷移した場合、InvoiceDB の当月集計を upsert する。
+
+    NOTE: バックグラウンドタスクから呼ばれるため、自前で DB セッションを作成する。
     """
+    from database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        await _finalize_billing_impl(db, install_event_id)
+
+
+async def _finalize_billing_impl(db: AsyncSession, install_event_id: str) -> None:
+    """finalize_billing の実処理（セッション注入可能、テスト用）。"""
     from datetime import timedelta
 
     event = await db.get(InstallEventDB, install_event_id)
@@ -2498,8 +2561,8 @@ async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
     else:
         # 48時間経過している場合はポストバック失敗でも課金確定
         created = event.created_at
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
+        if created.tzinfo is not None:
+            created = created.replace(tzinfo=None)
         if (now - created) >= timedelta(hours=48):
             should_bill = True
 
@@ -2511,7 +2574,11 @@ async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
 
     # InvoiceDB の当月レコードを upsert
     from db_models import InvoiceDB
-    period_month = now.strftime("%Y-%m")
+    # period_month はイベント作成日を基準（月跨ぎ遅延を防ぐ）
+    event_created = event.created_at
+    if event_created.tzinfo is not None:
+        event_created = event_created.replace(tzinfo=None)
+    period_month = event_created.strftime("%Y-%m")
 
     invoice = await db.scalar(
         select(InvoiceDB).where(
@@ -2539,11 +2606,25 @@ async def finalize_billing(install_event_id: str, db: AsyncSession) -> None:
         )
         db.add(invoice)
     else:
-        # 既存レコードに加算
-        invoice.gross_revenue_jpy = (invoice.gross_revenue_jpy or 0) + int(event.cpi_amount)
-        invoice.cpi_count = (invoice.cpi_count or 0) + 1
-        invoice.platform_fee_jpy = int(invoice.gross_revenue_jpy * invoice.take_rate)
-        invoice.net_payable_jpy = invoice.gross_revenue_jpy - invoice.platform_fee_jpy
+        # 既存レコードにアトミック加算（TOCTOU回避）
+        cpi_amount_int = int(event.cpi_amount)
+        await db.execute(
+            update(InvoiceDB)
+            .where(InvoiceDB.id == invoice.id)
+            .values(
+                gross_revenue_jpy=InvoiceDB.gross_revenue_jpy + cpi_amount_int,
+                cpi_count=InvoiceDB.cpi_count + 1,
+                platform_fee_jpy=func.cast(
+                    (InvoiceDB.gross_revenue_jpy + cpi_amount_int) * InvoiceDB.take_rate,
+                    Integer,
+                ),
+                net_payable_jpy=(InvoiceDB.gross_revenue_jpy + cpi_amount_int)
+                    - func.cast(
+                        (InvoiceDB.gross_revenue_jpy + cpi_amount_int) * InvoiceDB.take_rate,
+                        Integer,
+                    ),
+            )
+        )
 
     await db.commit()
     logger.info(
@@ -2617,17 +2698,12 @@ async def install_confirmed(
         or "install"
     )
 
-    # 5. 冪等性チェック: 同一(device_id, package_name, campaign_id)で24h以内の重複
-    from datetime import timedelta
-    window_start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
-    window_start_ts = int(window_start.timestamp() * 1000)
-
+    # 5. 冪等性チェック: 同一(device_id, package_name, campaign_id)の重複（期間制限なし）
     existing_event = await db.scalar(
         select(InstallEventDB).where(
             InstallEventDB.device_id == body.device_id,
             InstallEventDB.package_name == body.package_name,
             InstallEventDB.campaign_id == resolved_campaign_id,
-            InstallEventDB.install_ts >= window_start_ts,
         )
     )
     if existing_event:
@@ -2670,7 +2746,7 @@ async def install_confirmed(
     # 7. cv_trigger に従いポストバック or 保留
     if cv_trigger == "install":
         # Method 1: 即時ポストバック
-        background_tasks.add_task(trigger_postbacks, install_event_id, db, "install")
+        background_tasks.add_task(trigger_postbacks, install_event_id, "install")
 
     # VTA チェック（バックグラウンドで実行）
     background_tasks.add_task(
@@ -2679,11 +2755,10 @@ async def install_confirmed(
         body.package_name,
         resolved_campaign_id,
         install_event_id,
-        db,
     )
 
     # 7. CPI課金確定タスク（ポストバック後に実行、冪等）
-    background_tasks.add_task(finalize_billing, install_event_id, db)
+    background_tasks.add_task(finalize_billing, install_event_id)
 
     return {
         "status": "recorded",
@@ -3502,7 +3577,7 @@ async def android_app_open(
     install_event.app_open_at = datetime.now(timezone.utc).replace(tzinfo=None)
     install_event.cv_method = "app_open"
     await db.commit()
-    background_tasks.add_task(trigger_postbacks, install_event.id, db, "app_open")
+    background_tasks.add_task(trigger_postbacks, install_event.id, "app_open")
     return {"status": "recorded", "install_event_id": install_event.id}
 
 

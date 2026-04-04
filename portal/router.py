@@ -16,6 +16,7 @@ from auth import (
     get_portal_session,
     verify_password,
 )
+from config import settings
 from database import get_db
 from db_models import AgencyDB, DealerDB, DeviceDB, MdmImpressionDB, DealerPushLogDB, CampaignDB
 
@@ -31,6 +32,7 @@ def _set_portal_cookie(response: RedirectResponse, token: str) -> RedirectRespon
         token,
         httponly=True,
         samesite="lax",
+        secure=settings.app_env != "development",
         max_age=_COOKIE_MAX_AGE,
     )
     return response

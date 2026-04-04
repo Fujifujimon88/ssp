@@ -1,10 +1,12 @@
 """iOS .mobileconfig（構成プロファイル）の動的生成"""
 import base64
+import ipaddress
 import logging
 import plistlib
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -89,6 +91,29 @@ def _vpn_payload(vpn: VPNConfig) -> dict:
     }
 
 
+def _is_safe_url(url: str) -> bool:
+    """SSRFを防ぐためURLのスキームとホストを検証する。"""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    # IPアドレスの場合、プライベートIPを拒否
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+            return False
+    except ValueError:
+        # ホスト名の場合: localhost等を拒否
+        if hostname in ("localhost", "0.0.0.0"):
+            return False
+    return True
+
+
 def _webclip_payload(clip: WebClipConfig) -> dict:
     payload: dict = {
         "PayloadType": "com.apple.webClip.managed",
@@ -102,12 +127,15 @@ def _webclip_payload(clip: WebClipConfig) -> dict:
         "IsRemovable": clip.is_removable,
     }
     if clip.icon_url:
-        try:
-            img_bytes = httpx.get(clip.icon_url, timeout=5.0).content
-            payload["Icon"] = base64.b64encode(img_bytes).decode()
-            payload["PrecomposedIcon"] = True
-        except Exception as e:
-            logger.warning("icon fetch failed for %s: %s", clip.icon_url, e)
+        if not _is_safe_url(clip.icon_url):
+            logger.warning("icon_url blocked (SSRF prevention): %s", clip.icon_url)
+        else:
+            try:
+                img_bytes = httpx.get(clip.icon_url, timeout=5.0).content
+                payload["Icon"] = base64.b64encode(img_bytes).decode()
+                payload["PrecomposedIcon"] = True
+            except Exception as e:
+                logger.warning("icon fetch failed for %s: %s", clip.icon_url, e)
     return payload
 
 
