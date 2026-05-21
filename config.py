@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     auction_timeout_ms: int = 80
     floor_price_default: float = 0.5
 
+    # dsp_engine: 円⇔ドル換算レート（Phase 2 で固定値から設定化。動的更新は currency.py）
+    jpy_per_usd: float = 150.0
+
     # 管理者認証（.env で上書き必須）
     admin_api_key: str = "change-me-admin-key"
 

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>多次元レポート</title>
+<style>
+  :root{--accent:#0b5cff;--ink:#1a1f36;--muted:#6b7280;--line:#e5e7eb;--bg:#f4f6fb}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);margin:0}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:16px 28px}
+  header h1{font-size:17px;margin:0}
+  nav{margin-top:8px;font-size:13px}
+  nav a{color:var(--accent);text-decoration:none;margin-right:14px}
+  main{max-width:1180px;margin:22px auto;padding:0 20px}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px}
+  .panel h2{font-size:14px;margin:0 0 14px}
+  .controls{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  .controls label{font-size:13px}
+  input[type=date]{padding:7px;border:1px solid #ccd;border-radius:5px}
+  .dims{display:flex;gap:14px;flex-wrap:wrap}
+  .dims label{display:flex;gap:5px;align-items:center;font-size:13px;
+    background:#eef2ff;padding:5px 10px;border-radius:6px;cursor:pointer}
+  button{padding:9px 20px;background:var(--accent);color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--muted);font-weight:600}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .dim-cell{font-weight:600}
+  #status{color:var(--muted);font-size:13px;margin-left:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>多次元レポート（Combined）</h1>
+  <nav>
+    <a href="/dsp-engine/admin/campaigns">キャンペーン</a>
+    <a href="/dsp-engine/admin/supply">SSP連携</a>
+    <a href="/dsp-engine/admin/report">レポート</a>
+  </nav>
+</header>
+<main>
+  <div class="panel">
+    <div class="controls">
+      <label>開始 <input type="date" id="from"></label>
+      <label>終了 <input type="date" id="to"></label>
+      <div class="dims" id="dims">
+        {% for d in dimensions %}
+          <label><input type="checkbox" value="{{ d }}" {{ "checked" if d=="campaign" }}>
+            {{ {"day":"Day","campaign":"Campaign","source":"Source","platform":"Platform"}[d] }}</label>
+        {% endfor %}
+      </div>
+      <button id="run">Run Report</button>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>結果</h2>
+    <table id="result">
+      <thead><tr id="head"></tr></thead>
+      <tbody id="body"><tr><td style="color:#6b7280">「Run Report」を押してください</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<script>
+  const DIM_LABEL = {day:"日付", campaign:"キャンペーン", source:"ソース", platform:"プラットフォーム"};
+  const fmtYen = n => '¥' + Math.round(n).toLocaleString();
+
+  function initDates(){
+    const today = new Date();
+    const wk = new Date(); wk.setDate(wk.getDate() - 7);
+    document.getElementById('to').value = today.toISOString().slice(0,10);
+    document.getElementById('from').value = wk.toISOString().slice(0,10);
+  }
+  initDates();
+
+  document.getElementById('run').addEventListener('click', async () => {
+    const dims = [...document.querySelectorAll('#dims input:checked')].map(c => c.value);
+    if(dims.length === 0){ alert('ディメンションを1つ以上選択してください'); return; }
+    const qs = new URLSearchParams({
+      date_from: document.getElementById('from').value,
+      date_to: document.getElementById('to').value,
+      dimensions: dims.join(','),
+    });
+    const st = document.getElementById('status');
+    st.textContent = '集計中...';
+    try{
+      const r = await fetch('/dsp-engine/admin/report/api?' + qs);
+      if(!r.ok){ st.textContent = 'エラー: ' + r.status; return; }
+      const data = await r.json();
+      render(data);
+      st.textContent = data.rows.length + ' 行 / ' + data.date_from + '〜' + data.date_to;
+    }catch(e){ st.textContent = '通信エラー'; }
+  });
+
+  function render(data){
+    const dims = data.dimensions;
+    const head = document.getElementById('head');
+    const metrics = [['impressions','imp'],['spend_jpy','消化'],['conversions','CV'],
+                     ['revenue_jpy','売上'],['roas','ROAS'],['cpa','CPA']];
+    head.innerHTML = dims.map(d => '<th>' + (DIM_LABEL[d]||d) + '</th>').join('')
+      + metrics.map(m => '<th class="num">' + m[1] + '</th>').join('');
+    const body = document.getElementById('body');
+    if(data.rows.length === 0){
+      body.innerHTML = '<tr><td colspan="' + (dims.length+6) + '" style="color:#6b7280">データがありません</td></tr>';
+      return;
+    }
+    body.innerHTML = data.rows.map(row => {
+      const dimCells = dims.map(d => {
+        let v = row[d];
+        if(d === 'campaign' && row.campaign_name) v = row.campaign_name;
+        return '<td class="dim-cell">' + (v ?? '—') + '</td>';
+      }).join('');
+      return '<tr>' + dimCells
+        + '<td class="num">' + row.impressions.toLocaleString() + '</td>'
+        + '<td class="num">' + fmtYen(row.spend_jpy) + '</td>'
+        + '<td class="num">' + row.conversions + '</td>'
+        + '<td class="num">' + fmtYen(row.revenue_jpy) + '</td>'
+        + '<td class="num">' + row.roas.toFixed(1) + '%</td>'
+        + '<td class="num">' + fmtYen(row.cpa) + '</td></tr>';
+    }).join('');
+  }
+</script>
+</body>
+</html>

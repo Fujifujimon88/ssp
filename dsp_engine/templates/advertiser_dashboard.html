@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ダッシュボード | {{ campaign.campaign_name }}</title>
+<style>
+  :root{--accent:#0b5cff;--ink:#1a1f36;--muted:#6b7280;--line:#e5e7eb;--bg:#f4f6fb}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);margin:0}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:16px 28px;
+    display:flex;justify-content:space-between;align-items:center}
+  header h1{font-size:17px;margin:0}
+  header .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  .logout{font-size:13px;color:var(--muted);text-decoration:none}
+  main{max-width:1000px;margin:24px auto;padding:0 20px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px}
+  .card .label{color:var(--muted);font-size:12px}
+  .card .value{font-size:26px;font-weight:700;margin-top:6px}
+  .card .value.accent{color:var(--accent)}
+  .card .note{font-size:12px;color:var(--muted);margin-top:4px}
+  .info{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:16px}
+  .info table{width:100%;border-collapse:collapse;font-size:13px}
+  .info td{padding:7px 4px;border-bottom:1px solid var(--line)}
+  .info td:first-child{color:var(--muted);width:40%}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>{{ campaign.campaign_name }}</h1>
+    <div class="sub">{{ campaign.advertiser_name }} ／ パフォーマンスダッシュボード</div>
+  </div>
+  <form method="post" action="/dsp-engine/advertiser/logout">
+    <button class="logout" style="background:none;border:0;cursor:pointer">ログアウト</button>
+  </form>
+</header>
+<main>
+  <div class="grid">
+    <div class="card">
+      <div class="label">ROAS（売上 ÷ 消化）</div>
+      <div class="value accent" id="roas">{{ "%.1f"|format(roas.roas) }}%</div>
+      <div class="note">目標 {{ "%.0f"|format(campaign.target_roas) }}%</div>
+    </div>
+    <div class="card">
+      <div class="label">消化金額</div>
+      <div class="value" id="spend">&yen;{{ "{:,.0f}".format(roas.spend_jpy) }}</div>
+      <div class="note">日予算 {{ "&yen;{:,.0f}".format(campaign.daily_budget_jpy) if campaign.daily_budget_jpy > 0 else "無制限" }}</div>
+    </div>
+    <div class="card">
+      <div class="label">売上（計測ベース）</div>
+      <div class="value" id="revenue">&yen;{{ "{:,.0f}".format(roas.revenue_jpy) }}</div>
+      <div class="note">速報値・計測ラグあり</div>
+    </div>
+    <div class="card">
+      <div class="label">CV数（購入）</div>
+      <div class="value" id="conversions">{{ roas.conversions }}</div>
+    </div>
+    <div class="card">
+      <div class="label">CPA（獲得単価）</div>
+      <div class="value" id="cpa">&yen;{{ "{:,.0f}".format(roas.cpa) }}</div>
+    </div>
+    <div class="card">
+      <div class="label">インプレッション</div>
+      <div class="value" id="impressions">{{ "{:,}".format(roas.impressions) }}</div>
+    </div>
+  </div>
+
+  <div class="info">
+    <table>
+      <tr><td>ステータス</td><td>{{ campaign.status }}</td></tr>
+      <tr><td>最適化目標</td><td>ROAS（購入売上）</td></tr>
+      <tr><td>想定購入単価</td><td>&yen;{{ "{:,.0f}".format(campaign.avg_purchase_value_jpy) }}</td></tr>
+      <tr><td>入札レンジ(CPM)</td><td>&yen;{{ "{:,.0f}".format(campaign.bid_floor_jpy) }} 〜 &yen;{{ "{:,.0f}".format(campaign.bid_cap_jpy) }}</td></tr>
+    </table>
+  </div>
+</main>
+<script>
+  // 30秒ごとにKPIを更新（計測ラグのため速報値）
+  async function refresh(){
+    try{
+      const r = await fetch('/dsp-engine/advertiser/api/stats');
+      if(!r.ok) return;
+      const d = await r.json();
+      const yen = n => '¥' + Math.round(n).toLocaleString();
+      document.getElementById('roas').textContent = d.roas.toFixed(1) + '%';
+      document.getElementById('spend').textContent = yen(d.spend_jpy);
+      document.getElementById('revenue').textContent = yen(d.revenue_jpy);
+      document.getElementById('conversions').textContent = d.conversions;
+      document.getElementById('cpa').textContent = yen(d.cpa);
+      document.getElementById('impressions').textContent = d.impressions.toLocaleString();
+    }catch(e){}
+  }
+  setInterval(refresh, 30000);
+</script>
+</body>
+</html>

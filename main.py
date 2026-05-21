@@ -44,6 +44,8 @@ from config import settings
 from database import Base, engine, get_db
 from db_models import AdSlotDB, ImpressionDB, PublisherDB
 from dsp.mock_dsp import create_mock_dsps
+from dsp_engine.bidder import LocalDspEngineDSP, record_dsp_win
+from dsp_engine.router import router as dsp_engine_router
 from mdm.dsp.ssp_node import router as openrtb_router
 from mdm.router import router as mdm_router
 from mdm.tasks.health_check import run_health_check
@@ -101,6 +103,9 @@ async def lifespan(app: FastAPI):
     for dsp in create_mock_dsps():
         auction_engine.register_dsp(dsp.dsp_id, dsp)
 
+    # dsp_engine（広告主向けパフォーマンスDSP）をオークションに参加させる
+    auction_engine.register_dsp(LocalDspEngineDSP.DSP_ID, LocalDspEngineDSP())
+
     hc_task = asyncio.create_task(_schedule_health_check())
     logger.info(f"SSP Platform started | env={settings.app_env} | dsps={auction_engine.registered_dsp_ids()}")
     yield
@@ -126,6 +131,7 @@ app.include_router(publisher_router)
 app.include_router(mdm_router)
 app.include_router(openrtb_router)
 app.include_router(portal_router)
+app.include_router(dsp_engine_router)
 
 # Vercel の X-Forwarded-Proto ヘッダーを信頼し request.base_url が https:// を返すようにする
 _trusted = settings.proxy_trusted_hosts
@@ -241,6 +247,22 @@ async def header_bidding(request: Request, db: AsyncSession = Depends(get_db)):
     # DBに記録
     actual_slot_id = slot.id if slot else None
     await record_auction(result, slot_id=actual_slot_id, publisher_id=publisher_id, db=db)
+
+    # dsp-engine が落札した場合は消化・予算ペーシングを記録（ROAS計測ループの起点）
+    if result.winner and result.winner.dsp_id == LocalDspEngineDSP.DSP_ID:
+        try:
+            await record_dsp_win(
+                db,
+                campaign_id=result.winner.bid.cid,
+                click_token=result.winner.bid.crid,
+                impression_id=result.imp_id,
+                cleared_price_usd=result.clearing_price,
+                bid_price_usd=result.winner.bid.price,
+                platform="web",
+                source="ssp-node",
+            )
+        except Exception as e:
+            logger.error(f"record_dsp_win failed: {e}")
 
     return JSONResponse({
         "bids": [{

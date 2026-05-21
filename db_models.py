@@ -1,9 +1,9 @@
 """SQLAlchemy ORMモデル（PostgreSQLテーブル定義）"""
 import uuid
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, SmallInteger, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, SmallInteger, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -598,6 +598,14 @@ class DspConfigDB(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+    # ── SSP連携画面（dsp_engine）拡張カラム ──
+    # platform_mapping: 外部サービスID → "android"/"ios" の対応（JSON文字列）
+    platform_mapping: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # app_mapping: 外部アプリ/スロットID → 内部 dsp_campaigns.id の対応（JSON文字列）
+    app_mapping: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    qps_limit: Mapped[int] = mapped_column(Integer, default=0)  # 0=無制限
+    last_win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_latency_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class DspWinLogDB(Base):
@@ -783,3 +791,114 @@ class StoreAdAssignmentDB(Base):
 
     dealer: Mapped["DealerDB"] = relationship("DealerDB", back_populates="ad_assignments")
     campaign: Mapped["AffiliateCampaignDB"] = relationship("AffiliateCampaignDB")
+
+
+# ── DSP エンジン（広告主向けパフォーマンス DSP / dsp_engine モジュール） ──────────
+
+
+class DspCampaignDB(Base):
+    """
+    広告主向け DSP キャンペーン（ROAS 最適化）。
+
+    入札価格 = pCTR × pCVR × avg_purchase_value_jpy × (1 - margin_rate) × 1000（CPM, JPY）
+    をフロア/キャップでクランプして算出する。
+
+    クリエイティブは MVP では1キャンペーン1素材としてインライン保持する。
+    target_roas は表示用の目標値（入札ロジックには margin_rate のみを使う）。
+    """
+    __tablename__ = "dsp_campaigns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    advertiser_name: Mapped[str] = mapped_column(String(200))
+    campaign_name: Mapped[str] = mapped_column(String(200))
+    objective: Mapped[str] = mapped_column(String(20), default="roas")  # roas（MVP）
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    # active / paused / budget_exhausted
+
+    # 予算（円）
+    daily_budget_jpy: Mapped[float] = mapped_column(Float, default=0.0)   # 0=無制限
+    total_budget_jpy: Mapped[float] = mapped_column(Float, default=0.0)   # 0=無制限
+
+    # 入札パラメータ
+    target_roas: Mapped[float] = mapped_column(Float, default=300.0)      # 目標ROAS(%)（表示用）
+    margin_rate: Mapped[float] = mapped_column(Float, default=0.20)       # プラットフォーム取り分
+    bid_floor_jpy: Mapped[float] = mapped_column(Float, default=100.0)    # 最低入札CPM(円)
+    bid_cap_jpy: Mapped[float] = mapped_column(Float, default=5000.0)     # 最高入札CPM(円)
+    avg_purchase_value_jpy: Mapped[float] = mapped_column(Float, default=3000.0)
+    base_ctr: Mapped[float] = mapped_column(Float, default=0.01)          # コールドスタートpCTR
+    target_cvr: Mapped[float] = mapped_column(Float, default=0.02)        # コールドスタートpCVR
+
+    # クリエイティブ（MVP: インライン1素材）
+    creative_title: Mapped[str] = mapped_column(String(200), default="")
+    creative_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    creative_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    creative_click_url: Mapped[str] = mapped_column(String(500), default="")
+    creative_width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    creative_height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    start_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
+    end_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
+
+    # 広告主ログイン（ポータルcookie認証）
+    login_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    hashed_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class DspSpendLogDB(Base):
+    """
+    DSP エンジンの落札（消化金額）ログ。
+
+    SSP オークションで dsp-engine が落札するたびに1行を記録する。
+    click_token は広告マークアップに埋め込まれ、購入CVのアトリビューションに使う。
+    ROAS の分母（spend）かつ、購入CV → impression の橋渡し。
+    """
+    __tablename__ = "dsp_spend_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dsp_campaigns.id"), index=True
+    )
+    impression_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    click_token: Mapped[str] = mapped_column(String(64), unique=True, index=True, default=_uuid)
+    platform: Mapped[str] = mapped_column(String(10), default="unknown")  # android/ios/unknown
+    source: Mapped[str] = mapped_column(String(40), default="ssp-node")   # 入札元(SSP/エクスチェンジ名)
+    bid_price_jpy: Mapped[float] = mapped_column(Float, default=0.0)      # 入札CPM(円)
+    cleared_price_jpy: Mapped[float] = mapped_column(Float, default=0.0)  # 落札価格CPM(円)
+    spend_jpy: Mapped[float] = mapped_column(Float, default=0.0)          # 実消化額(=cleared/1000)
+    logged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class DspConversionEventDB(Base):
+    """
+    DSP エンジンの購入CV（ROAS の分子）。
+
+    広告主の AppsFlyer/Adjust の purchase ポストバック先を /dsp-engine/conversion に
+    設定してもらい、click_token でアトリビューションする。
+    dedup_key（appsflyer_event_id 等）で冪等化する。
+    """
+    __tablename__ = "dsp_conversion_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dsp_campaigns.id"), index=True
+    )
+    impression_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    click_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(10), default="unknown")
+    source: Mapped[str] = mapped_column(String(40), default="direct")
+    # direct / s2s_appsflyer / s2s_adjust
+    event_type: Mapped[str] = mapped_column(String(50), default="purchase")
+    revenue_jpy: Mapped[float] = mapped_column(Float, default=0.0)
+    # 冪等性キー（重複ポストバック排除）
+    dedup_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    raw_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    attributed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )

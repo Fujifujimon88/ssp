@@ -256,3 +256,60 @@ Glance の弱点（日本）
 - SYSTEM_ALERT_WINDOW (Android): targetSdk 33 以上では権限ダイアログ必須
 - OpenRTB DSP接続: 各社との契約・審査が必要（最短2〜4週間）
 - APNs証明書: Apple Developer Portal で手作業取得（有料開発者アカウント必須）
+
+---
+
+## dsp_engine — 広告主向けパフォーマンス DSP（MVP / 2026-05-21）
+
+設計: `~/.claude/plans/https-www-applovin-com-ja-https-www-molo-proud-snowflake.md`
+AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` として追加。
+
+### 計画チェックリスト（Phase 1 = MVP）
+
+- [x] db_models.py に DspCampaignDB / DspSpendLogDB / DspConversionEventDB 追加 + DspConfigDB 拡張
+- [x] Alembic マイグレーション `add_dsp_engine_tables`（revision `dspengine0001`、冪等）
+- [x] 失敗テストを先に作成（TDD Red）— `tests/test_dsp_engine.py`
+- [x] scoring.py — 入札 CPM = pCTR×pCVR×購入額×(1-margin)×1000、フロア/キャップ
+- [x] pacing.py — 日予算 smooth pacing（Redis 原子加算 + dict フォールバック、安全率90%）
+- [x] campaign_manager.py — DspCampaignDB CRUD + 実績集計
+- [x] bidder.py — LocalDspEngineDSP（auction_engine 参加）+ handle_bid_request + record_dsp_win
+- [x] attribution.py — 購入CV受信（click_token アトリビューション・dedup冪等）+ ROAS 計算
+- [x] supply.py — SSP連携接続 CRUD + 外部IDマッピング（DspConfigDB 流用）
+- [x] reporting.py — 多次元レポート（動的 GROUP BY: day/campaign/source/platform）
+- [x] router.py — 全エンドポイント（conversion / advertiser / admin campaigns・supply・report）
+- [x] テンプレート4画面（advertiser_dashboard / campaigns / ssp_integration / report）
+- [x] main.py 配線（lifespan に DSP 登録、include_router、/v1/bid 落札フック）
+- [x] テスト green（test_dsp_engine.py 15件）+ マイグレーション検証 + E2E スモーク12項目
+
+### レビュー
+
+- 実装: 新規 `dsp_engine/` パッケージ11ファイル + マイグレーション1本。既存変更は db_models.py（追加のみ）と main.py（4箇所）に限定。
+- 検証: `pytest tests/test_dsp_engine.py` 15/15 green。`tests/_smoke_dsp_engine.py` で /v1/bid 落札 → CV受信 → レポート → 広告主ダッシュボードまで E2E 12項目 PASS。マイグレーションは populated DB コピーで適用確認。
+- 回帰: 全体 167 passed。既存6失敗（MDM 端末登録/同意系）は HEAD でも同一に失敗する事前不具合で、本実装とは無関係。
+- 計画からの差分:
+  1. クリエイティブは CreativeDB 流用でなく DspCampaignDB にインライン保持（FK 不整合回避・MVP は1キャンペーン1素材）。
+  2. pCTR/pCVR は MVP では統計ベース（コールドスタートは広告主提供値、実績50件で実測へ）。TFLite 連携は Phase 3。
+  3. config.py / auth.py は変更不要だった（margin はキャンペーン単位、portal token は型非依存）。代わりに main.py の /v1/bid に落札記録フックを追加。
+  4. 運用上キャンペーン作成 UI が必須のため campaigns.html を追加（テンプレートは計画の3 → 4）。
+- 残課題: 外部エクスチェンジ実接続（Phase 2）、pCVR 専用 ML（Phase 3）、本番 Postgres へのマイグレーション適用（要 Fujiさん許可）、レポートの country/size ディメンション。
+
+### Phase 2 — 外部エクスチェンジ連携インフラ（2026-05-21）
+
+DSP は「買う側」なので、外部エクスチェンジは**こちらへ** OpenRTB 入札リクエストを送る。
+Phase 2 はその受信側インフラを実装（実エクスチェンジ本番接続は提携・契約が前提）。
+
+- [x] currency.py — 円/ドルレートを設定化（config.jpy_per_usd）+ 動的更新フック。bidder.py の固定値を置換
+- [x] auction/openrtb.py の Bid に `nurl`（落札通知URL）追加
+- [x] exchange.py — QPS制御（固定1秒ウィンドウ）+ エクスチェンジ識別 + win/bid統計
+- [x] bidder.py 改修 — handle_bid_request に source 引数、Bid に nurl 埋め込み（${AUCTION_PRICE}マクロ対応）
+- [x] router.py — `POST /dsp-engine/exchange/{name}/bid`（受信側OpenRTB入札）、`GET /dsp-engine/win`（落札通知）
+- [x] ssp_integration.html — 各エクスチェンジの受信用入札URLを表示
+- [x] テスト — QPS/currency/nurl/source 6件追加（計21件 green）+ スモークに模擬エクスチェンジフロー5項目追加（計17項目 PASS）
+
+レビュー:
+- DB スキーマ変更なし（DspSpendLogDB.source / DspConfigDB.qps_limit は Phase 1 で用意済み）→ 新規マイグレーション不要。
+- 落札記録は2経路: 自社SSP=main.py フック、外部エクスチェンジ=nurl→/dsp-engine/win。各経路1回のみで二重計上なし。
+- 計画の Phase 2 記述（"HttpDSP で外部SSPへ入札"）は DSP の役割として不正確だったため、受信側エンドポイント方式に訂正して実装。
+- `mdm/dsp/rtb_client.py` の DSP_CONFIGS 有効化は dsp_engine スコープ外（既存SSPの別サブシステム）かつ実通信を伴うため対象外とした。
+- 回帰: 全体 173 passed（Phase 2 で +6）。既存6失敗は MDM 系の事前不具合で無関係。
+- 残課題: 実エクスチェンジとの提携・QPS審査（契約マター）、エクスチェンジ認証の強化（共有シークレット）、実FX APIレート自動取得、Phase 3 の pCVR 専用 ML。

@@ -91,6 +91,7 @@ class Bid(BaseModel):
     price: float                      # 入札価格(CPM, USD)
     adid: Optional[str] = None
     adm: Optional[str] = None        # 広告マークアップ(HTML/VAST)
+    nurl: Optional[str] = None       # 落札通知URL（OpenRTB win notice。${AUCTION_PRICE}マクロ対応）
     adomain: Optional[list[str]] = None
     iurl: Optional[str] = None        # バナー画像URL
     cid: Optional[str] = None        # キャンペーンID

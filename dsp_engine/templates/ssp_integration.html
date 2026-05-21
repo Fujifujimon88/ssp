@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SSP連携 / 外部IDマッピング</title>
+<style>
+  :root{--accent:#0b5cff;--ink:#1a1f36;--muted:#6b7280;--line:#e5e7eb;--bg:#f4f6fb}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);margin:0}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:16px 28px}
+  header h1{font-size:17px;margin:0}
+  nav{margin-top:8px;font-size:13px}
+  nav a{color:var(--accent);text-decoration:none;margin-right:14px}
+  main{max-width:1100px;margin:22px auto;padding:0 20px}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px}
+  .panel h2{font-size:14px;margin:0 0 14px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  .badge{font-size:11px;padding:2px 8px;border-radius:10px}
+  .badge.on{background:#e6f4ea;color:#137333}
+  .badge.off{background:#eef0f4;color:#6b7280}
+  label{font-size:12px;color:var(--muted)}
+  input,select{padding:7px;border:1px solid #ccd;border-radius:5px}
+  button{padding:7px 14px;background:var(--accent);color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:13px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+  .row>div{display:flex;flex-direction:column;gap:3px}
+  .map{font-size:12px;color:#374151;background:#f4f6fb;border-radius:5px;padding:3px 7px;margin:2px 0;display:inline-block}
+  .mini button{background:#555;padding:5px 9px;font-size:12px}
+  .mini input,.mini select{font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>SSP連携 / 外部IDマッピング</h1>
+  <nav>
+    <a href="/dsp-engine/admin/campaigns">キャンペーン</a>
+    <a href="/dsp-engine/admin/supply">SSP連携</a>
+    <a href="/dsp-engine/admin/report">レポート</a>
+  </nav>
+</header>
+<main>
+  <div class="panel">
+    <h2>SSPエクスチェンジ接続を追加</h2>
+    <form method="post" action="/dsp-engine/admin/supply" class="row">
+      <div><label>接続名</label><input name="name" required placeholder="例: fluct-exchange"></div>
+      <div><label>OpenRTBエンドポイント</label><input name="endpoint_url" required placeholder="https://..." size="34"></div>
+      <div><label>タイムアウト(ms)</label><input name="timeout_ms" type="number" value="200" style="width:90px"></div>
+      <div><label>QPS上限(0=無制限)</label><input name="qps_limit" type="number" value="0" style="width:90px"></div>
+      <div><button type="submit">接続を追加</button></div>
+    </form>
+    <p style="color:#6b7280;font-size:12px;margin:10px 0 0">
+      Phase 1 は自社SSPノード(self-ssp-node)経由で実トラフィックを取得します。
+      外部エクスチェンジは提携・QPS審査の完了後に「有効化」してください。
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>連携接続一覧（{{ items|length }}件）</h2>
+    <table>
+      <thead><tr>
+        <th>接続名</th><th>エンドポイント</th><th>状態</th><th>QPS上限</th>
+        <th>直近win率</th><th>直近遅延</th><th>外部IDマッピング</th>
+      </tr></thead>
+      <tbody>
+      {% for it in items %}
+        <tr>
+          <td><strong>{{ it.conn.name }}</strong></td>
+          <td style="word-break:break-all;max-width:280px">
+            {{ it.conn.endpoint_url }}
+            <div style="color:#6b7280;font-size:11px;margin-top:4px">
+              受信用入札URL（エクスチェンジに伝える）:<br>
+              <code>{{ ssp_endpoint }}/dsp-engine/exchange/{{ it.conn.name }}/bid</code>
+            </div>
+          </td>
+          <td>
+            {% if it.conn.active %}<span class="badge on">有効</span>
+            {% else %}<span class="badge off">停止中</span>{% endif %}
+            <form method="post" action="/dsp-engine/admin/supply/{{ it.conn.id }}" style="margin-top:4px">
+              <input type="hidden" name="active" value="{{ 'false' if it.conn.active else 'true' }}">
+              <button style="background:#555;padding:4px 8px;font-size:11px">
+                {{ '停止する' if it.conn.active else '有効化する' }}</button>
+            </form>
+          </td>
+          <td>{{ it.conn.qps_limit or "—" }}</td>
+          <td>{{ "%.1f%%"|format(it.conn.last_win_rate*100) if it.conn.last_win_rate is not none else "—" }}</td>
+          <td>{{ "%.0fms"|format(it.conn.last_latency_ms) if it.conn.last_latency_ms is not none else "—" }}</td>
+          <td>
+            {% for ext, plat in it.platform_mapping.items() %}
+              <span class="map">{{ ext }} → {{ plat }}</span><br>
+            {% else %}
+              <span style="color:#9ca3af;font-size:12px">未マッピング</span><br>
+            {% endfor %}
+            <form method="post" action="/dsp-engine/admin/supply/{{ it.conn.id }}/mapping" class="mini" style="margin-top:5px;display:flex;gap:5px">
+              <input name="external_id" placeholder="外部サービスID" required>
+              <select name="platform">
+                <option value="android">Android</option>
+                <option value="ios">iOS</option>
+                <option value="desktop">Desktop</option>
+              </select>
+              <button type="submit">追加</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" style="color:#6b7280">接続がありません</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</main>
+</body>
+</html>

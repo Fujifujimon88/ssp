@@ -72,3 +72,15 @@
 ### 11. MDM ダッシュボードのセクション順序
 - 最初の `.section h2` は「リアルタイム（今日）」セクション → index 0。
 - 「代理店 Top 5」は index 1、「アフィリエイト案件 Top 5」は index 2、「主要APIエンドポイント」は index 3。
+
+### 15. 新規 Alembic マイグレーションの revision ID は衝突確認してから決める
+- Date: 2026-05-21 / Trigger: dsp_engine マイグレーション追加で `Revision X is present more than once` + `Multiple head revisions`。
+- Root Cause: 既存マイグレーションが手書きの短い revision ID（例 `e1f2a3b4c5d6`）を複数ファイルで使い回しており、同じ ID を選んでしまった。
+- Mitigation: 採用前に `grep -rln "revision.*=.*'<id>'" alembic/versions/*.py` で衝突確認。記述的なユニーク slug（例 `dspengine0001`）を使う。`down_revision` は `alembic heads` の単一 head に合わせる。
+- Detection: `python -m alembic heads` が単一 head を返すか確認する。
+
+### 16. 新規マイグレーションは「populated DB のコピー」で検証する（fresh SQLite 不可）
+- Date: 2026-05-21 / Trigger: 空 SQLite に `alembic upgrade head` すると古い `ALTER TABLE ... ADD COLUMN` 系で `no such table` 失敗。
+- Root Cause: 既存マイグレーション群は `Base.metadata.create_all` でテーブルが先に存在する前提で書かれており、base からの全チェーンが SQLite で通らない。
+- Mitigation: `ssp.db`（全テーブルあり・未スタンプ）をコピー → 直前の head で `alembic stamp` → `alembic upgrade head` で新規分のみ検証。本番 Postgres には `upgrade` しない（read-only の `alembic current` のみ）。
+- Detection: テーブル・カラム・index を `pragma table_info` 等で確認。
