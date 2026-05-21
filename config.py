@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     ssp_endpoint: str = "http://localhost:8000"
     revenue_share_rate: float = 0.70
 
+    # サプライチェーン透明性（sellers.json / ads.txt）
+    ssp_domain: str = "ssp-platform.example.com"               # sellers.json / ads.txt の自社ドメイン
+    ssp_seller_id: str = "ssp-platform"                        # sellers.json の INTERMEDIARY seller_id
+    ssp_contact_email: str = "adops@ssp-platform.example.com"  # sellers.json の contact_email
+
     # LINE Messaging API（.env で設定）
     line_channel_access_token: str = ""
     line_channel_secret: str = ""

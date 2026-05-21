@@ -454,7 +454,17 @@ async def sellers_json(db: AsyncSession = Depends(get_db)):
         select(PublisherDB).where(PublisherDB.status == "active")
     )
     publishers = result.scalars().all()
+    # IAB sellers.json 仕様: SSP 自身を INTERMEDIARY として先頭に記載する
     sellers = [
+        {
+            "seller_id": settings.ssp_seller_id,
+            "name": "SSP Platform",
+            "domain": settings.ssp_domain,
+            "seller_type": "INTERMEDIARY",
+            "is_confidential": 0,
+        }
+    ]
+    sellers += [
         {
             "seller_id": pub.id,
             "name": pub.name,
@@ -465,7 +475,7 @@ async def sellers_json(db: AsyncSession = Depends(get_db)):
         for pub in publishers
     ]
     return {
-        "contact_email": "adops@ssp-platform.example.com",
+        "contact_email": settings.ssp_contact_email,
         "version": "1.0",
         "sellers": sellers,
     }
@@ -486,6 +496,30 @@ async def get_my_ads_txt(
     comment = (
         f"# {pub.domain} の ads.txt に以下の1行を追加してください\n"
         f"# ファイルパス: https://{pub.domain}/ads.txt\n\n"
+        f"{line}\n"
+    )
+    return PlainTextResponse(comment)
+
+
+@app.get("/api/publishers/me/app-ads-txt", response_class=PlainTextResponse, summary="自分のapp-ads.txtライン取得")
+async def get_my_app_ads_txt(
+    request: Request,
+    publisher_id: str = Depends(get_current_publisher_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """パブリッシャー（アプリ開発者）が自社ドメインに設置する app-ads.txt の1行を返す。
+
+    モバイルアプリ枠（OpenRTB App オブジェクト）のサプライチェーン透明性のため、
+    アプリ開発者ドメインの app-ads.txt に本 SSP の DIRECT 行を追加してもらう。
+    """
+    pub = await db.get(PublisherDB, publisher_id)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publisher not found")
+    host = str(request.base_url).replace("https://", "").replace("http://", "").rstrip("/")
+    line = f"{host}, {pub.id}, DIRECT, ssp-platform"
+    comment = (
+        f"# {pub.domain} の app-ads.txt（モバイルアプリ用）に以下の1行を追加してください\n"
+        f"# ファイルパス: https://{pub.domain}/app-ads.txt\n\n"
         f"{line}\n"
     )
     return PlainTextResponse(comment)

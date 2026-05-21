@@ -9,14 +9,19 @@ import asyncio
 import json
 import logging
 
+from sqlalchemy import select
+
+from config import settings
 from database import AsyncSessionLocal
+from db_models import PublisherDB
+from dsp_engine.adstxt import fetch_ads_txt, verify_publisher_in_ads_txt
 from dsp_engine.sjcache import fetch_sellers_json, prime_cache
 from dsp_engine.supply import list_supply_connections
 from utils import utcnow
 
 logger = logging.getLogger(__name__)
 
-SELLERS_JSON_REFRESH_SEC = 3600  # 1 時間ごとに sellers.json を再取得
+SELLERS_JSON_REFRESH_SEC = 3600  # 1 時間ごとに sellers.json / ads.txt を再検証
 
 
 async def run_sellers_json_refresh() -> None:
@@ -40,15 +45,38 @@ async def run_sellers_json_refresh() -> None:
             logger.info(f"supply-chain batch: refreshed sellers.json for {updated} exchange(s)")
 
 
+async def run_ads_txt_check() -> None:
+    """全 active パブリッシャーの ads.txt に自社 SSP の DIRECT 行があるか検証する。
+
+    検証結果はログのみ。PublisherDB のステータス自動変更等の破壊的操作はしない。
+    """
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(select(PublisherDB).where(PublisherDB.status == "active"))
+        publishers = rows.scalars().all()
+        missing = 0
+        for pub in publishers:
+            if not pub.domain:
+                continue
+            entries = await fetch_ads_txt(pub.domain)
+            if not verify_publisher_in_ads_txt(entries, settings.ssp_domain, pub.id):
+                missing += 1
+                logger.warning(
+                    f"ads.txt check: SSP entry missing for publisher {pub.id} ({pub.domain})"
+                )
+        if missing:
+            logger.info(f"supply-chain batch: ads.txt missing for {missing} publisher(s)")
+
+
 async def schedule_supply_chain_tasks() -> None:
     """lifespan から create_task で起動するバックグラウンドループ。
 
-    起動直後に一度実行し、以降 SELLERS_JSON_REFRESH_SEC ごとに繰り返す。
+    SELLERS_JSON_REFRESH_SEC ごとに sellers.json リフレッシュと ads.txt 検証を行う。
     例外は握りつぶしてループを継続する（バッチ失敗で本体を巻き込まない）。
     """
     while True:
         try:
             await run_sellers_json_refresh()
+            await run_ads_txt_check()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
