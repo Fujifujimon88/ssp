@@ -100,6 +100,19 @@ def parse_mapping(raw: Optional[str]) -> dict:
         return {}
 
 
+def parse_allowed_asi_domains(raw: Optional[str]) -> list[str]:
+    """allowed_asi_domains の JSON 配列文字列を list[str] に戻す（不正値は []）。"""
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+        if isinstance(value, list):
+            return [str(v) for v in value]
+        return []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
 async def ensure_self_ssp_node(db: AsyncSession) -> DspConfigDB:
     """自社 SSP ノードの接続行を冪等に用意する（SSP 連携画面の既定行）。"""
     existing = await db.scalar(

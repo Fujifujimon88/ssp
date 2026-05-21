@@ -608,6 +608,19 @@ class DspConfigDB(Base):
     last_latency_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # 外部エクスチェンジ認証用の共有シークレット（X-DSP-Secret ヘッダーで照合。NULL=認証不要）
     api_secret: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # ── サプライチェーン検証（schain / sellers.json）拡張カラム ──
+    # schain_required: True=schain 検証失敗で入札拒否, False=警告のみ, NULL=無検証
+    schain_required: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # allowed_asi_domains: 許可する schain asi ドメインのリスト（JSON配列文字列。NULL/空=無制限）
+    allowed_asi_domains: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # sellers_json_url: このエクスチェンジの sellers.json 取得URL（突合用）
+    sellers_json_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # sellers_json_cache: 取得済み sellers.json のキャッシュ（JSON文字列）
+    sellers_json_cache: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # sellers_json_cached_at: sellers.json キャッシュの取得時刻（TTL判定用）
+    sellers_json_cached_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class DspWinLogDB(Base):

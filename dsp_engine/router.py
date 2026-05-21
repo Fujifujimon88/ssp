@@ -37,6 +37,7 @@ from dsp_engine.attribution import (
     get_campaign_roas, normalize_conversion_payload, record_click, record_conversion,
 )
 from dsp_engine.bidder import click_through_url, handle_bid_request, record_dsp_win
+from dsp_engine.supply_chain import SchainVerdict, extract_schain, verify_schain
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +424,19 @@ async def inbound_bid(
     except Exception as exc:
         logger.warning(f"inbound_bid: invalid OpenRTB from {exchange_name}: {exc}")
         return Response(status_code=204)
+
+    # schain 構造検証（入札パス内・外部 I/O なし）。REJECT はノービッド(204)扱い。
+    sc_result = verify_schain(
+        extract_schain(bid_request),
+        exchange_name,
+        supply.parse_allowed_asi_domains(exch.allowed_asi_domains),
+        strict=bool(exch.schain_required),
+    )
+    if sc_result.verdict == SchainVerdict.REJECT:
+        logger.warning(f"inbound_bid: schain rejected from {exchange_name}: {sc_result.reason}")
+        return Response(status_code=204)
+    if sc_result.verdict == SchainVerdict.WARN:
+        logger.info(f"inbound_bid: schain warn from {exchange_name}: {sc_result.reason}")
 
     started = time.monotonic()
     resp = await handle_bid_request(bid_request, db, source=exchange_name)
