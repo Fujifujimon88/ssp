@@ -606,6 +606,8 @@ class DspConfigDB(Base):
     qps_limit: Mapped[int] = mapped_column(Integer, default=0)  # 0=無制限
     last_win_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_latency_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # 外部エクスチェンジ認証用の共有シークレット（X-DSP-Secret ヘッダーで照合。NULL=認証不要）
+    api_secret: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
 
 class DspWinLogDB(Base):

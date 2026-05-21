@@ -39,6 +39,7 @@ async def create_supply_connection(
     timeout_ms: int = 200,
     qps_limit: int = 0,
     active: bool = False,
+    api_secret: Optional[str] = None,
 ) -> DspConfigDB:
     conn = DspConfigDB(
         name=name,
@@ -46,6 +47,7 @@ async def create_supply_connection(
         timeout_ms=timeout_ms,
         qps_limit=qps_limit,
         active=active,
+        api_secret=api_secret,
     )
     db.add(conn)
     await db.commit()

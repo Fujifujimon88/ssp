@@ -512,3 +512,118 @@ def test_normalize_adjust_autodetect_by_adid():
         "clickid": "t", "revenue": "100", "adid": "adj-device-1",
     })
     assert n["source"] == "s2s_adjust"
+
+
+# ── アドテクレビュー改善（認証 / 総予算 / N+1 / 冪等 / 期間） ───
+
+def test_verify_exchange_secret_no_secret_required():
+    """api_secret 未設定のエクスチェンジは認証不要（常に True）"""
+    from db_models import DspConfigDB
+    from dsp_engine.exchange import verify_exchange_secret
+    exch = DspConfigDB(name="x", endpoint_url="u", api_secret=None)
+    assert verify_exchange_secret(exch, None) is True
+    assert verify_exchange_secret(exch, "anything") is True
+
+
+def test_verify_exchange_secret_enforced():
+    """api_secret 設定時はヘッダー一致を要求する"""
+    from db_models import DspConfigDB
+    from dsp_engine.exchange import verify_exchange_secret
+    exch = DspConfigDB(name="x", endpoint_url="u", api_secret="s3cret")
+    assert verify_exchange_secret(exch, "s3cret") is True
+    assert verify_exchange_secret(exch, "wrong") is False
+    assert verify_exchange_secret(exch, None) is False
+
+
+@pytest.mark.asyncio
+async def test_can_bid_blocks_when_total_budget_exhausted():
+    """総予算（total_budget_jpy）を消化しきったら入札不可"""
+    from dsp_engine.pacing import BudgetPacer
+    pacer = BudgetPacer()
+    c = make_campaign(id="camp-tb", daily_budget_jpy=0.0, total_budget_jpy=10_000.0)
+    now = datetime(2026, 5, 22, 12, 0, 0)
+    assert await pacer.can_bid(c, lifetime_spend_jpy=9_999.0, now=now) is True
+    assert await pacer.can_bid(c, lifetime_spend_jpy=10_000.0, now=now) is False
+
+
+@pytest.mark.asyncio
+async def test_can_bid_total_budget_zero_is_unlimited():
+    """total_budget_jpy=0 は総予算無制限"""
+    from dsp_engine.pacing import BudgetPacer
+    pacer = BudgetPacer()
+    c = make_campaign(id="camp-tb0", daily_budget_jpy=0.0, total_budget_jpy=0.0)
+    assert await pacer.can_bid(
+        c, lifetime_spend_jpy=9_999_999.0, now=datetime(2026, 5, 22, 3, 0, 0)
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_get_all_campaign_stats_batch(db):
+    """全キャンペーンの実績を一括取得（入札パスの N+1 解消）"""
+    from dsp_engine.attribution import record_conversion
+    from dsp_engine.bidder import record_dsp_win
+    from dsp_engine.campaign_manager import get_all_campaign_stats
+
+    db.add_all([make_campaign(id="bc-1"), make_campaign(id="bc-2")])
+    await db.commit()
+    await record_dsp_win(
+        db, campaign_id="bc-1", click_token="b1", impression_id="i1",
+        cleared_price_usd=10.0, bid_price_usd=10.0,
+    )
+    await record_conversion(db, campaign_id="bc-2", revenue_jpy=5000.0, dedup_key="bcv1")
+
+    stats = await get_all_campaign_stats(db, ["bc-1", "bc-2"])
+    assert stats["bc-1"]["impressions"] == 1
+    assert stats["bc-1"]["revenue_jpy"] == 0.0
+    assert stats["bc-2"]["revenue_jpy"] == 5000.0
+    assert stats["bc-2"]["impressions"] == 0
+
+
+@pytest.mark.asyncio
+async def test_record_dsp_win_idempotent_by_click_token(db):
+    """同一 click_token の落札記録（nurl再送）は二重計上されない"""
+    from db_models import DspSpendLogDB
+    from dsp_engine.bidder import record_dsp_win
+
+    db.add(make_campaign(id="camp-idem-win"))
+    await db.commit()
+    await record_dsp_win(
+        db, campaign_id="camp-idem-win", click_token="win-ct", impression_id="i1",
+        cleared_price_usd=10.0, bid_price_usd=10.0,
+    )
+    await record_dsp_win(
+        db, campaign_id="camp-idem-win", click_token="win-ct", impression_id="i1",
+        cleared_price_usd=10.0, bid_price_usd=10.0,
+    )
+    count = await db.scalar(
+        select(func.count()).select_from(DspSpendLogDB)
+        .where(DspSpendLogDB.click_token == "win-ct")
+    )
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_list_active_campaigns_excludes_out_of_period(db):
+    """配信期間外（start_date 未来 / end_date 過去）のキャンペーンは入札対象外"""
+    from datetime import timedelta
+
+    from dsp_engine.campaign_manager import list_active_campaigns
+    from utils import utcnow
+
+    today = utcnow().date()  # 実装(list_active_campaigns)と同じ UTC 基準に揃える
+    db.add_all([
+        make_campaign(id="cd-live", status="active",
+                      start_date=today - timedelta(days=1), end_date=today + timedelta(days=1)),
+        make_campaign(id="cd-expired", status="active",
+                      start_date=today - timedelta(days=10), end_date=today - timedelta(days=1)),
+        make_campaign(id="cd-future", status="active",
+                      start_date=today + timedelta(days=5), end_date=None),
+        make_campaign(id="cd-nodate", status="active"),  # 期間指定なし → 常に有効
+    ])
+    await db.commit()
+
+    ids = {c.id for c in await list_active_campaigns(db)}
+    assert "cd-live" in ids
+    assert "cd-nodate" in ids
+    assert "cd-expired" not in ids
+    assert "cd-future" not in ids

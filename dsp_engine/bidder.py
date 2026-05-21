@@ -14,13 +14,15 @@ import urllib.parse
 import uuid
 from typing import Optional
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auction.openrtb import Bid, BidRequest, BidResponse, SeatBid
 from config import settings
 from db_models import DspSpendLogDB
 from dsp.base import BaseDSP
-from dsp_engine.campaign_manager import get_campaign_stats, list_active_campaigns
+from dsp_engine.campaign_manager import get_all_campaign_stats, list_active_campaigns
 from dsp_engine.currency import get_jpy_per_usd
 from dsp_engine.pacing import BudgetPacer
 from dsp_engine.scoring import compute_bid_cpm_jpy
@@ -142,13 +144,17 @@ async def handle_bid_request(
     if not campaigns:
         return None
 
+    # 全キャンペーンの実績を一括取得（入札パスの N+1 クエリ回避）
+    all_stats = await get_all_campaign_stats(db, [c.id for c in campaigns])
+
     best_campaign = None
     best_bid_cpm_jpy = 0.0
     for campaign in campaigns:
-        stats = await get_campaign_stats(db, campaign.id)
+        stats = all_stats[campaign.id]
         bid_cpm_jpy = compute_bid_cpm_jpy(campaign, stats)
-        if not await _pacer.can_bid(campaign):
-            continue  # 予算ペース超過 → このキャンペーンはスキップ
+        # 日予算ペース + 総予算（lifetime spend）の両方をチェック
+        if not await _pacer.can_bid(campaign, lifetime_spend_jpy=stats["spend_jpy"]):
+            continue
         if best_campaign is None or bid_cpm_jpy > best_bid_cpm_jpy:
             best_campaign, best_bid_cpm_jpy = campaign, bid_cpm_jpy
 
@@ -193,7 +199,17 @@ async def record_dsp_win(
 
     落札価格（USD CPM）を円換算し、DspSpendLogDB を記録して予算消化に反映する。
     1インプレッションの実消化額 = 落札 CPM(円) / 1000。
+
+    冪等性: 同一 click_token の落札が既にあれば再記録・再消化しない
+    （外部エクスチェンジの nurl 再送による二重計上を防ぐ）。
     """
+    existing = await db.scalar(
+        select(DspSpendLogDB).where(DspSpendLogDB.click_token == click_token)
+    )
+    if existing is not None:
+        logger.info(f"dsp-engine win skipped (duplicate click_token={click_token})")
+        return existing
+
     rate = get_jpy_per_usd()
     cleared_cpm_jpy = cleared_price_usd * rate
     bid_cpm_jpy = bid_price_usd * rate
@@ -210,7 +226,17 @@ async def record_dsp_win(
         spend_jpy=spend_jpy,
     )
     db.add(log)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # click_token unique 制約のレース → 既存を返す（消化は加算しない）
+        await db.rollback()
+        existing = await db.scalar(
+            select(DspSpendLogDB).where(DspSpendLogDB.click_token == click_token)
+        )
+        if existing is not None:
+            return existing
+        raise
     await _pacer.record_spend(campaign_id, spend_jpy)
     logger.info(
         f"dsp-engine win | campaign={campaign_id} | cleared=¥{cleared_cpm_jpy:.1f}cpm "

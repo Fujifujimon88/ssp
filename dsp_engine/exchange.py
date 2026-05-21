@@ -43,6 +43,18 @@ async def get_active_exchange(db: AsyncSession, name: str) -> DspConfigDB | None
     )
 
 
+def verify_exchange_secret(exchange: DspConfigDB, provided_secret: str | None) -> bool:
+    """エクスチェンジ認証。
+
+    api_secret 未設定（NULL/空）のエクスチェンジは認証不要で常に True。
+    設定済みの場合は X-DSP-Secret ヘッダー値との完全一致を要求する。
+    """
+    required = getattr(exchange, "api_secret", None)
+    if not required:
+        return True
+    return provided_secret == required
+
+
 # ── 入札/落札の簡易統計（プロセス内・SSP連携画面表示用） ────────
 _stats: dict[str, dict] = {}  # {exchange: {"bids","wins","latency_sum"}}
 

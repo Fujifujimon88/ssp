@@ -311,10 +311,12 @@ async def admin_create_supply(
     endpoint_url: str = Form(...),
     timeout_ms: int = Form(200),
     qps_limit: int = Form(0),
+    api_secret: str = Form(""),
 ):
     await supply.create_supply_connection(
         db, name=name, endpoint_url=endpoint_url,
         timeout_ms=timeout_ms, qps_limit=qps_limit,
+        api_secret=api_secret or None,
     )
     return RedirectResponse(url="/dsp-engine/admin/supply", status_code=303)
 
@@ -410,6 +412,8 @@ async def inbound_bid(
     exch = await exchange.get_active_exchange(db, exchange_name)
     if exch is None:
         return Response(status_code=204)  # 未登録/停止中 → ノービッド
+    if not exchange.verify_exchange_secret(exch, request.headers.get("X-DSP-Secret")):
+        return Response(status_code=401)  # 認証失敗（共有シークレット不一致）
     if not exchange.check_qps(exchange_name, exch.qps_limit):
         return Response(status_code=429)  # QPS 上限超過
 

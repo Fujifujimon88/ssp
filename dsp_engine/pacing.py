@@ -63,11 +63,22 @@ class BudgetPacer:
         _mem_spend[key] = _mem_spend.get(key, 0.0) + amount_jpy
         return _mem_spend[key]
 
-    async def can_bid(self, campaign, now: datetime | None = None) -> bool:
-        """キャンペーンが現時点で入札可能か（ペース内か）を返す。"""
+    async def can_bid(
+        self, campaign, lifetime_spend_jpy: float = 0.0, now: datetime | None = None
+    ) -> bool:
+        """キャンペーンが現時点で入札可能かを返す。
+
+        total_budget_jpy（総予算）と daily_budget_jpy（日予算 smooth pacing）の
+        両方をチェックする。lifetime_spend_jpy はキャンペーンの累計消化額。
+        """
         now = now or utcnow()
+        # 総予算チェック（total_budget_jpy <= 0 は無制限）
+        total_budget = getattr(campaign, "total_budget_jpy", 0.0) or 0.0
+        if total_budget > 0 and lifetime_spend_jpy >= total_budget:
+            return False
+        # 日予算ペーシング（daily_budget_jpy <= 0 は無制限）
         if campaign.daily_budget_jpy <= 0:
-            return True  # 無制限
+            return True
         allowed = paced_budget_allowed(campaign.daily_budget_jpy, now) * SAFETY_MARGIN
         spent = await self.get_spend(campaign.id, now.date())
         return spent < allowed
