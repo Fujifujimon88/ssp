@@ -232,7 +232,8 @@ async def test_handle_bid_request_returns_bid(db):
     bid = resp.seatbid[0].bid[0]
     assert bid.price > 0
     assert bid.cid == "camp-bid"
-    assert "dsp_ct=" in bid.adm  # click_token が ad markup に埋め込まれている
+    # ad markup のクリックリンクはクリック計測トラッカー経由
+    assert "/dsp-engine/click?ct=" in bid.adm
 
 
 @pytest.mark.asyncio
@@ -349,3 +350,165 @@ async def test_record_dsp_win_tags_external_source(db):
     )
     assert log.source == "external-exch"
     assert log.platform == "external"
+
+
+# ── クリック計測 ───────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_record_click_logs_event(db):
+    """クリックトラッカーがクリックイベントを1件記録する"""
+    from db_models import DspClickEventDB
+    from dsp_engine.attribution import record_click
+    from dsp_engine.bidder import record_dsp_win
+
+    db.add(make_campaign(id="camp-clk"))
+    await db.commit()
+    await record_dsp_win(
+        db, campaign_id="camp-clk", click_token="clk-1", impression_id="imp-1",
+        cleared_price_usd=10.0, bid_price_usd=12.0,
+    )
+    log = await record_click(db, "clk-1")
+    assert log is not None and log.campaign_id == "camp-clk"
+    count = await db.scalar(
+        select(func.count()).select_from(DspClickEventDB)
+        .where(DspClickEventDB.click_token == "clk-1")
+    )
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_record_click_unknown_token_returns_none(db):
+    """未知の click_token なら None（落札ログ無し）"""
+    from dsp_engine.attribution import record_click
+    assert await record_click(db, "no-such-token") is None
+
+
+@pytest.mark.asyncio
+async def test_roas_includes_clicks_and_ctr(db):
+    """ROAS サマリーに clicks と CTR(%) が含まれる"""
+    from dsp_engine.attribution import get_campaign_roas, record_click
+    from dsp_engine.bidder import record_dsp_win
+
+    db.add(make_campaign(id="camp-ctr"))
+    await db.commit()
+    for i in range(4):
+        await record_dsp_win(
+            db, campaign_id="camp-ctr", click_token=f"ctr-{i}", impression_id=f"imp-{i}",
+            cleared_price_usd=10.0, bid_price_usd=10.0,
+        )
+    await record_click(db, "ctr-0")  # 4落札中1クリック
+
+    roas = await get_campaign_roas(db, "camp-ctr")
+    assert roas["impressions"] == 4
+    assert roas["clicks"] == 1
+    assert abs(roas["ctr"] - 25.0) < 1e-6  # 1/4 × 100
+
+
+# ── 実MMP（AppsFlyer / Adjust）ポストバック形式の正規化 ─────────
+
+def test_normalize_canonical_payload():
+    """当社の標準パラメータ名をそのまま受ける"""
+    from dsp_engine.attribution import normalize_conversion_payload
+    n = normalize_conversion_payload({
+        "dsp_ct": "tok", "revenue_jpy": "3000", "dedup_key": "d1", "event_type": "purchase",
+    })
+    assert n["click_token"] == "tok"
+    assert n["revenue_jpy"] == 3000.0
+    assert n["dedup_key"] == "d1"
+
+
+def test_normalize_appsflyer_payload():
+    """AppsFlyer 形式（click_id / event_revenue / event_name / event_id）を正規化"""
+    from dsp_engine.attribution import normalize_conversion_payload
+    n = normalize_conversion_payload({
+        "click_id": "tok-af", "event_revenue": "8000", "event_revenue_currency": "JPY",
+        "event_name": "af_purchase", "event_id": "afid-123",
+    })
+    assert n["click_token"] == "tok-af"
+    assert n["revenue_jpy"] == 8000.0
+    assert n["dedup_key"] == "afid-123"
+    assert n["event_type"] == "af_purchase"
+
+
+def test_normalize_adjust_payload_with_usd_conversion():
+    """Adjust 形式（clickid / revenue+currency=USD / transaction_id）と USD→JPY 換算"""
+    from dsp_engine.attribution import normalize_conversion_payload
+    from dsp_engine.currency import set_jpy_per_usd
+    set_jpy_per_usd(150.0)
+    n = normalize_conversion_payload({
+        "clickid": "tok-aj", "revenue": "50", "currency": "USD",
+        "event": "purchase", "transaction_id": "tx-9",
+    })
+    assert n["click_token"] == "tok-aj"
+    assert n["dedup_key"] == "tx-9"
+    assert abs(n["revenue_jpy"] - 7500.0) < 1e-6  # 50 USD × 150
+
+
+# ── Codex レビュー指摘の修正（クリック実数・クリック日集計・source明示） ──
+
+@pytest.mark.asyncio
+async def test_record_click_counts_every_click(db):
+    """同一 click_token を2回クリックしたら clicks は 2（実クリック数・捨てない）"""
+    from dsp_engine.attribution import get_campaign_roas, record_click
+    from dsp_engine.bidder import record_dsp_win
+
+    db.add(make_campaign(id="camp-2clk"))
+    await db.commit()
+    await record_dsp_win(
+        db, campaign_id="camp-2clk", click_token="dc-1", impression_id="i1",
+        cleared_price_usd=10.0, bid_price_usd=10.0,
+    )
+    await record_click(db, "dc-1")
+    await record_click(db, "dc-1")
+
+    roas = await get_campaign_roas(db, "camp-2clk")
+    assert roas["clicks"] == 2
+
+
+@pytest.mark.asyncio
+async def test_report_clicks_use_click_date_not_serve_date(db):
+    """配信日とクリック日が別日でも、クリックはクリック発生日に計上される"""
+    from datetime import date, datetime, timezone
+
+    from db_models import DspClickEventDB, DspSpendLogDB
+    from dsp_engine.reporting import run_report
+
+    db.add(make_campaign(id="camp-day"))
+    await db.commit()
+    # 配信は 5/20、クリックは 5/22（日跨ぎ）
+    db.add(DspSpendLogDB(
+        id="sd-1", campaign_id="camp-day", click_token="d-ct",
+        spend_jpy=100.0, cleared_price_jpy=100.0,
+        logged_at=datetime(2026, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
+    ))
+    db.add(DspClickEventDB(
+        id="ce-1", campaign_id="camp-day", click_token="d-ct",
+        clicked_at=datetime(2026, 5, 22, 9, 0, 0, tzinfo=timezone.utc),
+    ))
+    await db.commit()
+
+    rows = await run_report(
+        db, date_from=date(2026, 5, 20), date_to=date(2026, 5, 23), dimensions=["day"]
+    )
+    by_day = {r["day"]: r for r in rows}
+    assert by_day["2026-05-20"]["impressions"] == 1
+    assert by_day["2026-05-20"]["clicks"] == 0   # 配信日にはクリックを出さない
+    assert by_day["2026-05-22"]["clicks"] == 1   # クリック発生日に出す
+
+
+def test_normalize_explicit_source_is_honored():
+    """明示的な source パラメータは自動判定より優先される"""
+    from dsp_engine.attribution import normalize_conversion_payload
+    n = normalize_conversion_payload({
+        "dsp_ct": "t", "revenue_jpy": "100", "source": "s2s_adjust",
+    })
+    assert n["source"] == "s2s_adjust"
+
+
+def test_normalize_adjust_autodetect_by_adid():
+    """Adjust 固有キー(adid)があれば source=s2s_adjust に自動判定"""
+    from dsp_engine.attribution import normalize_conversion_payload
+    n = normalize_conversion_payload({
+        "clickid": "t", "revenue": "100", "adid": "adj-device-1",
+    })
+    assert n["source"] == "s2s_adjust"

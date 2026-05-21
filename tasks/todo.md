@@ -313,3 +313,34 @@ Phase 2 はその受信側インフラを実装（実エクスチェンジ本番
 - `mdm/dsp/rtb_client.py` の DSP_CONFIGS 有効化は dsp_engine スコープ外（既存SSPの別サブシステム）かつ実通信を伴うため対象外とした。
 - 回帰: 全体 173 passed（Phase 2 で +6）。既存6失敗は MDM 系の事前不具合で無関係。
 - 残課題: 実エクスチェンジとの提携・QPS審査（契約マター）、エクスチェンジ認証の強化（共有シークレット）、実FX APIレート自動取得、Phase 3 の pCVR 専用 ML。
+
+### Phase 2.5 — クリック計測 + 実MMP連携対応（2026-05-22）
+
+Phase 1+2 の「計測」が骨格止まりだったため、実運用の計測基盤に近づける補強。
+
+- [x] DspSpendLogDB に clicked / clicked_at 追加 + マイグレーション dspengine0002（冪等）
+- [x] クリックトラッカー `GET /dsp-engine/click`（記録 → 広告主LPへ302）
+- [x] 広告マークアップのリンクをクリックトラッカー経由に変更（bidder.render_adm）
+- [x] reporting / 広告主ダッシュボード に clicks・CTR を追加
+- [x] `/dsp-engine/conversion` を GET/POST 両対応 + AppsFlyer/Adjust パラメータ正規化 + USD→JPY換算（normalize_conversion_payload）
+- [x] MMP連携 設定・検証手順書 `tasks/dsp_engine_mmp_integration.md`
+- [x] テスト6件追加（計27件 green）+ スモークにクリック→CV(GET/AppsFlyer)フロー追加（20項目PASS）
+
+レビュー:
+- DB変更は dsp_spend_logs に2列追加のみ。マイグレーション dspengine0002 を populated DB コピーで検証。
+- アトリビューションは click_token を「広告内リンク → クリックトラッカー → LP(dsp_ct付与) → 購入ポストバック」で運ぶ方式。広告主の購入ポストバック経路は直接サーバー連携（推奨）と AppsFlyer/Adjust 経由の2パターンを手順書化。
+- ローカル実機（uvicorn + ssp_local.db）で確認: クリック302リダイレクト、レポート CTR 23%・ROAS 281% 表示を確認。
+- 回帰: 全体 179 passed（Phase 2.5 で +6）。既存6失敗は MDM 系の事前不具合で無関係。
+- 正直な到達点: 計測の「配線」は実MMP形式まで対応し自動テスト済み。ただし実 AppsFlyer/Adjust アカウントとの本番往復、計測ウィンドウ・ビュースルー、iOS SKAdNetwork は未対応（手順書 6章に明記）。
+- 別途修正: ローカルSQLiteで lifespan の Alembic がデッドロックする既存バグに対し、main.py へ `SKIP_LIFESPAN_ALEMBIC` env ガードを追加（本番Vercelでは未設定なので従来動作）。
+
+### Phase 2.5 — Codex レビュー指摘の反映（2026-05-22）
+
+外部レビュー（Codex）で計測の3点が指摘され、修正済み。
+
+- [x] Finding 1（クリックが「クリック済みimp数」で過少計上）: `dsp_spend_logs.clicked` 列を廃止し、クリックイベント専用テーブル `dsp_click_events` を新設。`record_click` は毎クリック1行記録 = 実クリック数。
+- [x] Finding 2（クリックが配信日 logged_at で集計され日跨ぎが落ちる）: レポートのクリックは `dsp_click_events.clicked_at` 基準で集計。run_report は消化/クリック/CVを各イベント日時で別集計しマージ。
+- [x] Finding 3（conversion の source 明示指定が無視される）: `normalize_conversion_payload` が明示 `source` パラメータを最優先（無ければ MMP 自動判定）。
+- [x] テストギャップ3件を追加（2回クリック=2件 / 配信日≠クリック日のレポート / source明示・Adjust判定）。
+- マイグレーション dspengine0002 は未コミット・本番未適用だったため、「列追加」から「`dsp_click_events` テーブル新設」に作り直し（dspengine0003 を積まずクリーン化）。
+- 検証: 全テスト 183 passed（計31 dsp_engineテスト green）、スモーク全PASS、ローカル実機でクリック302・日別レポート集計を確認。

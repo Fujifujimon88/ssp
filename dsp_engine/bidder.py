@@ -57,21 +57,32 @@ def _domain_of(url: str) -> str:
 
 
 def click_through_url(campaign, click_token: str) -> str:
-    """クリック先 URL に dsp_ct（click_token）を付与する。
+    """最終クリック先 URL（広告主 LP）に dsp_ct（click_token）を付与する。
 
-    広告主は LP 着地後の購入計測（AppsFlyer 等）でこの dsp_ct を
-    /dsp-engine/conversion へ送り返すことで ROAS アトリビューションが成立する。
+    クリックトラッカー /dsp-engine/click がクリック記録後にこの URL へ
+    リダイレクトする。広告主は LP 着地後の購入計測（AppsFlyer 等）でこの
+    dsp_ct を /dsp-engine/conversion へ送り返すことで ROAS が成立する。
     """
     base = campaign.creative_click_url or "https://advertiser.example.com/lp"
     sep = "&" if "?" in base else "?"
     return f"{base}{sep}dsp_ct={urllib.parse.quote(click_token, safe='')}"
 
 
+def click_tracker_url(click_token: str) -> str:
+    """広告マークアップのクリックリンク先（クリック計測トラッカー）。
+
+    /dsp-engine/click がクリックを記録してから広告主 LP へリダイレクトする。
+    """
+    base = settings.ssp_endpoint.rstrip("/")
+    return f"{base}/dsp-engine/click?ct={urllib.parse.quote(click_token, safe='')}"
+
+
 def render_adm(campaign, imp, click_token: str) -> str:
     """OpenRTB ad markup（クリック可能なバナー HTML）を生成する。"""
     w = (imp.banner.w if imp.banner else None) or campaign.creative_width or 300
     h = (imp.banner.h if imp.banner else None) or campaign.creative_height or 250
-    url = html.escape(click_through_url(campaign, click_token), quote=True)
+    # クリックは計測トラッカー経由（記録 → LP へリダイレクト）
+    url = html.escape(click_tracker_url(click_token), quote=True)
     title = html.escape(campaign.creative_title or "")
 
     if campaign.creative_image_url:

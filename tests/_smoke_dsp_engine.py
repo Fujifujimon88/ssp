@@ -84,38 +84,52 @@ async def main():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testclient") as c:
 
-        # 1. /v1/bid — dsp-engine が落札し ad markup に dsp_ct が埋まる
+        # 1. /v1/bid — dsp-engine が落札し ad markup にクリックトラッカーURLが埋まる
         r = await c.post("/v1/bid", json={
             "publisherId": "pub-smoke", "slotId": "slot-smoke", "sizes": [[300, 250]],
         })
         bids = r.json().get("bids", [])
         adm = bids[0]["ad"] if bids else ""
-        m = re.search(r"dsp_ct=([0-9a-f]+)", adm)
-        check("/v1/bid が落札を返す", r.status_code == 200 and bool(bids), f"cpm={bids[0]['cpm'] if bids else None}")
-        check("ad markup に click_token(dsp_ct)が埋まる", bool(m))
+        m = re.search(r"/dsp-engine/click\?ct=([0-9a-f]+)", adm)
+        check("/v1/bid が落札を返す", r.status_code == 200 and bool(bids),
+              f"cpm={bids[0]['cpm'] if bids else None}")
+        check("ad markup にクリックトラッカーURLが埋まる", bool(m))
         click_token = m.group(1) if m else None
 
-        # 2. /dsp-engine/conversion — click_token で購入CVをアトリビューション
+        # 2. クリック計測 — /dsp-engine/click が記録し広告主LPへ302
+        if click_token:
+            r = await c.get(f"/dsp-engine/click?ct={click_token}")
+            loc = r.headers.get("location", "")
+            check("クリック計測（302で広告主LPへ）",
+                  r.status_code == 302 and f"dsp_ct={click_token}" in loc)
+
+        # 3. /dsp-engine/conversion — click_token で購入CVをアトリビューション
         if click_token:
             r = await c.post("/dsp-engine/conversion", json={
-                "dsp_ct": click_token, "revenue_jpy": 12000, "event_type": "purchase",
-                "dedup_key": "smoke-evt-1",
+                "dsp_ct": click_token, "revenue_jpy": 12000, "dedup_key": "smoke-evt-1",
             })
-            body = r.json()
-            check("購入CVポストバック受信", r.status_code == 200 and body.get("created") is True)
+            check("購入CVポストバック受信(POST)",
+                  r.status_code == 200 and r.json().get("created") is True)
             # 冪等性: 同じ dedup_key は二重計上しない
             r2 = await c.post("/dsp-engine/conversion", json={
                 "dsp_ct": click_token, "revenue_jpy": 12000, "dedup_key": "smoke-evt-1",
             })
             check("購入CVの冪等性（重複排除）", r2.json().get("created") is False)
+            # AppsFlyer形式・GETでも受信できる
+            r3 = await c.get(f"/dsp-engine/conversion?click_id={click_token}"
+                             f"&event_revenue=5000&event_name=af_purchase&event_id=smoke-af-1")
+            check("購入CV受信(GET / AppsFlyer形式)",
+                  r3.status_code == 200 and r3.json().get("created") is True)
 
-        # 3. レポートAPI — 消化と売上が集計に反映される
+        # 4. レポートAPI — 消化・売上・クリックが集計に反映される
         r = await c.get("/dsp-engine/admin/report/api?dimensions=campaign")
         rows = r.json().get("rows", [])
         row = rows[0] if rows else {}
         check("レポートAPI が集計を返す", r.status_code == 200 and bool(rows),
-              f"spend={row.get('spend_jpy')} revenue={row.get('revenue_jpy')} roas={row.get('roas')}")
-        check("レポートに売上が反映", row.get("revenue_jpy", 0) == 12000)
+              f"spend={row.get('spend_jpy')} revenue={row.get('revenue_jpy')} "
+              f"clicks={row.get('clicks')} ctr={row.get('ctr')}")
+        check("レポートに売上が反映（POST+GET合算）", row.get("revenue_jpy", 0) == 17000)
+        check("レポートにクリック計測が反映", row.get("clicks", 0) >= 1)
 
         # 4. 管理画面 HTML（3画面）が表示される
         for path, label in [
@@ -134,8 +148,8 @@ async def main():
         check("広告主ダッシュボード表示", r.status_code == 200 and "ROAS" in r.text)
         r = await c.get("/dsp-engine/advertiser/api/stats")
         stats = r.json()
-        check("広告主KPI(JSON)", r.status_code == 200 and stats.get("revenue_jpy") == 12000,
-              f"roas={stats.get('roas')}% spend={stats.get('spend_jpy')}")
+        check("広告主KPI(JSON)", r.status_code == 200 and stats.get("revenue_jpy") == 17000,
+              f"roas={stats.get('roas')}% ctr={stats.get('ctr')}% spend={stats.get('spend_jpy')}")
 
         # ── Phase 2: 外部エクスチェンジ受信側入札 ──
         ortb = {"id": "ortb-1",

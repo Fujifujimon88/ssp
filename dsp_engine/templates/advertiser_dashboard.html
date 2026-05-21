@@ -65,6 +65,10 @@
       <div class="label">インプレッション</div>
       <div class="value" id="impressions">{{ "{:,}".format(roas.impressions) }}</div>
     </div>
+    <div class="card">
+      <div class="label">クリック / CTR</div>
+      <div class="value" id="ctr">{{ "{:,}".format(roas.clicks) }} / {{ "%.2f"|format(roas.ctr) }}%</div>
+    </div>
   </div>
 
   <div class="info">
@@ -90,6 +94,7 @@
       document.getElementById('conversions').textContent = d.conversions;
       document.getElementById('cpa').textContent = yen(d.cpa);
       document.getElementById('impressions').textContent = d.impressions.toLocaleString();
+      document.getElementById('ctr').textContent = d.clicks.toLocaleString() + ' / ' + d.ctr.toFixed(2) + '%';
     }catch(e){}
   }
   setInterval(refresh, 30000);

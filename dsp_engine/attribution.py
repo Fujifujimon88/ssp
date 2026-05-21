@@ -13,8 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_models import DspConversionEventDB, DspSpendLogDB
+from db_models import DspClickEventDB, DspConversionEventDB, DspSpendLogDB
 from dsp_engine.campaign_manager import get_campaign_stats
+from dsp_engine.currency import usd_to_jpy
 from utils import utcnow
 
 logger = logging.getLogger(__name__)
@@ -101,17 +102,113 @@ async def get_campaign_roas(db: AsyncSession, campaign_id: str) -> dict:
     """キャンペーンの ROAS サマリーを返す。
 
     Returns:
-        {impressions, spend_jpy, conversions, revenue_jpy, roas(%), cpa(円)}
-        ROAS(%) = 売上 / 消化 × 100、CPA = 消化 / CV数。
+        {impressions, clicks, spend_jpy, conversions, revenue_jpy,
+         roas(%), cpa(円), ctr(%)}
+        ROAS(%) = 売上 / 消化 × 100、CPA = 消化 / CV数、CTR(%) = クリック / imp × 100。
     """
     stats = await get_campaign_stats(db, campaign_id)
     spend = stats["spend_jpy"]
     revenue = stats["revenue_jpy"]
     conversions = stats["conversions"]
+    impressions = stats["impressions"]
+    clicks = stats["clicks"]
     roas = (revenue / spend * 100.0) if spend > 0 else 0.0
     cpa = (spend / conversions) if conversions > 0 else 0.0
+    ctr = (clicks / impressions * 100.0) if impressions > 0 else 0.0
     return {
         **stats,
         "roas": round(roas, 2),
         "cpa": round(cpa, 2),
+        "ctr": round(ctr, 2),
+    }
+
+
+async def record_click(db: AsyncSession, click_token: str) -> Optional[DspSpendLogDB]:
+    """クリックトラッカー経由のクリックをクリックイベントとして記録する。
+
+    click_token に対応する落札ログ（DspSpendLogDB）を引き、DspClickEventDB を
+    1件追加する。同一トークンの再クリックも毎回 1 件記録する（= 実クリック数）。
+    対応する落札ログが無い場合（未知トークン）は None を返し、記録しない。
+
+    Returns:
+        対応する DspSpendLogDB（クリックエンドポイントが LP 解決に使う）/ None。
+    """
+    log = await db.scalar(
+        select(DspSpendLogDB).where(DspSpendLogDB.click_token == click_token)
+    )
+    if log is None:
+        return None
+    db.add(DspClickEventDB(
+        campaign_id=log.campaign_id,
+        click_token=click_token,
+        impression_id=log.impression_id,
+        platform=log.platform,
+        source=log.source,
+        clicked_at=utcnow(),
+    ))
+    await db.commit()
+    return log
+
+
+# ── 実MMP（AppsFlyer / Adjust）ポストバック形式の正規化 ─────────
+# 各 MMP は独自のパラメータ名を使う。広告主が当社の標準名にマッピングするのが基本だが、
+# 設定ミスを減らすため代表的な別名も受け付ける。
+
+_CLICK_TOKEN_KEYS = ["dsp_ct", "click_token", "click_id", "clickid", "af_click_id"]
+_REVENUE_KEYS = ["revenue_jpy", "revenue", "event_revenue", "af_revenue", "eventRevenue"]
+_DEDUP_KEYS = ["dedup_key", "event_id", "appsflyer_event_id", "af_event_id", "transaction_id"]
+_EVENT_KEYS = ["event_type", "event_name", "af_event_name", "event"]
+_CURRENCY_KEYS = ["revenue_currency", "event_revenue_currency", "currency", "af_currency"]
+_CAMPAIGN_KEYS = ["campaign_id", "cid"]
+_PLATFORM_KEYS = ["platform", "os", "device_os", "platform_name"]
+_SOURCE_KEYS = ["source", "mmp", "partner"]
+
+# MMP 自動判定用のシグネチャキー
+_APPSFLYER_KEYS = {"event_revenue", "af_event_name", "appsflyer_id", "af_click_id"}
+_ADJUST_KEYS = {"adid", "gps_adid", "activity_kind", "adjust_id"}
+
+
+def _first(params: dict, keys: list[str]):
+    for key in keys:
+        value = params.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def normalize_conversion_payload(params: dict) -> dict:
+    """MMP のポストバックパラメータを当社の標準形に正規化する。
+
+    AppsFlyer / Adjust / 当社標準名のいずれの形式でも受け付け、
+    通貨が USD の場合は JPY に換算する。MMP 種別を source に自動判定する。
+    """
+    raw_revenue = _first(params, _REVENUE_KEYS)
+    try:
+        revenue = float(raw_revenue) if raw_revenue is not None else 0.0
+    except (TypeError, ValueError):
+        revenue = 0.0
+
+    currency = str(_first(params, _CURRENCY_KEYS) or "JPY").upper()
+    revenue_jpy = usd_to_jpy(revenue) if currency == "USD" else revenue
+
+    # source は明示指定を最優先。無ければ MMP 固有キーから自動判定する。
+    explicit_source = _first(params, _SOURCE_KEYS)
+    keys = set(params.keys())
+    if explicit_source:
+        source = str(explicit_source)
+    elif keys & _APPSFLYER_KEYS:
+        source = "s2s_appsflyer"
+    elif keys & _ADJUST_KEYS:
+        source = "s2s_adjust"
+    else:
+        source = "direct"
+
+    return {
+        "click_token": _first(params, _CLICK_TOKEN_KEYS),
+        "campaign_id": _first(params, _CAMPAIGN_KEYS),
+        "revenue_jpy": revenue_jpy,
+        "dedup_key": _first(params, _DEDUP_KEYS),
+        "event_type": _first(params, _EVENT_KEYS) or "purchase",
+        "platform": str(_first(params, _PLATFORM_KEYS) or "unknown").lower(),
+        "source": source,
     }

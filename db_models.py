@@ -872,6 +872,7 @@ class DspSpendLogDB(Base):
     logged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+    # クリックは別テーブル DspClickEventDB に記録する（実クリック数・クリック日基準集計のため）
 
 
 class DspConversionEventDB(Base):
@@ -900,5 +901,28 @@ class DspConversionEventDB(Base):
     raw_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     attributed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class DspClickEventDB(Base):
+    """
+    DSP エンジンのクリックイベント（クリック計測 / CTR の分子）。
+
+    クリックトラッカー /dsp-engine/click が呼ばれるたびに1行を記録する。
+    同一 click_token（= 同一インプレッション）でも毎回記録するため、
+    clicks は「実クリック数」になる。日別レポートは clicked_at 基準で集計する。
+    """
+    __tablename__ = "dsp_click_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dsp_campaigns.id"), index=True
+    )
+    click_token: Mapped[str] = mapped_column(String(64), index=True)  # unique でない（複数クリック可）
+    impression_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(10), default="unknown")
+    source: Mapped[str] = mapped_column(String(40), default="ssp-node")
+    clicked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )

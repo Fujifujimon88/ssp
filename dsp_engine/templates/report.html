@@ -97,7 +97,8 @@
   function render(data){
     const dims = data.dimensions;
     const head = document.getElementById('head');
-    const metrics = [['impressions','imp'],['spend_jpy','消化'],['conversions','CV'],
+    const metrics = [['impressions','imp'],['clicks','クリック'],['ctr','CTR'],
+                     ['spend_jpy','消化'],['conversions','CV'],
                      ['revenue_jpy','売上'],['roas','ROAS'],['cpa','CPA']];
     head.innerHTML = dims.map(d => '<th>' + (DIM_LABEL[d]||d) + '</th>').join('')
       + metrics.map(m => '<th class="num">' + m[1] + '</th>').join('');
@@ -114,6 +115,8 @@
       }).join('');
       return '<tr>' + dimCells
         + '<td class="num">' + row.impressions.toLocaleString() + '</td>'
+        + '<td class="num">' + (row.clicks || 0).toLocaleString() + '</td>'
+        + '<td class="num">' + (row.ctr || 0).toFixed(2) + '%</td>'
         + '<td class="num">' + fmtYen(row.spend_jpy) + '</td>'
         + '<td class="num">' + row.conversions + '</td>'
         + '<td class="num">' + fmtYen(row.revenue_jpy) + '</td>'

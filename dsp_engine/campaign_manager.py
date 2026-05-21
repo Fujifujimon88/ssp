@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_models import DspCampaignDB, DspConversionEventDB, DspSpendLogDB
+from db_models import DspCampaignDB, DspClickEventDB, DspConversionEventDB, DspSpendLogDB
 
 
 async def list_active_campaigns(db: AsyncSession) -> list[DspCampaignDB]:
@@ -59,8 +59,9 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: str) -> dict:
     """キャンペーンの実績集計を返す。
 
     Returns:
-        {"impressions": int, "spend_jpy": float, "conversions": int, "revenue_jpy": float}
-        impressions は落札ログ件数（= 配信インプレッション数）。
+        {"impressions": int, "clicks": int, "spend_jpy": float,
+         "conversions": int, "revenue_jpy": float}
+        impressions は落札ログ件数（= 配信インプレッション数）、clicks はクリック計測数。
     """
     spend_row = (
         await db.execute(
@@ -70,6 +71,11 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: str) -> dict:
             ).where(DspSpendLogDB.campaign_id == campaign_id)
         )
     ).one()
+    clicks = await db.scalar(
+        select(func.count(DspClickEventDB.id)).where(
+            DspClickEventDB.campaign_id == campaign_id
+        )
+    )
     conv_row = (
         await db.execute(
             select(
@@ -81,6 +87,7 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: str) -> dict:
     return {
         "impressions": int(spend_row[0] or 0),
         "spend_jpy": float(spend_row[1] or 0.0),
+        "clicks": int(clicks or 0),
         "conversions": int(conv_row[0] or 0),
         "revenue_jpy": float(conv_row[1] or 0.0),
     }

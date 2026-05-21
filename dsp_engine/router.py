@@ -33,8 +33,10 @@ from auth import create_portal_token, decode_portal_token, hash_password, verify
 from config import settings
 from database import get_db
 from dsp_engine import campaign_manager, exchange, reporting, supply
-from dsp_engine.attribution import get_campaign_roas, record_conversion
-from dsp_engine.bidder import handle_bid_request, record_dsp_win
+from dsp_engine.attribution import (
+    get_campaign_roas, normalize_conversion_payload, record_click, record_conversion,
+)
+from dsp_engine.bidder import click_through_url, handle_bid_request, record_dsp_win
 
 logger = logging.getLogger(__name__)
 
@@ -71,46 +73,62 @@ async def get_advertiser_campaign_id(request: Request) -> str:
 
 # ── 購入CV受信（ROAS の分子） ───────────────────────────────────
 
-@router.post("/conversion", summary="購入CVポストバック受信")
+@router.api_route("/conversion", methods=["GET", "POST"], summary="購入CVポストバック受信")
 async def receive_conversion(request: Request, db: AsyncSession = Depends(get_db)):
-    """広告主/AppsFlyer/Adjust からの購入CVポストバックを受け取り記録する。
+    """広告主 / AppsFlyer / Adjust からの購入CVポストバックを受け取り記録する。
 
-    Body(JSON): {click_token|dsp_ct, campaign_id?, revenue_jpy, event_type?,
-                 dedup_key|appsflyer_event_id?, source?, platform?, secret?}
+    GET（クエリ文字列）・POST（JSON / フォーム）のどちらでも受信し、各 MMP の
+    パラメータ名は normalize_conversion_payload で正規化する。
+    設定手順は tasks/dsp_engine_mmp_integration.md を参照。
     """
-    try:
-        body = await request.json()
-    except Exception:
-        body = dict((await request.form()))
+    params: dict = dict(request.query_params)
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                params.update(body)
+        except Exception:
+            try:
+                params.update(dict(await request.form()))
+            except Exception:
+                pass
 
     # 任意のシークレット検証（asp_postback_secret 設定時のみ）
     if settings.asp_postback_secret:
-        if str(body.get("secret", "")) != settings.asp_postback_secret:
+        if str(params.get("secret", "")) != settings.asp_postback_secret:
             raise HTTPException(status_code=401, detail="invalid secret")
 
-    click_token = body.get("click_token") or body.get("dsp_ct")
-    dedup_key = body.get("dedup_key") or body.get("appsflyer_event_id")
-    try:
-        revenue_jpy = float(body.get("revenue_jpy", 0) or 0)
-    except (TypeError, ValueError):
-        revenue_jpy = 0.0
-
+    norm = normalize_conversion_payload(params)
     try:
         event, created = await record_conversion(
             db,
-            campaign_id=body.get("campaign_id"),
-            click_token=click_token,
-            event_type=body.get("event_type", "purchase"),
-            revenue_jpy=revenue_jpy,
-            dedup_key=dedup_key,
-            source=body.get("source", "direct"),
-            platform=body.get("platform", "unknown"),
-            raw_payload=str(body)[:2000],
+            campaign_id=norm["campaign_id"],
+            click_token=norm["click_token"],
+            event_type=norm["event_type"],
+            revenue_jpy=norm["revenue_jpy"],
+            dedup_key=norm["dedup_key"],
+            source=norm["source"],
+            platform=norm["platform"],
+            raw_payload=str(params)[:2000],
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     return {"status": "ok", "created": created, "conversion_id": event.id}
+
+
+@router.get("/click", summary="クリック計測トラッカー（記録→LPへリダイレクト）")
+async def click_redirect(
+    ct: str = Query(..., description="click_token"),
+    db: AsyncSession = Depends(get_db),
+):
+    """広告マークアップのクリックリンク先。クリックを記録し広告主 LP へ 302 する。"""
+    log = await record_click(db, ct)
+    if log is None:
+        return RedirectResponse(url="/", status_code=302)  # 未知トークンは安全側に
+    campaign = await campaign_manager.get_campaign(db, log.campaign_id)
+    target = click_through_url(campaign, ct) if campaign else "/"
+    return RedirectResponse(url=target, status_code=302)
 
 
 # ── 広告主ログイン ──────────────────────────────────────────────
