@@ -4,8 +4,8 @@
 """
 import pytest
 
-from auction.engine import AuctionEngine
-from auction.openrtb import BidRequest, Banner, Impression
+from auction.engine import AuctionEngine, BidResult, _compute_clearing_price
+from auction.openrtb import BidRequest, Banner, Bid, Impression
 from dsp.mock_dsp import MockDSP
 
 
@@ -175,3 +175,52 @@ async def test_highest_bidder_wins():
 
     assert result.winner is not None
     assert result.winner.dsp_id == "high"
+
+
+# ── first-price 対応（優先タスク #2）─────────────────────────────
+
+def _bid_result(dsp_id: str, price: float) -> BidResult:
+    """落札価格計算テスト用の BidResult ヘルパー。"""
+    return BidResult(
+        dsp_id=dsp_id,
+        bid=Bid(impid="imp-001", price=price),
+        response_time_ms=1.0,
+    )
+
+
+def test_compute_clearing_price_first_price_multiple_bids():
+    """at=1: 複数入札でも落札者の入札額がそのまま落札価格になる"""
+    bids = [_bid_result("a", 5.0), _bid_result("b", 3.0), _bid_result("c", 1.0)]
+    assert _compute_clearing_price(bids, bidfloor=0.5, at=1) == 5.0
+
+
+def test_compute_clearing_price_first_price_single_bid():
+    """at=1: 単独入札でも 0.85 を掛けず入札額そのままになる"""
+    bids = [_bid_result("a", 4.0)]
+    assert _compute_clearing_price(bids, bidfloor=0.5, at=1) == 4.0
+
+
+def test_compute_clearing_price_second_price_uses_second_bid():
+    """at=2: 2位の入札額が落札価格になる（後方互換）"""
+    bids = [_bid_result("a", 5.0), _bid_result("b", 3.0)]
+    assert _compute_clearing_price(bids, bidfloor=0.5, at=2) == 3.0
+
+
+def test_compute_clearing_price_second_price_single_bid_fallback():
+    """at=2: 単独入札は max(bidfloor, 1位×0.85)（後方互換）"""
+    bids = [_bid_result("a", 4.0)]
+    assert _compute_clearing_price(bids, bidfloor=0.5, at=2) == 4.0 * 0.85
+    assert _compute_clearing_price(bids, bidfloor=10.0, at=2) == 10.0
+
+
+@pytest.mark.asyncio
+async def test_first_price_auction_end_to_end(engine):
+    """at=1 の BidRequest では clearing_price == winner.bid.price になる"""
+    req = BidRequest(
+        imp=[Impression(id="imp-001", banner=Banner(w=300, h=250), bidfloor=0.1)],
+        at=1,
+    )
+    results = await engine.run_auction(req)
+    result = results[0]
+    assert result.winner is not None
+    assert result.clearing_price == result.winner.bid.price

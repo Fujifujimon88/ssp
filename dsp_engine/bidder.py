@@ -26,6 +26,7 @@ from dsp_engine.campaign_manager import get_all_campaign_stats, list_active_camp
 from dsp_engine.currency import get_jpy_per_usd
 from dsp_engine.pacing import BudgetPacer
 from dsp_engine.scoring import compute_bid_cpm_jpy
+from dsp_engine.shading import compute_shaded_bid, fetch_past_cleared_prices
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,18 @@ async def handle_bid_request(
     bid_price_usd = best_bid_cpm_jpy / get_jpy_per_usd()
     if bid_price_usd < imp.bidfloor:
         return None  # フロアプライス（USD CPM）未達
+
+    # first-price(at=1) は入札額がそのまま決済額になるため bid shading で過払いを防ぐ。
+    # second-price(at=2) は 2位価格決済のため shading 不要（フルプライス入札）。
+    if bid_request.at == 1:
+        rate = get_jpy_per_usd()
+        past_cleared_jpy = await fetch_past_cleared_prices(db, best_campaign.id)
+        shaded_cpm_jpy = compute_shaded_bid(
+            best_bid_cpm_jpy, past_cleared_jpy, imp.bidfloor * rate
+        )
+        bid_price_usd = shaded_cpm_jpy / rate
+        if bid_price_usd < imp.bidfloor:
+            return None  # shading 後にフロア未達ならノービッド
 
     click_token = uuid.uuid4().hex
     bid = Bid(

@@ -627,3 +627,63 @@ async def test_list_active_campaigns_excludes_out_of_period(db):
     assert "cd-nodate" in ids
     assert "cd-expired" not in ids
     assert "cd-future" not in ids
+
+
+# ── first-price bid shading（優先タスク #2）─────────────────────
+
+@pytest.mark.asyncio
+async def test_handle_bid_request_at1_applies_shading(db):
+    """at=1 (first-price): 過去落札の P50 で bid shading され入札額が下がる"""
+    from auction.openrtb import Banner, BidRequest, Impression
+    from dsp_engine.bidder import handle_bid_request
+    from dsp_engine.currency import get_jpy_per_usd
+
+    db.add(make_campaign(
+        id="camp-shade", base_ctr=0.01, target_cvr=0.02, avg_purchase_value_jpy=3000.0,
+        margin_rate=0.20, bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
+    ))
+    # 過去落札 12 件（cleared=120円 < raw 480円）→ shading が効く
+    for i in range(12):
+        db.add(DspSpendLogDB(
+            campaign_id="camp-shade", click_token=f"sh-{i}", cleared_price_jpy=120.0,
+        ))
+    await db.commit()
+
+    imp = Impression(id="imp-1", banner=Banner(w=300, h=250), bidfloor=0.0)
+    resp_first = await handle_bid_request(BidRequest(imp=[imp], at=1), db)
+    resp_second = await handle_bid_request(BidRequest(imp=[imp], at=2), db)
+
+    assert resp_first is not None and resp_second is not None
+    rate = get_jpy_per_usd()
+    price_first = resp_first.seatbid[0].bid[0].price
+    price_second = resp_second.seatbid[0].bid[0].price
+    # raw cpm = 0.01*0.02*3000 * (1-0.20) * 1000 = 480 円
+    assert abs(price_first - 120.0 / rate) < 1e-6   # shaded（過去落札 P50 = 120円）
+    assert abs(price_second - 480.0 / rate) < 1e-6  # second-price は raw フルプライス
+    assert price_first < price_second
+
+
+@pytest.mark.asyncio
+async def test_handle_bid_request_at2_no_shading(db):
+    """at=2 (second-price): 過去落札が多くても shading されずフルプライス入札"""
+    from auction.openrtb import Banner, BidRequest, Impression
+    from dsp_engine.bidder import handle_bid_request
+    from dsp_engine.currency import get_jpy_per_usd
+
+    db.add(make_campaign(
+        id="camp-ns", base_ctr=0.01, target_cvr=0.02, avg_purchase_value_jpy=3000.0,
+        margin_rate=0.20, bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
+    ))
+    for i in range(12):
+        db.add(DspSpendLogDB(
+            campaign_id="camp-ns", click_token=f"ns-{i}", cleared_price_jpy=120.0,
+        ))
+    await db.commit()
+
+    imp = Impression(id="imp-1", banner=Banner(w=300, h=250), bidfloor=0.0)
+    resp = await handle_bid_request(BidRequest(imp=[imp], at=2), db)
+
+    assert resp is not None
+    rate = get_jpy_per_usd()
+    # at=2 は shading 非適用 → raw cpm 480円 / rate
+    assert abs(resp.seatbid[0].bid[0].price - 480.0 / rate) < 1e-6

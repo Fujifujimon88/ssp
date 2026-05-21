@@ -6,8 +6,8 @@
 ## 0. サマリー（3行）
 
 - DSP MVP の骨格は実装済み。dsp-engine が自社 SSP オークションに参加し、キャンペーン管理・入札・クリック計測・CV ポストバック・ROAS/CPA/CTR 集計・外部 SSP OpenRTB 受信口まで稼働。
-- DSP 関連テストは通過済み（`pytest tests/test_dsp_engine.py` → 47 passed in 4.45s、2026-05-22 時点）。
-- 次フェーズは「OpenRTB 2.6 相当への拡張」「first-price 対応」「サプライチェーン検証」が最優先。優先タスク表（セクション3）参照。
+- DSP 関連テストは通過済み（`test_auction.py` 14 + `test_shading.py` 7 + `test_dsp_engine.py` 40 + `test_openrtb_26.py` 13、2026-05-22 時点。全体 217 passed）。
+- #1・#2 は完了。次フェーズは #3「サプライチェーン検証」が最優先。優先タスク表（セクション3）参照。
 
 ## 1. 現状（実装済み・稼働中）
 
@@ -43,8 +43,8 @@
 
 | # | タスク | 優先度 | 状態 | 出典 | 関連ファイル | 備考 |
 |---|---|---|---|---|---|---|
-| 1 | OpenRTB 2.6 相当へ拡張 | 高 | 未着手 | Fuji | `auction/openrtb.py`, `dsp_engine/bidder.py` | app / schain / gpp / eids / burl・lurl / PMP・deal / CTV・video |
-| 2 | first-price auction 対応 | 高 | 未着手 | Fuji | `dsp_engine/bidder.py`, `dsp_engine/scoring.py` | bid shading・floor 最適化を含む |
+| 1 | OpenRTB 2.6 相当へ拡張 | 高 | 完了 | Fuji | `auction/openrtb.py`, `tests/test_openrtb_26.py` | app / schain / gpp / eids / burl・lurl / PMP・deal / video 詳細 / Device 拡張。スキーマ拡張済み（2026-05-22）。検証・活用ロジックは #3/#4/#5 |
+| 2 | first-price auction 対応 + bid shading | 高 | 完了 | Fuji | `auction/engine.py`, `dsp_engine/shading.py`, `dsp_engine/bidder.py` | `BidRequest.at` で first/second 決済切替 + P50 分位点 bid shading。完了（2026-05-22）。動的フロア最適化は #11 へ分離 |
 | 3 | schain / ads.txt / app-ads.txt / sellers.json 検証 | 高 | 未着手 | Fuji + handoff #14 | `dsp_engine/exchange.py`, `dsp_engine/supply.py` | 外部エクスチェンジ接続時の SupplyChain 検証 |
 | 4 | 入札ログ完全化 + 予算 TOCTOU 対策 | 高 | 未着手 | Fuji + handoff #4・#8 | `dsp_engine/bidder.py`, `dsp_engine/router.py`, `dsp_engine/pacing.py` | no-bid 理由コード `nbr`（フロア未達=300 等）。`can_bid`→`record_spend` を Redis Lua で原子化 |
 | 5 | pCTR / pCVR / value / win-rate のベースライン ML | 中 | 未着手 | Fuji + handoff #7・#13 | `dsp_engine/scoring.py`, `mdm/ml/two_tower.py` | device 特徴量の入札反映、WARM_THRESHOLD(50件固定) の設定化を含む |
@@ -53,6 +53,7 @@
 | 8 | fraud / IVT / brand safety 監視 | 中 | 未着手 | Fuji + handoff #9 | `dsp_engine/attribution.py` | クリック連打レート制限（Redis カウンタ）を含む |
 | 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応 | 中 | 未着手 | Fuji + handoff #10・#17 | `dsp_engine/router.py`, `dsp_engine/attribution.py` | raw_payload の PII サニタイズ、アトリビューション窓（計測ウィンドウ）を含む |
 | 10 | データ基盤・運用堅牢化 | 中〜低 | 未着手 | handoff #11・#12・#15 | `db_models.py`, `dsp_engine/router.py`, `dsp_engine/exchange.py` | 複合インデックス追加、管理画面 N+1 解消、QPS カウンタの Redis 化（マルチプロセス対応） |
+| 11 | 動的フロア最適化 | 中 | 未着手 | #2 から分離 | `main.py`, `auction/engine.py`, （新テーブル） | 落札率・bid density・過去 clearing_price の分位点ベースで動的にフロアを調整。floor_price_history テーブル + 更新バッチ。#2 のスコープから分離 |
 
 ビジネス側（コード外）: 実広告主 1〜2 社のオンボーディング / 外部エクスチェンジの実提携・QPS 審査 / 本番初回 DSP キャンペーン登録（未登録のため本番は現状 inert）。
 
@@ -67,3 +68,5 @@
 | 日付 | 内容 |
 |---|---|
 | 2026-05-22 | 進捗管理表を新規作成。現状・重要な不足7点・優先タスク10項目を整理。 |
+| 2026-05-22 | #1 OpenRTB 2.6 スキーマ拡張を完了。`auction/openrtb.py` を 2.6 相当へ拡張（App/Source/Regs/Pmp/Deal/eids/burl・lurl/Video 詳細/Device 拡張）。`tests/test_openrtb_26.py` 13件 PASS、既存 38件非破壊。 |
+| 2026-05-22 | #2 first-price auction 対応 + bid shading を完了。`auction/engine.py` を `BidRequest.at` で first/second 決済切替、`dsp_engine/shading.py` 新規（P50 分位点 bid shading）、`bidder.py` 統合。テスト 14件追加（auction 5 / shading 7 / dsp_engine 2）全 PASS、既存非破壊。動的フロア最適化は #11 へ分離。 |

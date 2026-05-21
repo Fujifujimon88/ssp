@@ -1,6 +1,6 @@
 """
 SSPオークションエンジン
-- Second-price auction (Vickrey auction)
+- First/Second-price auction（BidRequest.at で切替: 1=first / 2=second）
 - asyncio.wait による並列DSP入札（タイムアウト安全）
 - 80ms タイムアウト強制
 """
@@ -32,6 +32,20 @@ class AuctionResult:
     clearing_price: float
     all_bids: list[BidResult]
     duration_ms: float
+
+
+def _compute_clearing_price(valid_bids: list[BidResult], bidfloor: float, at: int) -> float:
+    """落札価格を決定する。valid_bids は入札額の降順にソート済みであること。
+
+    at=1 (first-price): 落札者の入札額そのもの（単独/複数を問わない）。
+    at=2 (second-price / Vickrey): 2位入札額。単独入札時は max(bidfloor, 1位×0.85)。
+    """
+    winner_price = valid_bids[0].bid.price
+    if at == 1:
+        return winner_price
+    if len(valid_bids) >= 2:
+        return valid_bids[1].bid.price
+    return max(bidfloor, winner_price * 0.85)
 
 
 class AuctionEngine:
@@ -114,10 +128,7 @@ class AuctionEngine:
         valid_bids.sort(key=lambda x: x.bid.price, reverse=True)
         winner = valid_bids[0]
 
-        if len(valid_bids) >= 2:
-            clearing_price = valid_bids[1].bid.price
-        else:
-            clearing_price = max(imp.bidfloor, winner.bid.price * 0.85)
+        clearing_price = _compute_clearing_price(valid_bids, imp.bidfloor, bid_request.at)
 
         logger.info(
             f"Auction done | imp={imp.id} | winner={winner.dsp_id} "
