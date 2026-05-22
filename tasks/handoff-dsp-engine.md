@@ -133,14 +133,22 @@ DATABASE_URL="sqlite+aiosqlite:///./ssp_local.db" APP_ENV=development \
 
 ## 6. 次やること（残タスク・優先順）
 
-完了: #1〜#7（#1〜#5 は本番反映済み / #6・#7 はコミット済み・未デプロイ）。
+**完了済み（#1〜#7・すべて本番デプロイ済み 2026-05-22）**: OpenRTB 2.6 拡張 / first-price +
+bid shading / サプライチェーン検証 / 入札ログ + TOCTOU 対策 / ベースライン ML /
+多次元レポート / A/B テスト・holdout 基盤。
 
-| # | やること | 優先度 | 関連ファイル |
-|---|---|---|---|
-| 8 | fraud / IVT / brand safety 監視（クリック連打レート制限を含む）| **中（次着手）** | `dsp_engine/attribution.py` |
-| 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応（PII サニタイズ・アトリビューション窓）| 中 | `router.py`, `attribution.py` |
-| 10 | データ基盤・運用堅牢化（複合インデックス・管理画面 N+1 解消・QPS カウンタ Redis 化）| 中〜低 | `db_models.py`, `router.py`, `exchange.py` |
-| 11 | 動的フロア最適化（落札率・bid density ベース。#2 から分離）| 中 | `main.py`, `auction/engine.py`, 新テーブル |
+**残タスク（優先順）**:
+
+| # | やること | 優先度 | 状態 | 関連ファイル |
+|---|---|---|---|---|
+| 8 | fraud / IVT / brand safety 監視（クリック連打レート制限 / IVT 入札フィルタ / 異常 CV ガード / brand safety）| **中（次着手）** | **計画済み・未着手** | `dsp_engine/attribution.py`, `bidder.py`, 新規 `fraud.py` |
+| 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応（PII サニタイズ・アトリビューション窓）| 中 | 未着手 | `router.py`, `attribution.py` |
+| 10 | データ基盤・運用堅牢化（複合インデックス・管理画面 N+1 解消・QPS カウンタ Redis 化）| 中〜低 | 未着手 | `db_models.py`, `router.py`, `exchange.py` |
+| 11 | 動的フロア最適化（落札率・bid density ベース。#2 から分離）| 中 | 未着手 | `main.py`, `auction/engine.py`, 新テーブル |
+
+**次セッションの着手対象 = #8**。スコープ・設計・Red テスト一覧・ステップは
+`tasks/plan-dsp-engine-8.md` に確定済み（Fuji 承認: フルスコープ・IVT/brand safety は
+no-bid ブロック）。次セッションは plan-dsp-engine-8.md の「ステップ」1 から着手すればよい。
 
 **ビジネス側（コード外）**: 実広告主 1〜2 社のオンボーディング / 外部エクスチェンジの実提携・
 QPS 審査 / 本番初回 DSP キャンペーン登録（未登録のため本番は現状 inert）。

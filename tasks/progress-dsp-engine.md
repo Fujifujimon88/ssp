@@ -50,7 +50,7 @@
 | 5 | pCTR / pCVR / value / win-rate のベースライン ML | 中 | 完了 | Fuji + handoff #7・#13 | `dsp_engine/scoring.py`, `dsp_engine/segments.py` | pCTR×pCVR×value を経験ベイズ shrinkage 推定（cliff 廃止）。WARM_THRESHOLD を config 化。device(platform) セグメント乗数を定期バッチ事前計算。win-rate は可視化のみ。完了（2026-05-22）|
 | 6 | creative / publisher / app / placement 別レポート | 中 | 完了 | Fuji | `dsp_engine/reporting.py` | geo・device・deal_id 軸も追加。完了（2026-05-22、別セッション）|
 | 7 | A/B テスト・holdout 基盤 | 中 | 完了 | Fuji + handoff #16 | `db_models.py`, `dsp_engine/bidder.py`, `reporting.py`, `router.py` | DspCreativeDB で 1:N 化 + weight 振り分け / DspAbExperimentDB / holdout / `bid.crid` 是正。完了（2026-05-22）|
-| 8 | fraud / IVT / brand safety 監視 | 中 | 未着手 | Fuji + handoff #9 | `dsp_engine/attribution.py` | クリック連打レート制限（Redis カウンタ）を含む |
+| 8 | fraud / IVT / brand safety 監視 | 中 | 計画済み（次着手）| Fuji + handoff #9 | `dsp_engine/attribution.py`, `bidder.py`, 新規 `fraud.py` | スコープ・設計確定 → `tasks/plan-dsp-engine-8.md`。A クリック連打レート制限 / B IVT 入札フィルタ / C 異常 CV ガード / D brand safety。IVT/brand safety は no-bid ブロック |
 | 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応 | 中 | 未着手 | Fuji + handoff #10・#17 | `dsp_engine/router.py`, `dsp_engine/attribution.py` | raw_payload の PII サニタイズ、アトリビューション窓（計測ウィンドウ）を含む |
 | 10 | データ基盤・運用堅牢化 | 中〜低 | 未着手 | handoff #11・#12・#15 | `db_models.py`, `dsp_engine/router.py`, `dsp_engine/exchange.py` | 複合インデックス追加、管理画面 N+1 解消、QPS カウンタの Redis 化（マルチプロセス対応） |
 | 11 | 動的フロア最適化 | 中 | 未着手 | #2 から分離 | `main.py`, `auction/engine.py`, （新テーブル） | 落札率・bid density・過去 clearing_price の分位点ベースで動的にフロアを調整。floor_price_history テーブル + 更新バッチ。#2 のスコープから分離 |
