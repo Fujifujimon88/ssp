@@ -23,7 +23,7 @@
 | 外部 SSP / エクスチェンジ OpenRTB 受信口（X-DSP-Secret 認証・QPS 制御） | 完了・本番稼働 |
 | Phase 2.6 レビュー改善5件 + マイグレーション dspengine0003 + テスト | 完了・**未コミット / 未デプロイ** |
 
-リリース状況: Phase 2.6 + 優先 #1〜#5 を 2026-05-22 に本番デプロイ済み（`vercel --prod`、マイグレーション dspengine0003〜0006 適用済み）。**#6・#7 はコミット済みだが未デプロイ**（マイグレーション dspengine0007〜0009 も本番未適用）。本番反映は `vercel --prod` 手動実行。
+リリース状況: 優先 #1〜#7 を 2026-05-22 に本番デプロイ済み（`vercel --prod`、deployment `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`、マイグレーション dspengine0003〜0009 適用済み、`/health` 200 で稼働確認）。次の変更も本番反映は `git push` → `vercel --prod` 手動実行。
 
 ## 2. 重要な不足
 

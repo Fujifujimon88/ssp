@@ -5,8 +5,8 @@ Status: Verified
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#7 まで完了・コミット済み（master HEAD `b7c0415`）。#1〜#5 のみ本番デプロイ済み、
-  **#6・#7 は未デプロイ・未 push**（master が origin より先行。`vercel --prod` 手動が必要）。
+- 優先タスク #1〜#7 まで完了・コミット済み・push 済み・**本番デプロイ済み**（2026-05-22、
+  master HEAD `faf0777`、deployment `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`）。
 - 次は #8（fraud / IVT / brand safety 監視）。残タスクは #8〜#11 + ビジネス側。詳細は本書セクション6。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
@@ -36,15 +36,14 @@ Status: Verified
 | 優先 #3 | サプライチェーン検証（schain 構造検証 / sellers.json 突合 / ads.txt・app-ads.txt / 自社 sellers.json）| 完了・本番反映済み |
 | 優先 #4 | 入札ログ完全化（nbr 付き `dsp_bid_logs` + Redis 集計）+ 予算 TOCTOU 対策（総予算超過で `budget_exhausted` 自動切替）| 完了・本番反映済み |
 | 優先 #5 | ベースライン ML（pCTR×pCVR×value の shrinkage 推定 / WARM_THRESHOLD 設定化 / device セグメント乗数バッチ / win-rate 可視化）| 完了・本番反映済み |
-| 優先 #6 | 多次元レポート拡張（creative/publisher/app/placement/geo/deal_id の 6 軸を非正規化記録）| 完了・**未デプロイ** |
-| 優先 #7 | A/B テスト・holdout 基盤（DspCreativeDB で 1:N 化 + weight 振り分け / DspAbExperimentDB / holdout / `bid.crid` 是正 / A/B レポート / admin 管理エンドポイント）| 完了・**未デプロイ** |
+| 優先 #6 | 多次元レポート拡張（creative/publisher/app/placement/geo/deal_id の 6 軸を非正規化記録）| 完了・本番反映済み |
+| 優先 #7 | A/B テスト・holdout 基盤（DspCreativeDB で 1:N 化 + weight 振り分け / DspAbExperimentDB / holdout / `bid.crid` 是正 / A/B レポート / admin 管理エンドポイント）| 完了・本番反映済み |
 
-**本番デプロイ状況**: Phase 2.6 + 優先 #1〜#5 を **2026-05-22 に本番デプロイ済み**
-（`vercel --prod`、deployment `dpl_CQ2RWhcB1tD37HiM1pWVKNpSkPtx`）。マイグレーション
-dspengine0003〜0006 は本番 Postgres へ適用済み。
-**#6・#7 はコミット済みだが未デプロイ**（マイグレーション dspengine0007〜0009 も本番未適用）。
-master HEAD `b7c0415` は origin より先行（未 push）。次回の本番反映は `git push` →
-`vercel --prod` の手動実行が必要（Vercel は Git 未連携）。
+**本番デプロイ状況**: 優先 #1〜#7 を **2026-05-22 に本番デプロイ済み**。最新 deployment
+`dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`）。
+マイグレーション dspengine0003〜0009 は起動時 lifespan の `alembic upgrade head` で本番
+Postgres へ適用（`/health` 200・`/sellers.json` 200 で稼働確認済み）。
+Vercel は Git 未連携のため、次回以降の本番反映も `git push` → `vercel --prod` の手動実行が必要。
 
 **本番は現状 inert**: DSP キャンペーンが未登録のため、稼働はしているが実入札は発生しない。
 
@@ -153,9 +152,9 @@ spend/click ログへの該当カラム記録追加が前提 → #6 または #1
 
 ## 7. 既知の制約・注意点（次セッションへの申し送り）
 
-1. **#1〜#5 は本番デプロイ済み / #6・#7 は未デプロイ・未 push**: master HEAD `b7c0415` が
-   origin より先行。本番反映は `git push` → `vercel --prod` 手動（dspengine0007〜0009 は
-   起動時 lifespan の `alembic upgrade head` で本番 Postgres へ自動適用される）。
+1. **#1〜#7 は本番デプロイ済み（2026-05-22）**: master HEAD `faf0777` は push 済み・
+   deployment `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`。次の変更も本番反映は `git push` →
+   `vercel --prod` 手動（マイグレーションは起動時 lifespan の `alembic upgrade head` で自動適用）。
 2. **本番 inert**: DSP キャンペーン未登録のため実入札は発生しない。実稼働はビジネス側
    オンボーディング後。
 3. **lifespan の Alembic がローカルSQLiteでデッドロック**: ローカル起動時は
