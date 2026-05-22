@@ -127,6 +127,12 @@
 - Mitigation: タスク着手前に `git log --oneline -20 origin/master..master` と handoff/progress の状態を確認。長時間タスクは着手時に handoff へ「進行中」を記録し、worktree マージ直前に再度 `git log` で master の差分を確認する。
 - Detection: worktree を master に rebase/merge しようとした時の `git log <base>..master` に同件名 commit が出現。Reviewer の main_unexpected_commits 検知。
 
+### 24. 共有 working tree では `git checkout -b` は隔離にならない（commit 着地先を毎回確認）
+- Date: 2026-05-23 / Trigger: run_report バグ修正で `fix/run-report-jst-day` を作成したが、並行セッションが同じ working tree で `git checkout master` したため、以降の Red/Green commit が branch でなく master へ着地した。
+- Root Cause: ssp_platform は複数セッションが単一 working tree を共有する（[[feedback-concurrent-sessions]]）。branch は working tree 単位の状態で、他セッションの checkout で自セッションの HEAD が無断移動する。`checkout -b` は隔離を与えない。
+- Mitigation: 真の隔離が要るなら Agent の `isolation: worktree`。共有 working tree で作業するなら `git commit` 直前に毎回 `git branch --show-current` で着地先を確認する。
+- Detection: `git commit` 出力の `[<branch> <hash>]` が想定 branch と違う / `git log` に並行セッションの commit が割り込む。
+
 ### 24. 日付依存テストは UTC で統一する（`date.today()` ローカル日付を使わない）
 - Date: 2026-05-23 / Trigger: `test_dsp_reporting.py` の run_report 系2件が、日付をまたいだ実行（JST 早朝＝UTC 前日）で失敗。前日は通っていた。
 - Root Cause: テストが `date.today()`（マシンのローカル日付）でレポート期間を絞る一方、`DspSpendLogDB.logged_at` の既定値は `datetime.now(timezone.utc)`。JST と UTC の日付境界でデータが期間外になる。
