@@ -102,3 +102,15 @@
 - Root Cause: `insp = inspect(conn)` を upgrade() 冒頭で1度だけ生成し使い回した。inspector は生成時点のスキーマをキャッシュするため、同一 upgrade 内で作成したテーブル/インデックスを認識しない。has_table/has_index/backfill ガードが全て空振りする。
 - Mitigation: create_table / add_column 等の DDL の後、index 作成や backfill の前に `insp = inspect(conn)` を再取得する。冒頭の inspector は「DDL 前の状態」専用と割り切る。
 - Detection: populated DB コピーで upgrade 後、新テーブルの行数・インデックスを `pragma` で必ず確認（教訓16 と併用）。
+
+### 20. worktree 隔離エージェントの base はセッション初期 commit になりうる
+- Date: 2026-05-22 / Trigger: test-first-implement #8-2 で Agent worktree isolation が worktree を session 開始時の commit（422abd7）から作成。session 中に master へ merge した #8（95ddb0a）を含まず、Red エージェントが「#8 が未実装」と誤認してテストを書いた。
+- Root Cause: `isolation: worktree` はセッション初期 base から worktree を作る場合があり、セッション中に親 working tree へ重ねた commit を自動では取り込まない。
+- Mitigation: worktree 隔離エージェントの初回報告で `git log --oneline` の親 commit を確認。base が現行 master とずれていたら `git -C <worktree> rebase master` で載せ替えてから次段へ進む（新規ファイル中心の commit なら衝突しない）。
+- Detection: 完了報告の `git log` 親 commit / 「既存実装が見当たらない」等の想定外報告。
+
+### 21. Redis レート制限カウンタの EXPIRE は初回 INCR 時のみ付与する
+- Date: 2026-05-22 / Trigger: #8-2 の `incr_click_counters` が INCR の度に EXPIRE を呼び、連打が続く限り TTL がリセットされ続けて固定ウィンドウが無限延長（本番でレート制限が実質無効）。Reviewer が HIGH 指摘。
+- Root Cause: INCR+EXPIRE をセットで毎回呼ぶとウィンドウがスライドし続ける。固定ウィンドウ方式は初回（カウント==1）のみ TTL を付ける必要がある。
+- Mitigation: `count = await redis.incr(key); if count == 1: await redis.expire(key, window)`。
+- Detection: テストの FakeRedis は TTL 挙動を検証しないため pass しても本番で破綻する。レビュー時に Redis カウンタの EXPIRE 呼び出し位置を目視確認する。

@@ -6,9 +6,9 @@ Status: Verified
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
 - 優先タスク #1〜#7 まで完了・**本番デプロイ済み**（2026-05-22、deployment `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`）。
-- #8（fraud / IVT / brand safety）は**コア部分を実装・master ローカルマージ済み**（HEAD `f77bbd7`、
-  **未 push・未デプロイ**）。router.py 配線・実 Redis・batch.py ループは **#8-2** へ繰り越し。
-  残タスクは #8-2〜#11 + ビジネス側。詳細は本書セクション6。
+- #8（fraud / IVT / brand safety）はコア + **#8-2 エンドツーエンド配線まで完了・master ローカルマージ済み**
+  （HEAD `17e8132`、**未 push・未デプロイ**）。クリック連打レート制限が実エンドポイント・実 Redis で稼働。
+  残タスクは #9〜#11 + ビジネス側。詳細は本書セクション6。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
 
@@ -40,6 +40,7 @@ Status: Verified
 | 優先 #6 | 多次元レポート拡張（creative/publisher/app/placement/geo/deal_id の 6 軸を非正規化記録）| 完了・本番反映済み |
 | 優先 #7 | A/B テスト・holdout 基盤（DspCreativeDB で 1:N 化 + weight 振り分け / DspAbExperimentDB / holdout / `bid.crid` 是正 / A/B レポート / admin 管理エンドポイント）| 完了・本番反映済み |
 | 優先 #8（コア） | fraud / IVT / brand safety 監視のコア（`fraud.py` 4関数 / NBR 506・507 / DspCampaignDB に bcat_block・badv_block / migration dspengine0010 / bidder.py の IVT・brand safety no-bid 統合）| コア完了・**master ローカルのみ・未 push・未デプロイ** |
+| 優先 #8-2 | fraud 監視のエンドツーエンド配線（router.py /click にレート制限配線・実 Redis カウンタ `incr_click_counters` / router.py /conversion に revenue ガード / bidder.py LOW-2 是正）| 完了・**master ローカルのみ・未 push・未デプロイ** |
 
 **本番デプロイ状況**: 優先 #1〜#7 を **2026-05-22 に本番デプロイ済み**。最新 deployment
 `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`）。
@@ -140,24 +141,26 @@ DATABASE_URL="sqlite+aiosqlite:///./ssp_local.db" APP_ENV=development \
 bid shading / サプライチェーン検証 / 入札ログ + TOCTOU 対策 / ベースライン ML /
 多次元レポート / A/B テスト・holdout 基盤。
 
-**#8 コア完了（master ローカル・未 push）**: `fraud.py` 4関数（rate limit / revenue 検証 /
-IVT 判定 / brand safety）/ NBR 506・507 / DspCampaignDB の bcat_block・badv_block /
-migration dspengine0010 / bidder.py の IVT・brand safety no-bid 統合。test_dsp_fraud.py 17件 +
-既存 dsp 85件 = 102 passed。test-first-implement パイプラインで実装（Reviewer 判定 Approve）。
+**#8 + #8-2 完了（master ローカル・未 push）**: コア = `fraud.py`（rate limit / revenue 検証 /
+IVT 判定 / brand safety / `incr_click_counters`）/ NBR 506・507 / DspCampaignDB の bcat_block・badv_block /
+migration dspengine0010 / bidder.py の IVT・brand safety no-bid 統合。配線 = router.py /click に
+レート制限（実 Redis カウンタ・固定ウィンドウ）、/conversion に revenue ガード（異常値は `revenue_jpy=0`
+に丸めて記録）、bidder.py LOW-2 是正。**クリック連打レート制限がエンドツーエンドで稼働**。
+test-first-implement パイプラインで実装（最終 Reviewer 判定 Approve）。dsp 系テスト 110 passed。
 
 **残タスク（優先順）**:
 
 | # | やること | 優先度 | 状態 | 関連ファイル |
 |---|---|---|---|---|
-| 8-2 | #8 のエンドツーエンド配線（router.py の /click・/conversion でレート制限/IVT を実呼び出し / `check_click_rate_limit` の実 Redis カウンタ実装〔現状 no-op stub〕/ batch.py の IVT・brand safety L1 キャッシュ更新ループ / Reviewer LOW-2 = bidder.py の NBR 507 マルチキャンペーン発火条件是正）| **中（次着手）** | **未着手** | `router.py`, `batch.py`, `fraud.py`, `bidder.py` |
-| 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応（PII サニタイズ・アトリビューション窓）| 中 | 未着手 | `router.py`, `attribution.py` |
+| 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応（PII サニタイズ・アトリビューション窓）| **中（次着手）** | 未着手 | `router.py`, `attribution.py` |
 | 10 | データ基盤・運用堅牢化（複合インデックス・管理画面 N+1 解消・QPS カウンタ Redis 化）| 中〜低 | 未着手 | `db_models.py`, `router.py`, `exchange.py` |
 | 11 | 動的フロア最適化（落札率・bid density ベース。#2 から分離）| 中 | 未着手 | `main.py`, `auction/engine.py`, 新テーブル |
 
-**次セッションの着手対象 = #8-2**（#8 のエンドツーエンド配線）。重要: 現状 #8 はコア純粋関数 +
-bidder.py 統合のみで、**機能A クリック連打レート制限はエンドポイントに繋がっておらず本番未稼働**。
-`check_click_rate_limit` の Redis 経路も no-op stub。#8-2 で router.py 配線と実 Redis 実装が必須。
-push・本番デプロイ・migration dspengine0010 の本番適用は #8-2 完了後にまとめて行う想定。
+**次セッションの着手対象 = #9**。**重要な申し送り**: #8 + #8-2 は master ローカルのみで
+**未 push・未デプロイ**。migration dspengine0010（dsp_campaigns に bcat_block・badv_block 追加）も
+本番 Postgres へ**未適用**。本番反映時は `git push` →（lifespan が起動時に `alembic upgrade head` で
+dspengine0010 を自動適用）→ `vercel --prod` の順。`check_click_rate_limit` の `redis is not None`
+分岐は #8 由来の dead code（#8-2 配線では常に `redis=None` + `_override_*` で呼ぶ）。実害なし、整理は任意。
 
 **ビジネス側（コード外）**: 実広告主 1〜2 社のオンボーディング / 外部エクスチェンジの実提携・
 QPS 審査 / 本番初回 DSP キャンペーン登録（未登録のため本番は現状 inert）。

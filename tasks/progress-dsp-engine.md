@@ -7,7 +7,7 @@
 
 - DSP MVP の骨格は実装済み。dsp-engine が自社 SSP オークションに参加し、キャンペーン管理・入札・クリック計測・CV ポストバック・ROAS/CPA/CTR 集計・外部 SSP OpenRTB 受信口まで稼働。
 - DSP 関連テストは通過済み（dsp_engine 系 + supply_chain / sjcache / adstxt 等、2026-05-22 時点。全体 310 passed、6 failed は既知の MDM 系事前不具合）。
-- #1〜#7 は完了・本番デプロイ済み。#8 は fraud / IVT / brand safety のコア部分を実装・master ローカルマージ済み（未 push・未デプロイ）。次フェーズは #8-2（エンドツーエンド配線）。優先タスク表（セクション3）参照。
+- #1〜#7 は完了・本番デプロイ済み。#8 + #8-2（fraud / IVT / brand safety 監視 + エンドツーエンド配線）は完了・master ローカルマージ済み（未 push・未デプロイ）。クリック連打レート制限が実稼働。次フェーズは #9（MMP 署名検証・SKAN）。優先タスク表（セクション3）参照。
 
 ## 1. 現状（実装済み・稼働中）
 
@@ -51,8 +51,8 @@
 | 6 | creative / publisher / app / placement 別レポート | 中 | 完了 | Fuji | `dsp_engine/reporting.py` | geo・device・deal_id 軸も追加。完了（2026-05-22、別セッション）|
 | 7 | A/B テスト・holdout 基盤 | 中 | 完了 | Fuji + handoff #16 | `db_models.py`, `dsp_engine/bidder.py`, `reporting.py`, `router.py` | DspCreativeDB で 1:N 化 + weight 振り分け / DspAbExperimentDB / holdout / `bid.crid` 是正。完了（2026-05-22）|
 | 8 | fraud / IVT / brand safety 監視（コア）| 中 | 完了（コア・master ローカル）| Fuji + handoff #9 | `dsp_engine/fraud.py`(新規), `bidder.py`, `nbr.py`, `attribution.py`, `db_models.py`, `config.py`, migration | `fraud.py` 4関数 + NBR 506・507 + DspCampaignDB の bcat_block・badv_block + migration dspengine0010 + bidder.py の IVT・brand safety no-bid 統合。test 102 passed。未 push・未デプロイ |
-| 8-2 | #8 エンドツーエンド配線 | 中 | 未着手（次着手）| 本セッション分割 | `router.py`, `batch.py`, `fraud.py`, `bidder.py` | router.py の /click・/conversion でレート制限/IVT を実呼び出し / `check_click_rate_limit` の実 Redis カウンタ（現状 no-op stub）/ batch.py の IVT・brand safety L1 キャッシュループ / Reviewer LOW-2 是正。**機能A レート制限は #8-2 完了まで本番未稼働** |
-| 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応 | 中 | 未着手 | Fuji + handoff #10・#17 | `dsp_engine/router.py`, `dsp_engine/attribution.py` | raw_payload の PII サニタイズ、アトリビューション窓（計測ウィンドウ）を含む |
+| 8-2 | #8 エンドツーエンド配線 | 中 | 完了（master ローカル）| 本セッション分割 | `router.py`, `fraud.py`, `bidder.py` | router.py /click にレート制限配線（実 Redis カウンタ `incr_click_counters`・固定ウィンドウ）/ /conversion に revenue ガード（異常値は revenue_jpy=0 に丸め）/ bidder.py LOW-2 是正。クリック連打レート制限が実稼働。batch.py ループは不要と確定。dsp 系 110 passed。未 push・未デプロイ |
+| 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応 | 中 | 未着手（次着手）| Fuji + handoff #10・#17 | `dsp_engine/router.py`, `dsp_engine/attribution.py` | raw_payload の PII サニタイズ、アトリビューション窓（計測ウィンドウ）を含む |
 | 10 | データ基盤・運用堅牢化 | 中〜低 | 未着手 | handoff #11・#12・#15 | `db_models.py`, `dsp_engine/router.py`, `dsp_engine/exchange.py` | 複合インデックス追加、管理画面 N+1 解消、QPS カウンタの Redis 化（マルチプロセス対応） |
 | 11 | 動的フロア最適化 | 中 | 未着手 | #2 から分離 | `main.py`, `auction/engine.py`, （新テーブル） | 落札率・bid density・過去 clearing_price の分位点ベースで動的にフロアを調整。floor_price_history テーブル + 更新バッチ。#2 のスコープから分離 |
 
@@ -75,5 +75,6 @@
 | 2026-05-22 | #4 入札ログ完全化 + 予算 TOCTOU 対策を完了。新規 `nbr.py`（no-bid 理由コード・拡張 500番台）/ `DspBidLogDB`（dsp_bid_logs）+ マイグレーション dspengine0005。`handle_bid_request` 全分岐で判定ログ（DB 全行 + Redis nbr 集計）。`record_dsp_win` で総予算超過を検知し `budget_exhausted` 自動切替（TOCTOU 抑止）。`pacing.record_spend` の INCRBYFLOAT+EXPIRE を Lua で原子化。admin `GET /dsp-engine/admin/bid-logs/api` 追加。テスト 12件追加・全 PASS（全体 258 passed、6 failed は既知 MDM 事前不具合）。 |
 | 2026-05-22 | #6 多次元レポート拡張を完了（別セッション）。creative/publisher/app/placement/geo/deal_id の 6 軸を 3 イベントテーブルへ非正規化記録。マイグレーション dspengine0007〜0008。|
 | 2026-05-22 | #7 A/B テスト・holdout 基盤を完了。`DspCreativeDB`（クリエイティブ 1:N・weight 振り分け）/ `DspAbExperimentDB`（実験管理）/ `campaign.holdout_rate`（NBR_HOLDOUT=505）/ `bid.crid` 是正（click_token を `bid.ext` で運搬）/ `run_ab_experiment_report` / admin クリエイティブ・実験エンドポイント。マイグレーション dspengine0009。テスト 17 件追加・全 PASS（全体 310 passed）。レビュー HIGH 指摘（run_report の campaign_id フィルタ）も対応。|
+| 2026-05-22 | #8-2 fraud 監視のエンドツーエンド配線を完了（test-first-implement パイプライン、最終 Reviewer 判定 Approve、1 回の差戻しループ）。`router.py` /click にレート制限配線（`request: Request` 追加・client IP/UA 取得・新規 async `fraud.incr_click_counters` で実 Redis INCR+EXPIRE カウンタ・固定ウィンドウ方式・超過時は記録スキップ + 302 継続）。/conversion に `validate_revenue` ガード（負値・外れ値は `revenue_jpy=0` に丸めて記録・200 維持）。`bidder.py` の NBR_BRAND_SAFETY_BLOCK 発火条件から `paced_out_count == 0` を削除し brand safety を優先発火（Reviewer LOW-2 是正）。Reviewer HIGH 指摘（EXPIRE が連打で TTL リセット）を固定ウィンドウ化で修正。新規 `tests/test_dsp_fraud_wiring.py` 8件 + 既存非破壊、dsp 系 110 passed。batch.py の L1 ループは不要と調査確定。master へ ff-merge（HEAD `17e8132`）だが未 push・未デプロイ。教訓 20・21 を追加。 |
 | 2026-05-22 | #8 fraud / IVT / brand safety 監視の**コア**を完了（test-first-implement パイプライン、Reviewer 判定 Approve）。新規 `dsp_engine/fraud.py`（`check_click_rate_limit` / `validate_revenue` / `is_ivt` / `is_brand_safety_blocked`）/ NBR 506・507 / `DspCampaignDB` に `bcat_block`・`badv_block` / migration dspengine0010（カラム追加のみ・本番未適用）/ `bidder.py` の IVT・brand safety no-bid 統合。`record_click` に `rate_limited` 引数追加。test_dsp_fraud.py 17件 + 既存 dsp 85件 = 102 passed。レビュー LOW-1（bcat prefix 兄弟カテゴリ誤ブロック）は修正済み。master へ ff-merge 済み（HEAD `f77bbd7`）だが**未 push・未デプロイ**。router.py 配線・実 Redis・batch.py ループ・LOW-2 是正は #8-2 へ繰り越し。 |
 | 2026-05-22 | #5 ベースライン ML を完了。`scoring.py` を pCTR×pCVR×value の経験ベイズ shrinkage 推定に刷新（実績 50 件硬切替の cliff を廃止）。`WARM_THRESHOLD` を `config.warm_threshold`（prior strength）へ設定化。新規 `segments.py` + `DspSegmentPerfDB`（dspengine0006）で device(platform) 別 CTR 乗数を定期バッチ事前計算し、入札時は L1 キャッシュ参照のみで pCTR 補正。win-rate は `get_campaign_win_rates` で算出し admin/bid-logs/api に追加（入札へは非反映）。テスト 13件追加・全 PASS（全体 271 passed、6 failed は既知 MDM 事前不具合）。 |
