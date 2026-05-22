@@ -1,6 +1,8 @@
 # plan: dsp_engine #8 — fraud / IVT / brand safety 監視
 
-Status: 計画済み・未着手（2026-05-22 調査完了。次セッションが着手）
+Status: コア完了（2026-05-22・master ローカル HEAD f77bbd7・未 push）。B/C/D の純粋関数 +
+NBR + migration dspengine0010 + bidder.py 統合は実装済み。A のエンドポイント配線（router.py）・
+実 Redis カウンタ・batch.py L1 ループは #8-2 へ繰り越し。詳細は handoff セクション6。
 
 ## 3行サマリー
 - A クリック連打レート制限 / B IVT 入札フィルタ / C 異常 CV ガード / D brand safety の4本柱。

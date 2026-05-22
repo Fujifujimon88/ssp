@@ -5,9 +5,10 @@ Status: Verified
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#7 まで完了・コミット済み・push 済み・**本番デプロイ済み**（2026-05-22、
-  master HEAD `faf0777`、deployment `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`）。
-- 次は #8（fraud / IVT / brand safety 監視）。残タスクは #8〜#11 + ビジネス側。詳細は本書セクション6。
+- 優先タスク #1〜#7 まで完了・**本番デプロイ済み**（2026-05-22、deployment `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`）。
+- #8（fraud / IVT / brand safety）は**コア部分を実装・master ローカルマージ済み**（HEAD `f77bbd7`、
+  **未 push・未デプロイ**）。router.py 配線・実 Redis・batch.py ループは **#8-2** へ繰り越し。
+  残タスクは #8-2〜#11 + ビジネス側。詳細は本書セクション6。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
 
@@ -38,6 +39,7 @@ Status: Verified
 | 優先 #5 | ベースライン ML（pCTR×pCVR×value の shrinkage 推定 / WARM_THRESHOLD 設定化 / device セグメント乗数バッチ / win-rate 可視化）| 完了・本番反映済み |
 | 優先 #6 | 多次元レポート拡張（creative/publisher/app/placement/geo/deal_id の 6 軸を非正規化記録）| 完了・本番反映済み |
 | 優先 #7 | A/B テスト・holdout 基盤（DspCreativeDB で 1:N 化 + weight 振り分け / DspAbExperimentDB / holdout / `bid.crid` 是正 / A/B レポート / admin 管理エンドポイント）| 完了・本番反映済み |
+| 優先 #8（コア） | fraud / IVT / brand safety 監視のコア（`fraud.py` 4関数 / NBR 506・507 / DspCampaignDB に bcat_block・badv_block / migration dspengine0010 / bidder.py の IVT・brand safety no-bid 統合）| コア完了・**master ローカルのみ・未 push・未デプロイ** |
 
 **本番デプロイ状況**: 優先 #1〜#7 を **2026-05-22 に本番デプロイ済み**。最新 deployment
 `dpl_5Jiw83Hy4jiNQJ4s7y8gbD4VrvrA`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`）。
@@ -87,6 +89,7 @@ segment バッチ起動）、`config.py`（jpy_per_usd / warm_threshold / ssp_do
 - 3 イベントテーブルへ多次元軸カラム（creative/publisher/app/placement/geo/deal_id）追加（dspengine0007〜0008）★#6
 - `dsp_creatives` — クリエイティブ 1:N（weight 振り分け）/ `dsp_ab_experiments` — A/B 実験管理。
   `dsp_campaigns.holdout_rate` 追加（dspengine0009）★#7
+- `dsp_campaigns.bcat_block` / `badv_block` 追加（dspengine0010・カラム追加のみ・本番未適用）★#8
 
 ### 主要エンドポイント
 - `POST /v1/bid` — SSPヘッダービディング（dsp-engine 参加）
@@ -137,18 +140,24 @@ DATABASE_URL="sqlite+aiosqlite:///./ssp_local.db" APP_ENV=development \
 bid shading / サプライチェーン検証 / 入札ログ + TOCTOU 対策 / ベースライン ML /
 多次元レポート / A/B テスト・holdout 基盤。
 
+**#8 コア完了（master ローカル・未 push）**: `fraud.py` 4関数（rate limit / revenue 検証 /
+IVT 判定 / brand safety）/ NBR 506・507 / DspCampaignDB の bcat_block・badv_block /
+migration dspengine0010 / bidder.py の IVT・brand safety no-bid 統合。test_dsp_fraud.py 17件 +
+既存 dsp 85件 = 102 passed。test-first-implement パイプラインで実装（Reviewer 判定 Approve）。
+
 **残タスク（優先順）**:
 
 | # | やること | 優先度 | 状態 | 関連ファイル |
 |---|---|---|---|---|
-| 8 | fraud / IVT / brand safety 監視（クリック連打レート制限 / IVT 入札フィルタ / 異常 CV ガード / brand safety）| **中（次着手）** | **計画済み・未着手** | `dsp_engine/attribution.py`, `bidder.py`, 新規 `fraud.py` |
+| 8-2 | #8 のエンドツーエンド配線（router.py の /click・/conversion でレート制限/IVT を実呼び出し / `check_click_rate_limit` の実 Redis カウンタ実装〔現状 no-op stub〕/ batch.py の IVT・brand safety L1 キャッシュ更新ループ / Reviewer LOW-2 = bidder.py の NBR 507 マルチキャンペーン発火条件是正）| **中（次着手）** | **未着手** | `router.py`, `batch.py`, `fraud.py`, `bidder.py` |
 | 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応（PII サニタイズ・アトリビューション窓）| 中 | 未着手 | `router.py`, `attribution.py` |
 | 10 | データ基盤・運用堅牢化（複合インデックス・管理画面 N+1 解消・QPS カウンタ Redis 化）| 中〜低 | 未着手 | `db_models.py`, `router.py`, `exchange.py` |
 | 11 | 動的フロア最適化（落札率・bid density ベース。#2 から分離）| 中 | 未着手 | `main.py`, `auction/engine.py`, 新テーブル |
 
-**次セッションの着手対象 = #8**。スコープ・設計・Red テスト一覧・ステップは
-`tasks/plan-dsp-engine-8.md` に確定済み（Fuji 承認: フルスコープ・IVT/brand safety は
-no-bid ブロック）。次セッションは plan-dsp-engine-8.md の「ステップ」1 から着手すればよい。
+**次セッションの着手対象 = #8-2**（#8 のエンドツーエンド配線）。重要: 現状 #8 はコア純粋関数 +
+bidder.py 統合のみで、**機能A クリック連打レート制限はエンドポイントに繋がっておらず本番未稼働**。
+`check_click_rate_limit` の Redis 経路も no-op stub。#8-2 で router.py 配線と実 Redis 実装が必須。
+push・本番デプロイ・migration dspengine0010 の本番適用は #8-2 完了後にまとめて行う想定。
 
 **ビジネス側（コード外）**: 実広告主 1〜2 社のオンボーディング / 外部エクスチェンジの実提携・
 QPS 審査 / 本番初回 DSP キャンペーン登録（未登録のため本番は現状 inert）。
