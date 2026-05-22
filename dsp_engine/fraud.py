@@ -154,7 +154,7 @@ def is_brand_safety_blocked(bid_request, campaign) -> bool:
         site_cats: list[str] = getattr(site, "cat", None) or []
         for cat in site_cats:
             for blocked_cat in blocked_cats:
-                if cat.startswith(blocked_cat):
+                if cat == blocked_cat or cat.startswith(blocked_cat + "-"):
                     return True
 
     # ── badv チェック ──

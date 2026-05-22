@@ -345,6 +345,25 @@ def test_brand_safety_no_match_passes():
     assert result is False, "bcat/badv 非一致なら通過"
 
 
+def test_brand_safety_bcat_sibling_category_not_blocked():
+    """bcat_block=["IAB2"] のキャンペーンに対し site.cat=["IAB25"] はブロックされない。
+    IAB カテゴリは '-' 区切り階層のため、"IAB25".startswith("IAB2") が True になるバグの再現テスト。
+    正しい判定: cat == blocked_cat または cat.startswith(blocked_cat + "-") のみ一致とする。
+    """
+    from dsp_engine.fraud import is_brand_safety_blocked
+
+    campaign = make_campaign(id="camp-sibling", bcat_block='["IAB2"]')
+
+    from auction.openrtb import BidRequest, Site
+    req = BidRequest(
+        id="req-sibling",
+        imp=[],
+        site=Site(cat=["IAB25"], page="https://example.com"),
+    )
+    result = is_brand_safety_blocked(req, campaign)
+    assert result is False, "IAB25 は IAB2 の子カテゴリではないのでブロックされない"
+
+
 # ── 全キャンペーンが brand safety でブロックされた時の no-bid（NBR 507） ──
 
 
