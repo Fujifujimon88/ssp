@@ -32,9 +32,10 @@ AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モ
 | 優先 #4 | 入札ログ完全化（nbr 付き `dsp_bid_logs` + Redis 集計）+ 予算 TOCTOU 対策（総予算超過で `budget_exhausted` 自動切替）| 完了・未コミット |
 | 優先 #5 | ベースライン ML（pCTR×pCVR×value の shrinkage 推定 / WARM_THRESHOLD 設定化 / device セグメント乗数バッチ / win-rate 可視化）| 完了・未コミット |
 
-**本番デプロイ状況**: Phase 2.5 まで本番反映済み。Phase 2.6 + 優先 #1〜#5 は
-**Vercel 未デプロイ**（Git 未連携のため `vercel --prod` の手動実行が必要）。マイグレーション
-dspengine0003〜0006 は本番 Postgres 未適用。
+**本番デプロイ状況**: Phase 2.6 + 優先 #1〜#5 を **2026-05-22 に本番デプロイ済み**
+（`vercel --prod` 実行、deployment `dpl_CQ2RWhcB1tD37HiM1pWVKNpSkPtx`）。マイグレーション
+dspengine0003〜0006 は起動時 lifespan の `alembic upgrade head` で本番 Postgres へ適用済み
+（`/health` 200 で検証）。Vercel は Git 未連携のため次回以降も `vercel --prod` 手動実行が必要。
 
 ---
 
@@ -139,8 +140,8 @@ DATABASE_URL="sqlite+aiosqlite:///./ssp_local.db" APP_ENV=development \
 
 ## 7. 既知の制約・注意点（次セッションへの申し送り）
 
-1. **#1〜#5 は本番未デプロイ**: `vercel --prod` 未実行。dspengine0003〜0006
-   マイグレーションも本番未適用。本番反映時は `vercel --prod`。#4・#5 は未コミット。
+1. **#1〜#5 は本番デプロイ済み（2026-05-22）**: `vercel --prod` 実行・dspengine0003〜0006
+   適用済み。#4・#5 はコミット済み（17e869a）。次の変更も本番反映は `vercel --prod` 手動。
 2. **lifespan の Alembic がローカルSQLiteでデッドロック**: ローカル起動時は
    `SKIP_LIFESPAN_ALEMBIC=1` を付ける（本番 Vercel では未設定＝従来動作）。
 3. **Alembic チェーンは fresh SQLite で通らない**: マイグレーション検証は
