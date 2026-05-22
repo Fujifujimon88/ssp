@@ -114,3 +114,9 @@
 - Root Cause: INCR+EXPIRE をセットで毎回呼ぶとウィンドウがスライドし続ける。固定ウィンドウ方式は初回（カウント==1）のみ TTL を付ける必要がある。
 - Mitigation: `count = await redis.incr(key); if count == 1: await redis.expire(key, window)`。
 - Detection: テストの FakeRedis は TTL 挙動を検証しないため pass しても本番で破綻する。レビュー時に Redis カウンタの EXPIRE 呼び出し位置を目視確認する。
+
+### 22. 「記録するが集計から除外」系の機能はスキーマ制約を計画段階で確認する
+- Date: 2026-05-22 / Trigger: #9 のアトリビューション窓で「窓外 CV は記録しつつ ROAS 非算入・migration なし」を計画前提にしたが、`DspConversionEventDB.campaign_id` が非 nullable + `record_conversion` が campaign_id 必須のため campaign_id を落とす実装が不可能。Reviewer が HIGH 指摘。
+- Root Cause: 計画段階で「未アトリビュートで記録する」表現方法（campaign_id を None にする想定）が現スキーマで成立するか、対象カラムの NULL 制約・必須バリデーション・集計クエリの WHERE 条件を確認していなかった。
+- Mitigation: 「記録はするが集計から除外する」系の機能は、計画時に対象テーブルの NULL 制約・必須カラム・集計クエリを確認し、除外フラグカラム追加（migration）の要否を先に判断する。
+- Detection: Reviewer が「テストは通るが plan の意図と矛盾」を指摘。弱いテスト（impression_id だけ検証）は意図不一致を見逃すため、集計結果そのものを検証するテストを書く。
