@@ -15,7 +15,7 @@ creative / publisher / app / placement / geo / deal_id を追加（落札時に
 BidRequest + campaign から 3 イベントテーブルへ非正規化記録した列を集計する）。
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import String, cast, func, select
@@ -139,6 +139,25 @@ def _empty_row(dims: list[str], key: tuple) -> dict:
     return row
 
 
+# レポートの「1日」は JST 暦日（運用者が見る基準）。イベントのタイムスタンプ列は
+# UTC で保存されるため、日付範囲フィルタは JST→UTC へ変換してから突合する。
+JST = timezone(timedelta(hours=9))
+
+
+def _jst_day_range(date_from: date, date_to: date) -> tuple[datetime, datetime]:
+    """JST 暦日 [date_from, date_to] を UTC の [start, end) 半開区間に変換する。
+
+    logged_at / received_at は tz-aware、clicked_at は naive と UTC 保存列が
+    混在する。列の naive/aware に左右されないよう、JST 0 時境界を UTC へ変換し
+    naive-UTC（tzinfo を外した UTC 壁時計）に正規化して返す。
+    """
+    start = (datetime(date_from.year, date_from.month, date_from.day, tzinfo=JST)
+             .astimezone(timezone.utc).replace(tzinfo=None))
+    end = ((datetime(date_to.year, date_to.month, date_to.day, tzinfo=JST)
+            + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None))
+    return start, end
+
+
 async def run_report(
     db: AsyncSession,
     *,
@@ -158,8 +177,7 @@ async def run_report(
     """
     dims = [d for d in dimensions if d in AVAILABLE_DIMENSIONS] or ["campaign"]
 
-    start = datetime(date_from.year, date_from.month, date_from.day)
-    end = datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1)
+    start, end = _jst_day_range(date_from, date_to)
 
     merged: dict[tuple, dict] = {}
 
@@ -276,8 +294,7 @@ async def run_ab_experiment_report(
     creative_rows.sort(key=lambda r: r["spend_jpy"], reverse=True)
 
     # holdout 件数（期間内・当該キャンペーン）
-    start = datetime(date_from.year, date_from.month, date_from.day)
-    end = datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1)
+    start, end = _jst_day_range(date_from, date_to)
     holdout_requests = await db.scalar(
         select(func.count(DspBidLogDB.id)).where(
             DspBidLogDB.campaign_id == campaign_id,
