@@ -802,3 +802,51 @@ async def test_win_endpoint_rejects_forged_signature(win_client):
                 "price": "999", "sig": "deadbeefdeadbeef"},
     )
     assert resp.status_code == 403
+
+
+# ── セキュリティ修正 3 件 (Red: 実装前の再現テスト) ─────────────────
+
+@pytest.mark.asyncio
+async def test_conversion_click_token_overrides_mismatched_campaign_id(db):
+    """click_token が解決できたら、リクエストの campaign_id より spend_log の
+    campaign_id を優先する（別キャンペーンへの売上付け替えを防ぐ）。"""
+    db.add(make_campaign(id="camp-true"))
+    db.add(make_campaign(id="camp-attacker"))
+    await db.commit()
+    db.add(DspSpendLogDB(
+        id="spend-true", campaign_id="camp-true", click_token="ct-true",
+        cleared_price_jpy=200.0, spend_jpy=0.2,
+    ))
+    await db.commit()
+
+    # 攻撃者は本物の click_token と別キャンペーンIDを同時に渡す
+    event, created = await record_conversion(
+        db, campaign_id="camp-attacker", click_token="ct-true", revenue_jpy=99999.0,
+    )
+    assert created is True
+    assert event.campaign_id == "camp-true"  # spend_log の campaign_id を採用
+
+
+def test_verify_win_notice_rejects_tampered_crid():
+    """crid を改竄した win notice は検証で弾く（creative 軸レポートの改竄を阻止）。"""
+    from dsp_engine.bidder import sign_win_notice, verify_win_notice
+
+    sig = sign_win_notice(ct="ct1", cid="camp-1", src="exch", bid=1.5, crid="cr-real")
+    assert verify_win_notice(
+        sig, ct="ct1", cid="camp-1", src="exch", bid=1.5, crid="cr-real"
+    ) is True
+    assert verify_win_notice(
+        sig, ct="ct1", cid="camp-1", src="exch", bid=1.5, crid="cr-EVIL"
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_can_bid_blocks_on_db_daily_spend_when_counter_lost():
+    """Redis/メモリカウンタが消えても、DB の当日実績で日予算ペース超過を
+    検知して入札を止める（Redis flush / プロセス再起動を模擬）。"""
+    pacer = BudgetPacer()
+    now = datetime(2026, 5, 21, 12, 0, 0)
+    c = make_campaign(id="camp-dbfb", daily_budget_jpy=24000.0)
+    # record_spend を呼ばない = Redis/メモリカウンタは 0
+    # DB 実績 11000 はペース許容 12000 × 0.9 = 10800 を超える
+    assert await pacer.can_bid(c, daily_spend_jpy=11000.0, now=now) is False

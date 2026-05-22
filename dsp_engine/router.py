@@ -714,11 +714,11 @@ async def win_notice(
 ):
     """外部エクスチェンジが落札時に nurl を呼ぶ。消化・予算ペーシングを記録する。
 
-    nurl は広告レスポンスに露出するため、第三者による spend 偽装を防ぐ目的で
-    HMAC 署名(sig)を必須とする。署名対象は ct/cid/src/bid。price は
-    ${AUCTION_PRICE} マクロのため署名できないので、bid を上限としてクランプする。
+    nurl は広告レスポンスに露出するため、第三者による spend 偽装と creative 軸レポート
+    改竄を防ぐ目的で HMAC 署名(sig)を必須とする。署名対象は ct/cid/src/bid/crid。
+    price は ${AUCTION_PRICE} マクロのため署名できないので、bid を上限としてクランプする。
     """
-    if not verify_win_notice(sig, ct=ct, cid=cid, src=src, bid=bid):
+    if not verify_win_notice(sig, ct=ct, cid=cid, src=src, bid=bid, crid=crid):
         logger.warning(f"win_notice: invalid signature (cid={cid} src={src})")
         raise HTTPException(status_code=403, detail="invalid win notice signature")
 

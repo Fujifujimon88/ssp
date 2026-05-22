@@ -398,30 +398,30 @@ def render_adm(creative, imp, click_token: str) -> str:
     )
 
 
-def _win_notice_message(ct: str, cid: str, src: str, bid: float) -> str:
+def _win_notice_message(ct: str, cid: str, src: str, bid: float, crid: str = "") -> str:
     """win notice 署名対象の正規化文字列（bid は 6 桁固定で URL 往復差を吸収）。"""
-    return f"{ct}|{cid}|{src}|{float(bid):.6f}"
+    return f"{ct}|{cid}|{src}|{float(bid):.6f}|{crid}"
 
 
-def sign_win_notice(ct: str, cid: str, src: str, bid: float) -> str:
+def sign_win_notice(ct: str, cid: str, src: str, bid: float, crid: str = "") -> str:
     """win notice（nurl）の改竄防止署名を生成する（HMAC-SHA256 / settings.secret_key）。
 
     ${AUCTION_PRICE} マクロで置換される price は署名対象に含められないため、
-    署名できるのは ct / cid / src / bid の 4 項目。price 改竄は呼び出し側で
+    署名できるのは ct / cid / src / bid / crid の 5 項目。price 改竄は呼び出し側で
     bid 上限クランプにより別途緩和する。
     """
     return hmac.new(
         settings.secret_key.encode("utf-8"),
-        _win_notice_message(ct, cid, src, bid).encode("utf-8"),
+        _win_notice_message(ct, cid, src, bid, crid).encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
 
 
-def verify_win_notice(sig: Optional[str], ct: str, cid: str, src: str, bid: float) -> bool:
+def verify_win_notice(sig: Optional[str], ct: str, cid: str, src: str, bid: float, crid: str = "") -> bool:
     """win notice の署名を検証する（タイミング安全比較）。sig 欠落は False。"""
     if not sig:
         return False
-    expected = sign_win_notice(ct, cid, src, bid)
+    expected = sign_win_notice(ct, cid, src, bid, crid)
     return hmac.compare_digest(sig, expected)
 
 
@@ -435,19 +435,20 @@ def win_notice_url(
     """OpenRTB 落札通知 URL（nurl）。外部エクスチェンジが落札時に呼ぶ。
 
     ${AUCTION_PRICE} はエクスチェンジが実落札価格(USD CPM)に置換するマクロ。
-    第三者による spend 偽装を防ぐため HMAC 署名(sig)を付与する。
+    第三者による spend 偽装と creative 軸レポート改竄を防ぐため HMAC 署名(sig)を付与する。
 
-    crid は #7 のレポート用ヒント（落札クリエイティブ）。spend には影響しない
-    （改竄されても creative 軸の集計が乱れるだけ）ため署名対象には含めない。
+    crid は #7 のレポート用ヒント（落札クリエイティブ）。creative 軸レポートの改竄を
+    防ぐため署名対象に含める。
     """
     base = settings.ssp_endpoint.rstrip("/")
     bid = round(bid_price_usd, 6)
+    crid = creative_id or ""
     params = {
         "ct": click_token,
         "cid": campaign_id,
         "src": source,
         "bid": bid,
-        "sig": sign_win_notice(click_token, campaign_id, source, bid),
+        "sig": sign_win_notice(click_token, campaign_id, source, bid, crid),
     }
     if creative_id:
         params["crid"] = creative_id
@@ -515,7 +516,7 @@ async def handle_bid_request(
         stats = all_stats[campaign.id]
         bid_cpm_jpy = compute_bid_cpm_jpy(campaign, stats, ctr_multiplier=ctr_multiplier)
         # 日予算ペース + 総予算（lifetime spend）の両方をチェック
-        if not await _pacer.can_bid(campaign, lifetime_spend_jpy=stats["spend_jpy"]):
+        if not await _pacer.can_bid(campaign, lifetime_spend_jpy=stats["spend_jpy"], daily_spend_jpy=stats["daily_spend_jpy"]):
             paced_out_count += 1
             continue
         if best_campaign is None or bid_cpm_jpy > best_bid_cpm_jpy:
