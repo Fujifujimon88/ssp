@@ -120,3 +120,15 @@
 - Root Cause: 計画段階で「未アトリビュートで記録する」表現方法（campaign_id を None にする想定）が現スキーマで成立するか、対象カラムの NULL 制約・必須バリデーション・集計クエリの WHERE 条件を確認していなかった。
 - Mitigation: 「記録はするが集計から除外する」系の機能は、計画時に対象テーブルの NULL 制約・必須カラム・集計クエリを確認し、除外フラグカラム追加（migration）の要否を先に判断する。
 - Detection: Reviewer が「テストは通るが plan の意図と矛盾」を指摘。弱いテスト（impression_id だけ検証）は意図不一致を見逃すため、集計結果そのものを検証するテストを書く。
+
+### 23. タスク着手前に「他セッションが同じ作業をしていないか」を git log で確認する
+- Date: 2026-05-23 / Trigger: dsp_engine セキュリティ修正3件を test-first-implement で実装し終えた段で、別の Claude セッションが**同じ3修正を先に master へマージ済み**（commit 842683b/f1f6589/d998006）と判明。worktree の全作業が重複。
+- Root Cause: 着手対象を未追跡の plan ファイル（`tasks/plan-dsp-security-fixes.md`）から拾ったが、ssp_platform は複数セッションが並行する（[[feedback-concurrent-sessions]]）のに、着手前に「そのタスクが既に進行中/完了済みでないか」を確認しなかった。タスクの「着手中」マーカーがどこにも無い。
+- Mitigation: タスク着手前に `git log --oneline -20 origin/master..master` と handoff/progress の状態を確認。長時間タスクは着手時に handoff へ「進行中」を記録し、worktree マージ直前に再度 `git log` で master の差分を確認する。
+- Detection: worktree を master に rebase/merge しようとした時の `git log <base>..master` に同件名 commit が出現。Reviewer の main_unexpected_commits 検知。
+
+### 24. 日付依存テストは UTC で統一する（`date.today()` ローカル日付を使わない）
+- Date: 2026-05-23 / Trigger: `test_dsp_reporting.py` の run_report 系2件が、日付をまたいだ実行（JST 早朝＝UTC 前日）で失敗。前日は通っていた。
+- Root Cause: テストが `date.today()`（マシンのローカル日付）でレポート期間を絞る一方、`DspSpendLogDB.logged_at` の既定値は `datetime.now(timezone.utc)`。JST と UTC の日付境界でデータが期間外になる。
+- Mitigation: 日付依存テストはデータ側のタイムゾーンに合わせる。UTC 既定のデータには `datetime.now(timezone.utc).date()` で絞る。`date.today()`（ローカル）は使わない。
+- Detection: 「前日まで通っていたテストが日付変更後に失敗」。CI とローカルでタイムゾーンが違うと再現条件がずれる。

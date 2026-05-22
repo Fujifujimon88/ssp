@@ -7,7 +7,7 @@
 
 - DSP MVP の骨格は実装済み。dsp-engine が自社 SSP オークションに参加し、キャンペーン管理・入札・クリック計測・CV ポストバック・ROAS/CPA/CTR 集計・外部 SSP OpenRTB 受信口まで稼働。
 - DSP 関連テストは通過済み（dsp_engine 系 + supply_chain / sjcache / adstxt 等、2026-05-22 時点。全体 310 passed、6 failed は既知の MDM 系事前不具合）。
-- #1〜#9 は完了・本番デプロイ済み（2026-05-22、deployment `dpl_3YzFvfZqZPnSLPjrdhDbgQX73dP5`）。#8/#8-2 = fraud・IVT・brand safety 監視 + 配線、#9 = MMP 署名検証・PII サニタイズ・アトリビューション窓。次フェーズは #10（データ基盤・運用堅牢化）。#9-2（SKAN/Privacy Sandbox）は優先度低。優先タスク表（セクション3）参照。
+- #1〜#9 + セキュリティ修正3件（CV 売上付け替え防止 / win notice 署名に crid / daily pacing の DB フォールバック）は完了・本番デプロイ済み（2026-05-23、deployment `dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`）。次フェーズは #10（データ基盤・運用堅牢化）。#9-2（SKAN/Privacy Sandbox）は優先度低。優先タスク表（セクション3）参照。
 
 ## 1. 現状（実装済み・稼働中）
 
@@ -69,6 +69,7 @@
 
 | 日付 | 内容 |
 |---|---|
+| 2026-05-23 | dsp_engine セキュリティ修正3件を完了・本番デプロイ（deployment `dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`）。Fix 1: `record_conversion` で click_token→spend_log の campaign_id を無条件採用（リクエスト指定との不一致は warning・400 にしない）— CV 売上付け替え攻撃を防ぐ。Fix 2: win notice 署名対象に `crid` を追加（`ct\|cid\|src\|bid\|crid`）— creative 軸の改竄を検知。Fix 3: `BudgetPacer.can_bid` が `daily_spend_jpy`（当日 UTC の DB 実績）でフォールバック判定 — Redis flush/再起動でも日予算超過を検知。スキーマ変更なし。あわせて reporting テストの日付フレーク（`date.today()` ローカル日付 vs UTC `logged_at`）を UTC 統一で修正。dsp 系 126 passed。注: 本修正は並行 Claude セッションが先行実装・master へマージ済み（重複作業。教訓23）。 |
 | 2026-05-22 | 進捗管理表を新規作成。現状・重要な不足7点・優先タスク10項目を整理。 |
 | 2026-05-22 | #1 OpenRTB 2.6 スキーマ拡張を完了。`auction/openrtb.py` を 2.6 相当へ拡張（App/Source/Regs/Pmp/Deal/eids/burl・lurl/Video 詳細/Device 拡張）。`tests/test_openrtb_26.py` 13件 PASS、既存 38件非破壊。 |
 | 2026-05-22 | #2 first-price auction 対応 + bid shading を完了。`auction/engine.py` を `BidRequest.at` で first/second 決済切替、`dsp_engine/shading.py` 新規（P50 分位点 bid shading）、`bidder.py` 統合。テスト 14件追加（auction 5 / shading 7 / dsp_engine 2）全 PASS、既存非破壊。動的フロア最適化は #11 へ分離。 |

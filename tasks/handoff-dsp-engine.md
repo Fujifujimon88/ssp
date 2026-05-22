@@ -1,12 +1,12 @@
 # 引き継ぎ: dsp_engine（広告主向けパフォーマンス DSP）
 
 Status: Verified
-最終更新: 2026-05-22
+最終更新: 2026-05-23
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#9 まで完了・**本番デプロイ済み**（2026-05-22、deployment `dpl_3YzFvfZqZPnSLPjrdhDbgQX73dP5`）。
-- 最新は #8 fraud/IVT/brand safety + #8-2 エンドツーエンド配線 + #9 MMP署名検証/PIIサニタイズ/アトリビューション窓。
+- 優先タスク #1〜#9 + セキュリティ修正3件まで完了・**本番デプロイ済み**（2026-05-23、deployment `dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`）。
+- 最新は #9 MMP署名検証/PIIサニタイズ/アトリビューション窓 + セキュリティ修正3件（売上付け替え防止 / win notice 署名に crid / daily pacing の DB フォールバック）。
   残タスクは #9-2（SKAN・Privacy Sandbox）/ #10 / #11 + ビジネス側。詳細は本書セクション6。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
@@ -41,11 +41,12 @@ Status: Verified
 | 優先 #8 | fraud / IVT / brand safety 監視のコア（`fraud.py` / NBR 506・507 / DspCampaignDB に bcat_block・badv_block / migration dspengine0010 / bidder.py の IVT・brand safety no-bid 統合）| 完了・本番反映済み |
 | 優先 #8-2 | fraud 監視のエンドツーエンド配線（router.py /click にレート制限配線・実 Redis カウンタ `incr_click_counters` / router.py /conversion に revenue ガード / bidder.py LOW-2 是正）| 完了・本番反映済み |
 | 優先 #9 | MMP 署名検証（HMAC-SHA256 + timing-safe）/ PII サニタイズ（raw_payload）/ アトリビューション窓（`attributed` カラム + migration dspengine0011 で窓外 CV を ROAS 集計から除外）| 完了・本番反映済み |
+| セキュリティ修正3件 | CV 売上付け替え防止（`record_conversion` で click_token→spend_log の campaign_id を無条件採用・不一致は warning）/ win notice 署名に `crid` を含める（改竄防止）/ daily pacing の DB フォールバック（`can_bid` が Redis 不在時 `daily_spend_jpy` の DB 実績で判定）。スキーマ変更なし | 完了・本番反映済み |
 
-**本番デプロイ状況**: 優先 #1〜#9 を **2026-05-22 に本番デプロイ済み**。最新 deployment
-`dpl_3YzFvfZqZPnSLPjrdhDbgQX73dP5`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`）。
+**本番デプロイ状況**: 優先 #1〜#9 + セキュリティ修正3件を **2026-05-23 に本番デプロイ済み**。最新 deployment
+`dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`、`/health` 200）。
 マイグレーション dspengine0003〜0011 は起動時 lifespan の `alembic upgrade head` で本番
-Postgres へ適用（`/health` 200・`/sellers.json` 200 で稼働確認済み）。
+Postgres へ適用済み（セキュリティ修正3件はスキーマ変更なし）。
 Vercel は Git 未連携のため、次回以降の本番反映も `git push` → `vercel --prod` の手動実行が必要。
 
 **本番 Redis 未接続の注意**: `/health` の `redis:false`。#8-2 のクリック連打レート制限
