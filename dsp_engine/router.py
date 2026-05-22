@@ -36,7 +36,12 @@ from dsp_engine import campaign_manager, exchange, reporting, supply
 from dsp_engine.attribution import (
     get_campaign_roas, normalize_conversion_payload, record_click, record_conversion,
 )
-from dsp_engine.bidder import click_through_url, handle_bid_request, record_dsp_win
+from dsp_engine.bidder import (
+    click_through_url,
+    get_bid_log_summary,
+    handle_bid_request,
+    record_dsp_win,
+)
 from dsp_engine.sjcache import get_cached_sellers, lookup_seller
 from dsp_engine.supply_chain import SchainVerdict, extract_schain, verify_schain
 
@@ -398,6 +403,20 @@ async def admin_report_api(
         "dimensions": [d for d in dims if d in reporting.AVAILABLE_DIMENSIONS] or ["campaign"],
         "rows": rows,
     })
+
+
+@router.get("/admin/bid-logs/api", summary="入札判定ログ + no-bid 理由内訳(JSON)",
+            dependencies=[Depends(require_admin_ip)])
+async def admin_bid_logs_api(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """直近の入札判定ログと outcome/nbr 別件数を返す（運用者向け）。
+
+    no-bid 理由コード nbr の内訳から「なぜ入札していないか」を切り分ける。
+    """
+    summary = await get_bid_log_summary(db, limit=limit)
+    return JSONResponse(summary)
 
 
 # ── 外部エクスチェンジ受信側（Phase 2） ─────────────────────────

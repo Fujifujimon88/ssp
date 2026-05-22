@@ -7,7 +7,7 @@
 
 - DSP MVP の骨格は実装済み。dsp-engine が自社 SSP オークションに参加し、キャンペーン管理・入札・クリック計測・CV ポストバック・ROAS/CPA/CTR 集計・外部 SSP OpenRTB 受信口まで稼働。
 - DSP 関連テストは通過済み（dsp_engine 系 + supply_chain / sjcache / adstxt 等、2026-05-22 時点。全体 246 passed、6 failed は既知の MDM 系事前不具合）。
-- #1・#2・#3 は完了。次フェーズは #4「入札ログ完全化 + 予算 TOCTOU 対策」が最優先。優先タスク表（セクション3）参照。
+- #1〜#5 は完了。次フェーズは #6「creative/publisher/app/placement 別レポート」以降。優先タスク表（セクション3）参照。
 
 ## 1. 現状（実装済み・稼働中）
 
@@ -46,8 +46,8 @@
 | 1 | OpenRTB 2.6 相当へ拡張 | 高 | 完了 | Fuji | `auction/openrtb.py`, `tests/test_openrtb_26.py` | app / schain / gpp / eids / burl・lurl / PMP・deal / video 詳細 / Device 拡張。スキーマ拡張済み（2026-05-22）。検証・活用ロジックは #3/#4/#5 |
 | 2 | first-price auction 対応 + bid shading | 高 | 完了 | Fuji | `auction/engine.py`, `dsp_engine/shading.py`, `dsp_engine/bidder.py` | `BidRequest.at` で first/second 決済切替 + P50 分位点 bid shading。完了（2026-05-22）。動的フロア最適化は #11 へ分離 |
 | 3 | サプライチェーン検証（schain / sellers.json / ads.txt） | 高 | 完了 | Fuji + handoff #14 | `dsp_engine/supply_chain.py`, `sjcache.py`, `adstxt.py`, `batch.py` | schain 構造検証（入札パス内）+ sellers.json 突合 + ads.txt/app-ads.txt 検証 + 自社 sellers.json INTERMEDIARY 修正。完了（2026-05-22）|
-| 4 | 入札ログ完全化 + 予算 TOCTOU 対策 | 高 | 未着手 | Fuji + handoff #4・#8 | `dsp_engine/bidder.py`, `dsp_engine/router.py`, `dsp_engine/pacing.py` | no-bid 理由コード `nbr`（フロア未達=300 等）。`can_bid`→`record_spend` を Redis Lua で原子化 |
-| 5 | pCTR / pCVR / value / win-rate のベースライン ML | 中 | 未着手 | Fuji + handoff #7・#13 | `dsp_engine/scoring.py`, `mdm/ml/two_tower.py` | device 特徴量の入札反映、WARM_THRESHOLD(50件固定) の設定化を含む |
+| 4 | 入札ログ完全化 + 予算 TOCTOU 対策 | 高 | 完了 | Fuji + handoff #4・#8 | `dsp_engine/bidder.py`, `dsp_engine/router.py`, `dsp_engine/pacing.py`, `dsp_engine/nbr.py` | no-bid 理由コード `nbr`（拡張 500番台）付き入札ログ `dsp_bid_logs` + Redis nbr 集計。record_dsp_win で総予算超過を検知し `budget_exhausted` 自動切替。完了（2026-05-22）|
+| 5 | pCTR / pCVR / value / win-rate のベースライン ML | 中 | 完了 | Fuji + handoff #7・#13 | `dsp_engine/scoring.py`, `dsp_engine/segments.py` | pCTR×pCVR×value を経験ベイズ shrinkage 推定（cliff 廃止）。WARM_THRESHOLD を config 化。device(platform) セグメント乗数を定期バッチ事前計算。win-rate は可視化のみ。完了（2026-05-22）|
 | 6 | creative / publisher / app / placement 別レポート | 中 | 未着手 | Fuji | `dsp_engine/reporting.py` | geo・device・deal_id 軸も追加 |
 | 7 | A/B テスト・holdout 基盤 | 中 | 未着手 | Fuji + handoff #16 | （新規 `DspCreativeDB` 等） | 複数クリエイティブ 1:N 化が前提。`bid.crid` への click_token 流用も是正 |
 | 8 | fraud / IVT / brand safety 監視 | 中 | 未着手 | Fuji + handoff #9 | `dsp_engine/attribution.py` | クリック連打レート制限（Redis カウンタ）を含む |
@@ -71,3 +71,5 @@
 | 2026-05-22 | #1 OpenRTB 2.6 スキーマ拡張を完了。`auction/openrtb.py` を 2.6 相当へ拡張（App/Source/Regs/Pmp/Deal/eids/burl・lurl/Video 詳細/Device 拡張）。`tests/test_openrtb_26.py` 13件 PASS、既存 38件非破壊。 |
 | 2026-05-22 | #2 first-price auction 対応 + bid shading を完了。`auction/engine.py` を `BidRequest.at` で first/second 決済切替、`dsp_engine/shading.py` 新規（P50 分位点 bid shading）、`bidder.py` 統合。テスト 14件追加（auction 5 / shading 7 / dsp_engine 2）全 PASS、既存非破壊。動的フロア最適化は #11 へ分離。 |
 | 2026-05-22 | #3 サプライチェーン検証（フルスコープ）を完了。Phase A schain 構造検証（入札パス内）/ B sellers.json 突合（TTL キャッシュ + バッチ）/ C ads.txt・app-ads.txt 検証 / D 自社 sellers.json INTERMEDIARY 修正。新規モジュール supply_chain / sjcache / batch / adstxt + マイグレーション dspengine0004。テスト 29件追加・全 PASS（全体 246 passed）。入札パスに外部 fetch を入れない設計。 |
+| 2026-05-22 | #4 入札ログ完全化 + 予算 TOCTOU 対策を完了。新規 `nbr.py`（no-bid 理由コード・拡張 500番台）/ `DspBidLogDB`（dsp_bid_logs）+ マイグレーション dspengine0005。`handle_bid_request` 全分岐で判定ログ（DB 全行 + Redis nbr 集計）。`record_dsp_win` で総予算超過を検知し `budget_exhausted` 自動切替（TOCTOU 抑止）。`pacing.record_spend` の INCRBYFLOAT+EXPIRE を Lua で原子化。admin `GET /dsp-engine/admin/bid-logs/api` 追加。テスト 12件追加・全 PASS（全体 258 passed、6 failed は既知 MDM 事前不具合）。 |
+| 2026-05-22 | #5 ベースライン ML を完了。`scoring.py` を pCTR×pCVR×value の経験ベイズ shrinkage 推定に刷新（実績 50 件硬切替の cliff を廃止）。`WARM_THRESHOLD` を `config.warm_threshold`（prior strength）へ設定化。新規 `segments.py` + `DspSegmentPerfDB`（dspengine0006）で device(platform) 別 CTR 乗数を定期バッチ事前計算し、入札時は L1 キャッシュ参照のみで pCTR 補正。win-rate は `get_campaign_win_rates` で算出し admin/bid-logs/api に追加（入札へは非反映）。テスト 13件追加・全 PASS（全体 271 passed、6 failed は既知 MDM 事前不具合）。 |

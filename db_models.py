@@ -941,3 +941,56 @@ class DspClickEventDB(Base):
     clicked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+
+
+class DspBidLogDB(Base):
+    """
+    DSP エンジンの入札判定ログ（bid request 1 件につき 1 行）。
+
+    handle_bid_request の全分岐（入札成立 / 各 no-bid 理由）を記録し、
+    no-bid 時は理由コード nbr（dsp_engine/nbr.py）を持つ。
+    落札ログ DspSpendLogDB が「勝った入札」だけを記録するのに対し、
+    本テーブルは「入札しなかった分も含む全 bid request」を記録する。
+    """
+    __tablename__ = "dsp_bid_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(40), default="ssp-node", index=True)
+    imp_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    bidfloor_usd: Mapped[float] = mapped_column(Float, default=0.0)  # imp.bidfloor(USD CPM)
+    outcome: Mapped[str] = mapped_column(String(10), default="no_bid")  # bid / no_bid
+    # no-bid 理由コード（outcome=no_bid のときのみ。bid 成立時は NULL）
+    nbr: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    # 入札成立時の落札候補キャンペーン
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    bid_price_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 入札CPM(USD)
+    bid_cpm_jpy: Mapped[Optional[float]] = mapped_column(Float, nullable=True)    # 入札CPM(円)
+    shaded: Mapped[bool] = mapped_column(Boolean, default=False)  # bid shading 適用有無
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)   # 配信中キャンペーン数
+    paced_out_count: Mapped[int] = mapped_column(Integer, default=0)   # 予算で除外された数
+    logged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class DspSegmentPerfDB(Base):
+    """
+    DSP エンジンの device セグメント別パフォーマンス（入札 ML ベースライン）。
+
+    定期バッチ（dsp_engine/segments.py）が DspSpendLogDB（imp）と
+    DspClickEventDB（click）から platform 別 CTR を集計し、全体 CTR に対する
+    乗数（multiplier）を算出して upsert する。入札時はこの乗数を L1 キャッシュ
+    経由で参照し pCTR を補正する（入札パスに DB I/O を入れない）。
+    """
+    __tablename__ = "dsp_segment_perf"
+
+    segment: Mapped[str] = mapped_column(String(20), primary_key=True)  # android/ios/web/unknown
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    ctr: Mapped[float] = mapped_column(Float, default=0.0)
+    # 全体 CTR に対する乗数。[SEG_MULT_MIN, SEG_MULT_MAX] でクランプ。低サンプル時は 1.0。
+    multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

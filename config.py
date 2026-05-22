@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # dsp_engine: 円⇔ドル換算レート（Phase 2 で固定値から設定化。動的更新は currency.py）
     jpy_per_usd: float = 150.0
 
+    # dsp_engine: 入札スコアリングの shrinkage prior strength（経験ベイズ）。
+    # 観測サンプル数がこの値のとき観測値と campaign prior が 50:50 でブレンドされる。
+    # 大きいほど実績を信用するのに必要なサンプルが増える（旧 WARM_THRESHOLD の後継）。
+    warm_threshold: int = 50
+
     # 管理者認証（.env で上書き必須）
     admin_api_key: str = "change-me-admin-key"
 

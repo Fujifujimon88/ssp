@@ -80,15 +80,22 @@ def test_scoring_cold_start_formula():
     assert abs(compute_bid_cpm_jpy(c, stats) - 1600.0) < 1e-6
 
 
-def test_scoring_warm_uses_realized_revenue():
-    """実績期(impressions>=50): bid は実績の revenue/impression を使う"""
+def test_scoring_warm_blends_observed_with_prior():
+    """実績が貯まると bid は観測実績へ shrinkage でブレンドされる（#5: 旧 cliff を廃止）"""
     c = make_campaign(
         margin_rate=0.0, bid_floor_jpy=1.0, bid_cap_jpy=1e12,
-        base_ctr=0.99, target_cvr=0.99, avg_purchase_value_jpy=1e9,  # コールド式なら巨大値
+        base_ctr=0.01, target_cvr=0.02, avg_purchase_value_jpy=3000.0,
     )
-    stats = {"impressions": 100, "conversions": 10, "revenue_jpy": 50_000.0}
-    # 実績 ev = 50000 / 100 = 500 ; cpm = 500 * 1.0 * 1000 = 500000
-    assert abs(compute_bid_cpm_jpy(c, stats) - 500_000.0) < 1e-3
+    cold = {"impressions": 0, "clicks": 0, "conversions": 0, "revenue_jpy": 0.0}
+    # 観測 CTR/CVR/単価すべて prior を上回る高パフォーマンス実績
+    warm = {"impressions": 1000, "clicks": 100, "conversions": 30, "revenue_jpy": 300_000.0}
+    cold_cpm = compute_bid_cpm_jpy(c, cold)
+    warm_cpm = compute_bid_cpm_jpy(c, warm)
+    # 観測実績が prior より高い → warm の入札はコールドを上回る
+    assert warm_cpm > cold_cpm
+    # かつ「観測値そのまま」よりは低い（shrinkage が prior へ引き戻す）
+    pure_observed_cpm = (100 / 1000) * (30 / 100) * (300_000 / 30) * 1000.0
+    assert warm_cpm < pure_observed_cpm
 
 
 def test_scoring_floor_clamp():
@@ -657,9 +664,15 @@ async def test_handle_bid_request_at1_applies_shading(db):
     rate = get_jpy_per_usd()
     price_first = resp_first.seatbid[0].bid[0].price
     price_second = resp_second.seatbid[0].bid[0].price
-    # raw cpm = 0.01*0.02*3000 * (1-0.20) * 1000 = 480 円
-    assert abs(price_first - 120.0 / rate) < 1e-6   # shaded（過去落札 P50 = 120円）
-    assert abs(price_second - 480.0 / rate) < 1e-6  # second-price は raw フルプライス
+    # at=2 は shading 非適用 → scoring の raw 入札。
+    # #5 shrinkage: 12imp/0click が観測 CTR=0% として pCTR を prior から引き下げる。
+    from dsp_engine.scoring import compute_bid_cpm_jpy
+    expected_raw = compute_bid_cpm_jpy(make_campaign(
+        id="camp-shade-ref", base_ctr=0.01, target_cvr=0.02, avg_purchase_value_jpy=3000.0,
+        margin_rate=0.20, bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
+    ), {"impressions": 12, "clicks": 0, "conversions": 0, "revenue_jpy": 0.0})
+    assert abs(price_first - 120.0 / rate) < 1e-6        # shaded（過去落札 P50 = 120円）
+    assert abs(price_second - expected_raw / rate) < 1e-6  # second-price は raw フルプライス
     assert price_first < price_second
 
 
@@ -685,5 +698,10 @@ async def test_handle_bid_request_at2_no_shading(db):
 
     assert resp is not None
     rate = get_jpy_per_usd()
-    # at=2 は shading 非適用 → raw cpm 480円 / rate
-    assert abs(resp.seatbid[0].bid[0].price - 480.0 / rate) < 1e-6
+    # at=2 は shading 非適用 → scoring の raw 入札（#5 shrinkage: 12imp/0click が pCTR を引き下げる）
+    from dsp_engine.scoring import compute_bid_cpm_jpy
+    expected_raw = compute_bid_cpm_jpy(make_campaign(
+        id="camp-ns-ref", base_ctr=0.01, target_cvr=0.02, avg_purchase_value_jpy=3000.0,
+        margin_rate=0.20, bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
+    ), {"impressions": 12, "clicks": 0, "conversions": 0, "revenue_jpy": 0.0})
+    assert abs(resp.seatbid[0].bid[0].price - expected_raw / rate) < 1e-6

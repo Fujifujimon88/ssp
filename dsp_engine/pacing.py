@@ -21,6 +21,15 @@ SAFETY_MARGIN = 0.9          # ペース許容額の90%で入札停止
 _KEY_PREFIX = "dsp:pace"
 _SPEND_TTL_SEC = 86400 * 2   # 消化カウンタは2日で失効
 
+# 消化加算とTTL更新を1往復で原子的に行う Lua スクリプト。
+# INCRBYFLOAT と EXPIRE を別の await に分けると、その隙間で別リクエストが
+# 割り込んで TTL 更新前にキーが参照される余地があるため Lua にまとめる。
+_INCR_EXPIRE_LUA = """
+local v = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return v
+"""
+
 # Redis 不在時のインメモリフォールバック {key: spend_jpy}
 _mem_spend: dict[str, float] = {}
 
@@ -57,8 +66,8 @@ class BudgetPacer:
         key = self._key(campaign_id, now.date())
         r = await get_redis()
         if r:
-            new_total = await r.incrbyfloat(key, amount_jpy)
-            await r.expire(key, _SPEND_TTL_SEC)
+            # INCRBYFLOAT + EXPIRE を Lua で原子化（TOCTOU 窓を作らない）
+            new_total = await r.eval(_INCR_EXPIRE_LUA, 1, key, amount_jpy, _SPEND_TTL_SEC)
             return float(new_total)
         _mem_spend[key] = _mem_spend.get(key, 0.0) + amount_jpy
         return _mem_spend[key]
