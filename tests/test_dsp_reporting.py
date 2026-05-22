@@ -10,7 +10,7 @@
 
 実行: cd ssp_platform && pytest tests/test_dsp_reporting.py -v
 """
-from datetime import date
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -237,7 +237,8 @@ async def test_run_report_by_publisher(db):
                          publisher_id="pub-2", spend_jpy=30.0))
     await db.commit()
 
-    rows = await run_report(db, date_from=date.today(), date_to=date.today(),
+    rows = await run_report(db, date_from=datetime.now(timezone.utc).date(),
+                            date_to=datetime.now(timezone.utc).date(),
                             dimensions=["publisher"])
     by_pub = {r["publisher"]: r for r in rows}
     assert by_pub["pub-1"]["impressions"] == 2
@@ -254,7 +255,8 @@ async def test_run_report_campaign_dim_still_works(db):
     db.add(DspSpendLogDB(campaign_id="camp-old", click_token="o1", spend_jpy=200.0))
     await db.commit()
 
-    rows = await run_report(db, date_from=date.today(), date_to=date.today(),
+    rows = await run_report(db, date_from=datetime.now(timezone.utc).date(),
+                            date_to=datetime.now(timezone.utc).date(),
                             dimensions=["campaign"])
     assert rows[0]["campaign"] == "camp-old"
     assert rows[0]["spend_jpy"] == 200.0
