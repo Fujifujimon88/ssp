@@ -133,7 +133,7 @@
 - Mitigation: 真の隔離が要るなら Agent の `isolation: worktree`。共有 working tree で作業するなら `git commit` 直前に毎回 `git branch --show-current` で着地先を確認する。
 - Detection: `git commit` 出力の `[<branch> <hash>]` が想定 branch と違う / `git log` に並行セッションの commit が割り込む。
 
-### 24. 日付依存テストは UTC で統一する（`date.today()` ローカル日付を使わない）
+### 25. 日付依存テストは UTC で統一する（`date.today()` ローカル日付を使わない）
 - Date: 2026-05-23 / Trigger: `test_dsp_reporting.py` の run_report 系2件が、日付をまたいだ実行（JST 早朝＝UTC 前日）で失敗。前日は通っていた。
 - Root Cause: テストが `date.today()`（マシンのローカル日付）でレポート期間を絞る一方、`DspSpendLogDB.logged_at` の既定値は `datetime.now(timezone.utc)`。JST と UTC の日付境界でデータが期間外になる。
 - Mitigation: 日付依存テストはデータ側のタイムゾーンに合わせる。UTC 既定のデータには `datetime.now(timezone.utc).date()` で絞る。`date.today()`（ローカル）は使わない。
