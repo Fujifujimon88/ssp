@@ -32,10 +32,12 @@ from auction.openrtb import BidRequest
 from auth import create_portal_token, decode_portal_token, hash_password, verify_password
 from config import settings
 from database import get_db
-from dsp_engine import campaign_manager, exchange, reporting, supply
+from cache import get_redis
+from dsp_engine import campaign_manager, exchange, fraud, reporting, supply
 from dsp_engine.attribution import (
     get_campaign_roas, normalize_conversion_payload, record_click, record_conversion,
 )
+from dsp_engine.fraud import validate_revenue
 from dsp_engine.bidder import (
     click_destination_url,
     get_bid_log_summary,
@@ -112,6 +114,21 @@ async def receive_conversion(request: Request, db: AsyncSession = Depends(get_db
             raise HTTPException(status_code=401, detail="invalid secret")
 
     norm = normalize_conversion_payload(params)
+
+    # revenue_jpy の validate_revenue ガード（#8: 不正 revenue を 0 に丸める）
+    campaign_for_rev = await campaign_manager.get_campaign(db, norm["campaign_id"])
+    if campaign_for_rev is not None:
+        if not validate_revenue(
+            norm["revenue_jpy"],
+            avg_purchase_value_jpy=campaign_for_rev.avg_purchase_value_jpy,
+            revenue_cap_multiplier=settings.dsp_revenue_cap_multiplier,
+        ):
+            logger.warning(
+                f"receive_conversion: invalid revenue_jpy={norm['revenue_jpy']} "
+                f"for campaign={norm['campaign_id']} — zeroing"
+            )
+            norm["revenue_jpy"] = 0.0
+
     try:
         event, created = await record_conversion(
             db,
@@ -132,11 +149,25 @@ async def receive_conversion(request: Request, db: AsyncSession = Depends(get_db
 
 @router.get("/click", summary="クリック計測トラッカー（記録→LPへリダイレクト）")
 async def click_redirect(
+    request: Request,
     ct: str = Query(..., description="click_token"),
     db: AsyncSession = Depends(get_db),
 ):
     """広告マークアップのクリックリンク先。クリックを記録し広告主 LP へ 302 する。"""
-    log = await record_click(db, ct)
+    client_ip = request.client.host if request.client else ""
+    redis = await get_redis()
+    token_count, ip_count = await fraud.incr_click_counters(redis, ct, client_ip)
+    rate_limited = fraud.check_click_rate_limit(
+        None, ct, client_ip,
+        token_limit=settings.dsp_click_token_limit,
+        ip_limit=settings.dsp_click_ip_limit,
+        window_seconds=settings.dsp_click_window_seconds,
+        _override_token_count=token_count,
+        _override_ip_count=ip_count,
+    )
+    if rate_limited:
+        return RedirectResponse(url="/", status_code=302)  # レート制限超過は記録せずリダイレクト
+    log = await record_click(db, ct, rate_limited=rate_limited)
     if log is None:
         return RedirectResponse(url="/", status_code=302)  # 未知トークンは安全側に
     campaign = await campaign_manager.get_campaign(db, log.campaign_id)

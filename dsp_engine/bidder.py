@@ -525,7 +525,7 @@ async def handle_bid_request(
 
     if best_campaign is None:
         # 全キャンペーンが brand safety でブロックされた場合は NBR_BRAND_SAFETY_BLOCK を使う
-        if brand_safety_blocked_count > 0 and paced_out_count == 0:
+        if brand_safety_blocked_count > 0:
             await _log_bid_decision(
                 db, bid_request=bid_request, source=source, imp=imp,
                 outcome="no_bid", nbr=NBR_BRAND_SAFETY_BLOCK,

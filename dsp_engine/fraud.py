@@ -170,3 +170,33 @@ def is_brand_safety_blocked(bid_request, campaign) -> bool:
             return True
 
     return False
+
+
+async def incr_click_counters(
+    redis,
+    token: str,
+    ip: str,
+    window_seconds: int = 3600,
+) -> tuple[int, int]:
+    """クリックカウンタを Redis で INCR+EXPIRE し、(token_count, ip_count) を返す。
+
+    redis=None の場合は (0, 0) を返す（Redis 不在フォールバック）。
+    token カウンタキー: dsp:click:token:{token}
+    ip カウンタキー:    dsp:click:ip:{ip}
+
+    Returns:
+        (token_count, ip_count): ウィンドウ内の累積カウント
+    """
+    if redis is None:
+        return (0, 0)
+
+    token_key = f"dsp:click:token:{token}"
+    ip_key = f"dsp:click:ip:{ip}"
+
+    token_count = await redis.incr(token_key)
+    await redis.expire(token_key, window_seconds)
+
+    ip_count = await redis.incr(ip_key)
+    await redis.expire(ip_key, window_seconds)
+
+    return (token_count, ip_count)
