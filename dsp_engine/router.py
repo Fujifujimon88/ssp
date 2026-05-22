@@ -155,7 +155,11 @@ async def click_redirect(
 ):
     """広告マークアップのクリックリンク先。クリックを記録し広告主 LP へ 302 する。"""
     client_ip = request.client.host if request.client else ""
-    redis = await get_redis()
+    try:
+        redis = await get_redis()
+    except Exception as exc:
+        logger.warning(f"click_redirect: get_redis failed — rate limiting skipped: {exc}")
+        redis = None
     token_count, ip_count = await fraud.incr_click_counters(redis, ct, client_ip)
     rate_limited = fraud.check_click_rate_limit(
         None, ct, client_ip,
@@ -167,7 +171,7 @@ async def click_redirect(
     )
     if rate_limited:
         return RedirectResponse(url="/", status_code=302)  # レート制限超過は記録せずリダイレクト
-    log = await record_click(db, ct, rate_limited=rate_limited)
+    log = await record_click(db, ct)
     if log is None:
         return RedirectResponse(url="/", status_code=302)  # 未知トークンは安全側に
     campaign = await campaign_manager.get_campaign(db, log.campaign_id)

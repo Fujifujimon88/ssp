@@ -194,9 +194,11 @@ async def incr_click_counters(
     ip_key = f"dsp:click:ip:{ip}"
 
     token_count = await redis.incr(token_key)
-    await redis.expire(token_key, window_seconds)
+    if token_count == 1:
+        await redis.expire(token_key, window_seconds)
 
     ip_count = await redis.incr(ip_key)
-    await redis.expire(ip_key, window_seconds)
+    if ip_count == 1:
+        await redis.expire(ip_key, window_seconds)
 
     return (token_count, ip_count)
