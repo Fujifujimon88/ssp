@@ -609,6 +609,9 @@ class DspConfigDB(Base):
     # 外部エクスチェンジ認証用の共有シークレット（X-DSP-Secret ヘッダーで照合。NULL=認証不要）
     api_secret: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # ── サプライチェーン検証（schain / sellers.json）拡張カラム ──
+    # exchange_asi: このエクスチェンジ自身の asi ドメイン（schain 最終ノード照合用）。
+    # 接続名(name)は任意文字列なので asi に流用してはならない。NULL=最終ノード検証スキップ。
+    exchange_asi: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # schain_required: True=schain 検証失敗で入札拒否, False=警告のみ, NULL=無検証
     schain_required: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     # allowed_asi_domains: 許可する schain asi ドメインのリスト（JSON配列文字列。NULL/空=無制限）
@@ -844,6 +847,7 @@ class DspCampaignDB(Base):
     target_cvr: Mapped[float] = mapped_column(Float, default=0.02)        # コールドスタートpCVR
 
     # クリエイティブ（MVP: インライン1素材）
+    creative_id: Mapped[str] = mapped_column(String(36), default=_uuid)  # レポート creative 軸（#6。1:N 化は #7）
     creative_title: Mapped[str] = mapped_column(String(200), default="")
     creative_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     creative_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -884,6 +888,13 @@ class DspSpendLogDB(Base):
     bid_price_jpy: Mapped[float] = mapped_column(Float, default=0.0)      # 入札CPM(円)
     cleared_price_jpy: Mapped[float] = mapped_column(Float, default=0.0)  # 落札価格CPM(円)
     spend_jpy: Mapped[float] = mapped_column(Float, default=0.0)          # 実消化額(=cleared/1000)
+    # レポート多次元軸（#6）。落札時に BidRequest + campaign から非正規化記録。
+    creative_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    publisher_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    app_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    placement: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    geo: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    deal_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     logged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
@@ -911,6 +922,13 @@ class DspConversionEventDB(Base):
     # direct / s2s_appsflyer / s2s_adjust
     event_type: Mapped[str] = mapped_column(String(50), default="purchase")
     revenue_jpy: Mapped[float] = mapped_column(Float, default=0.0)
+    # レポート多次元軸（#6）。click_token 経由で spend log からコピー。
+    creative_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    publisher_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    app_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    placement: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    geo: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    deal_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     # 冪等性キー（重複ポストバック排除）
     dedup_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
     raw_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -938,6 +956,13 @@ class DspClickEventDB(Base):
     impression_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(10), default="unknown")
     source: Mapped[str] = mapped_column(String(40), default="ssp-node")
+    # レポート多次元軸（#6）。click_token 経由で spend log からコピー。
+    creative_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    publisher_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    app_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    placement: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    geo: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    deal_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     clicked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )

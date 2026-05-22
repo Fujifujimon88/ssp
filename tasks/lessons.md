@@ -84,3 +84,9 @@
 - Root Cause: 既存マイグレーション群は `Base.metadata.create_all` でテーブルが先に存在する前提で書かれており、base からの全チェーンが SQLite で通らない。
 - Mitigation: `ssp.db`（全テーブルあり・未スタンプ）をコピー → 直前の head で `alembic stamp` → `alembic upgrade head` で新規分のみ検証。本番 Postgres には `upgrade` しない（read-only の `alembic current` のみ）。
 - Detection: テーブル・カラム・index を `pragma table_info` 等で確認。
+
+### 17. 新規マイグレーション採番は handoff でなく `alembic heads` を信じる
+- Date: 2026-05-22 / Trigger: handoff が「migration 0001〜0006」と書いていたため `dspengine0007` を採番したが、`alembic heads` は `dspengine0008` を返した。
+- Root Cause: 別タスク #6 の未コミット WIP migration（`add_dsp_report_dimensions.py` = 0008）が `alembic/versions/` に置かれていた。alembic は untracked ファイルも走査する。`Glob "dspengine*.py"` は revision ID とファイル名が別物（記述的 slug 命名）のため空振りした。
+- Mitigation: migration 作成前に必ず `python -m alembic heads` と `grep -rhn "^revision" alembic/versions/*.py` で実 revision を確認。handoff の記述は信用しない。
+- Detection: `alembic heads` が単一 head か / 期待した revision か。検証時は WIP を巻き込まないよう `upgrade <自分のrevision>` で範囲限定（`upgrade head` にしない）。

@@ -8,6 +8,8 @@ auction_engine からは同一プロセス内の直接 Python 呼び出しで使
 
 落札時は main.py が record_dsp_win() を呼び、DspSpendLogDB と予算消化を記録する。
 """
+import hashlib
+import hmac
 import html
 import logging
 import urllib.parse
@@ -34,6 +36,7 @@ from dsp_engine.nbr import (
     nbr_label,
 )
 from dsp_engine.pacing import BudgetPacer
+from dsp_engine.reporting import extract_report_dims
 from dsp_engine.scoring import compute_bid_cpm_jpy
 from dsp_engine.segments import get_segment_multiplier, platform_of
 from dsp_engine.shading import compute_shaded_bid, fetch_past_cleared_prices
@@ -285,17 +288,47 @@ def render_adm(campaign, imp, click_token: str) -> str:
     )
 
 
+def _win_notice_message(ct: str, cid: str, src: str, bid: float) -> str:
+    """win notice 署名対象の正規化文字列（bid は 6 桁固定で URL 往復差を吸収）。"""
+    return f"{ct}|{cid}|{src}|{float(bid):.6f}"
+
+
+def sign_win_notice(ct: str, cid: str, src: str, bid: float) -> str:
+    """win notice（nurl）の改竄防止署名を生成する（HMAC-SHA256 / settings.secret_key）。
+
+    ${AUCTION_PRICE} マクロで置換される price は署名対象に含められないため、
+    署名できるのは ct / cid / src / bid の 4 項目。price 改竄は呼び出し側で
+    bid 上限クランプにより別途緩和する。
+    """
+    return hmac.new(
+        settings.secret_key.encode("utf-8"),
+        _win_notice_message(ct, cid, src, bid).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_win_notice(sig: Optional[str], ct: str, cid: str, src: str, bid: float) -> bool:
+    """win notice の署名を検証する（タイミング安全比較）。sig 欠落は False。"""
+    if not sig:
+        return False
+    expected = sign_win_notice(ct, cid, src, bid)
+    return hmac.compare_digest(sig, expected)
+
+
 def win_notice_url(campaign_id: str, click_token: str, source: str, bid_price_usd: float) -> str:
     """OpenRTB 落札通知 URL（nurl）。外部エクスチェンジが落札時に呼ぶ。
 
     ${AUCTION_PRICE} はエクスチェンジが実落札価格(USD CPM)に置換するマクロ。
+    第三者による spend 偽装を防ぐため HMAC 署名(sig)を付与する。
     """
     base = settings.ssp_endpoint.rstrip("/")
+    bid = round(bid_price_usd, 6)
     qs = urllib.parse.urlencode({
         "ct": click_token,
         "cid": campaign_id,
         "src": source,
-        "bid": round(bid_price_usd, 6),
+        "bid": bid,
+        "sig": sign_win_notice(click_token, campaign_id, source, bid),
     })
     return f"{base}/dsp-engine/win?{qs}&price=${{AUCTION_PRICE}}"
 
@@ -424,11 +457,17 @@ async def record_dsp_win(
     bid_price_usd: float,
     platform: str = "unknown",
     source: str = "ssp-node",
+    bid_request: Optional[BidRequest] = None,
 ) -> DspSpendLogDB:
     """SSP オークションで dsp-engine が落札したときに main.py から呼ぶ。
 
     落札価格（USD CPM）を円換算し、DspSpendLogDB を記録して予算消化に反映する。
     1インプレッションの実消化額 = 落札 CPM(円) / 1000。
+
+    bid_request を渡すとレポート多次元軸（#6: creative/publisher/app/placement/
+    geo/deal_id）を spend log に非正規化記録する。BidRequest を持たない経路
+    （外部エクスチェンジ win_notice 等）では None でよく、その場合 publisher 等は
+    null 記録（creative_id は campaign から解決する）。
 
     冪等性: 同一 click_token の落札が既にあれば再記録・再消化しない
     （外部エクスチェンジの nurl 再送による二重計上を防ぐ）。
@@ -445,6 +484,11 @@ async def record_dsp_win(
     bid_cpm_jpy = bid_price_usd * rate
     spend_jpy = cleared_cpm_jpy / 1000.0
 
+    # レポート多次元軸（#6）: creative_id は campaign から、他は BidRequest から解決。
+    dims = extract_report_dims(bid_request)
+    campaign = await db.get(DspCampaignDB, campaign_id)
+    creative_id = campaign.creative_id if campaign is not None else None
+
     log = DspSpendLogDB(
         campaign_id=campaign_id,
         impression_id=impression_id,
@@ -454,6 +498,12 @@ async def record_dsp_win(
         bid_price_jpy=bid_cpm_jpy,
         cleared_price_jpy=cleared_cpm_jpy,
         spend_jpy=spend_jpy,
+        creative_id=creative_id,
+        publisher_id=dims["publisher_id"],
+        app_id=dims["app_id"],
+        placement=dims["placement"],
+        geo=dims["geo"],
+        deal_id=dims["deal_id"],
     )
     db.add(log)
     try:

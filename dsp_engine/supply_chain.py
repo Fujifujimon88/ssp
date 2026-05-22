@@ -41,13 +41,17 @@ def verify_schain(
         allowed_asi_domains: 許可する asi のリスト（空なら無制限）。
         strict: True=検証失敗で REJECT、False=WARN 止まり。
 
+    exchange_asi は送信元エクスチェンジ自身の asi ドメイン。SSP 連携画面の
+    「接続名」とは別物（接続名は任意文字列のため asi に流用してはならない）。
+    未設定（空文字/None）のときは最終ノード asi 一致を検証できないためスキップする。
+
     判定（REJECT 条件を優先評価）:
-      1. schain 未送信        → strict ? REJECT : WARN
-      2. nodes 空             → REJECT
-      3. 最終ノード asi 不一致 → REJECT
-      4. 許可リスト外の asi    → strict ? REJECT : WARN
-      5. complete=0           → WARN
-      6. 上記なし             → PASS
+      1. schain 未送信         → strict ? REJECT : WARN
+      2. nodes 空              → REJECT
+      3. 最終ノード asi 不一致  → REJECT（exchange_asi 未設定時はスキップ）
+      4. 許可リスト外の asi     → strict ? REJECT : WARN
+      5. complete=0            → WARN
+      6. 上記なし              → PASS
     """
     if schain is None:
         if strict:
@@ -58,13 +62,15 @@ def verify_schain(
     if not nodes:
         return SchainResult(SchainVerdict.REJECT, "schain has no nodes", 0)
 
-    last_asi = (nodes[-1].asi or "").lower()
-    if last_asi != exchange_asi.lower():
-        return SchainResult(
-            SchainVerdict.REJECT,
-            f"last node asi {last_asi!r} != exchange {exchange_asi.lower()!r}",
-            len(nodes),
-        )
+    expected_asi = (exchange_asi or "").lower()
+    if expected_asi:
+        last_asi = (nodes[-1].asi or "").lower()
+        if last_asi != expected_asi:
+            return SchainResult(
+                SchainVerdict.REJECT,
+                f"last node asi {last_asi!r} != exchange {expected_asi!r}",
+                len(nodes),
+            )
 
     if allowed_asi_domains:
         allowed = {d.lower() for d in allowed_asi_domains}
@@ -77,6 +83,25 @@ def verify_schain(
         return SchainResult(SchainVerdict.WARN, "schain incomplete (complete=0)", len(nodes))
 
     return SchainResult(SchainVerdict.PASS, "ok", len(nodes))
+
+
+def verifiable_nodes(
+    schain: Optional[SupplyChain], exchange_asi: str
+) -> list:
+    """sellers.json 突合の対象にできる schain ノードを返す（純粋関数）。
+
+    各 asi の sellers.json は「その asi が直接取引する seller」だけを列挙する。
+    よって突合できるのは asi が当該エクスチェンジ（exchange_asi）と一致する
+    ノードのみ。上流ノードの sid は上流側の sellers.json に属するため、
+    当該エクスチェンジの sellers.json で検証してはならない（多段 schain の
+    誤 no-bid を防ぐ）。
+
+    exchange_asi 未設定（空文字/None）のときは突合不能なので空リストを返す。
+    """
+    if schain is None or not schain.nodes or not exchange_asi:
+        return []
+    target = exchange_asi.lower()
+    return [n for n in schain.nodes if (n.asi or "").lower() == target]
 
 
 def extract_schain(bid_request) -> Optional[SupplyChain]:

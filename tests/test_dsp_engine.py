@@ -705,3 +705,100 @@ async def test_handle_bid_request_at2_no_shading(db):
         margin_rate=0.20, bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
     ), {"impressions": 12, "clicks": 0, "conversions": 0, "revenue_jpy": 0.0})
     assert abs(resp.seatbid[0].bid[0].price - expected_raw / rate) < 1e-6
+
+
+# ── win notice 署名（レビュー指摘3: nurl 無署名による spend 偽装の防止）──
+
+def test_sign_verify_win_notice_roundtrip():
+    """正しく署名した win notice は検証を通る"""
+    from dsp_engine.bidder import sign_win_notice, verify_win_notice
+
+    sig = sign_win_notice(ct="ct1", cid="camp-1", src="exch", bid=1.5)
+    assert verify_win_notice(sig, ct="ct1", cid="camp-1", src="exch", bid=1.5) is True
+
+
+def test_verify_win_notice_rejects_tampered_cid():
+    """cid を改竄した win notice は検証で弾く（任意 campaign への spend 偽装を阻止）"""
+    from dsp_engine.bidder import sign_win_notice, verify_win_notice
+
+    sig = sign_win_notice(ct="ct1", cid="camp-1", src="exch", bid=1.5)
+    assert verify_win_notice(sig, ct="ct1", cid="camp-EVIL", src="exch", bid=1.5) is False
+
+
+def test_verify_win_notice_rejects_missing_sig():
+    """署名なし（空文字 / None）は検証 NG"""
+    from dsp_engine.bidder import verify_win_notice
+
+    assert verify_win_notice("", ct="ct1", cid="camp-1", src="exch", bid=1.5) is False
+    assert verify_win_notice(None, ct="ct1", cid="camp-1", src="exch", bid=1.5) is False
+
+
+def test_win_notice_url_includes_valid_signature():
+    """win_notice_url が生成する nurl は検証可能な sig を含む"""
+    import urllib.parse
+
+    from dsp_engine.bidder import verify_win_notice, win_notice_url
+
+    url = win_notice_url("camp-1", "ct1", "exch", 1.5)
+    qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    assert "sig" in qs
+    ok = verify_win_notice(
+        qs["sig"][0], ct="ct1", cid="camp-1", src="exch", bid=float(qs["bid"][0])
+    )
+    assert ok is True
+
+
+@pytest_asyncio.fixture
+async def win_client():
+    """win notice エンドポイント用の自己完結 HTTP クライアント。
+
+    conftest の module-scoped `client` はファイルDB(test_mdm_temp.db)を使い、
+    Windows で他モジュールとファイルロック競合（PermissionError）を起こすため、
+    :memory: + StaticPool でこのモジュール内に隔離する。
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from database import get_db
+    from main import app
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _override_get_db():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        yield c
+    app.dependency_overrides.clear()
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_win_endpoint_rejects_unsigned_request(win_client):
+    """署名なしの win notice 受信は 403（spend 計上させない）"""
+    resp = await win_client.get(
+        "/dsp-engine/win",
+        params={"ct": "x", "cid": "camp-1", "src": "exch", "bid": 1.0, "price": "999"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_win_endpoint_rejects_forged_signature(win_client):
+    """偽造署名の win notice 受信も 403"""
+    resp = await win_client.get(
+        "/dsp-engine/win",
+        params={"ct": "x", "cid": "camp-1", "src": "exch", "bid": 1.0,
+                "price": "999", "sig": "deadbeefdeadbeef"},
+    )
+    assert resp.status_code == 403

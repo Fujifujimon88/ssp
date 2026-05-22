@@ -45,6 +45,7 @@
     <h2>SSPエクスチェンジ接続を追加</h2>
     <form method="post" action="/dsp-engine/admin/supply" class="row">
       <div><label>接続名</label><input name="name" required placeholder="例: fluct-exchange"></div>
+      <div><label>asiドメイン(schain照合用)</label><input name="exchange_asi" placeholder="例: fluct.com"></div>
       <div><label>OpenRTBエンドポイント</label><input name="endpoint_url" required placeholder="https://..." size="34"></div>
       <div><label>タイムアウト(ms)</label><input name="timeout_ms" type="number" value="200" style="width:90px"></div>
       <div><label>QPS上限(0=無制限)</label><input name="qps_limit" type="number" value="0" style="width:90px"></div>

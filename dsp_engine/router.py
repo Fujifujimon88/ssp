@@ -41,9 +41,15 @@ from dsp_engine.bidder import (
     get_bid_log_summary,
     handle_bid_request,
     record_dsp_win,
+    verify_win_notice,
 )
 from dsp_engine.sjcache import get_cached_sellers, lookup_seller
-from dsp_engine.supply_chain import SchainVerdict, extract_schain, verify_schain
+from dsp_engine.supply_chain import (
+    SchainVerdict,
+    extract_schain,
+    verifiable_nodes,
+    verify_schain,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -319,11 +325,13 @@ async def admin_create_supply(
     timeout_ms: int = Form(200),
     qps_limit: int = Form(0),
     api_secret: str = Form(""),
+    exchange_asi: str = Form(""),
 ):
     await supply.create_supply_connection(
         db, name=name, endpoint_url=endpoint_url,
         timeout_ms=timeout_ms, qps_limit=qps_limit,
         api_secret=api_secret or None,
+        exchange_asi=exchange_asi.strip() or None,
     )
     return RedirectResponse(url="/dsp-engine/admin/supply", status_code=303)
 
@@ -446,10 +454,11 @@ async def inbound_bid(
         return Response(status_code=204)
 
     # schain 構造検証（入札パス内・外部 I/O なし）。REJECT はノービッド(204)扱い。
+    # 照合する asi は接続名(exchange_name)ではなくエクスチェンジ自身の asi ドメイン。
     schain_obj = extract_schain(bid_request)
     sc_result = verify_schain(
         schain_obj,
-        exchange_name,
+        exch.exchange_asi or "",
         supply.parse_allowed_asi_domains(exch.allowed_asi_domains),
         strict=bool(exch.schain_required),
     )
@@ -460,17 +469,20 @@ async def inbound_bid(
         logger.info(f"inbound_bid: schain warn from {exchange_name}: {sc_result.reason}")
 
     # sellers.json 突合（L1 キャッシュ参照のみ・外部 I/O なし）。
+    # 当該エクスチェンジの sellers.json で検証できるのは asi が一致するノードのみ
+    # （多段 schain の上流ノードは上流側 sellers.json に属する）。
     # キャッシュ未取得時は lookup_seller がフォールバックで通す。
-    if schain_obj and schain_obj.nodes:
+    sc_nodes = verifiable_nodes(schain_obj, exch.exchange_asi or "")
+    if sc_nodes:
         sellers = get_cached_sellers(exchange_name, exch.sellers_json_cache)
-        for node in schain_obj.nodes:
-            if not lookup_seller(sellers, node.sid, node.asi):
-                logger.warning(
-                    f"inbound_bid: seller not found from {exchange_name}: "
-                    f"asi={node.asi} sid={node.sid}"
-                )
-                if exch.schain_required:
-                    return Response(status_code=204)
+    for node in sc_nodes:
+        if not lookup_seller(sellers, node.sid, node.asi):
+            logger.warning(
+                f"inbound_bid: seller not found from {exchange_name}: "
+                f"asi={node.asi} sid={node.sid}"
+            )
+            if exch.schain_required:
+                return Response(status_code=204)
 
     started = time.monotonic()
     resp = await handle_bid_request(bid_request, db, source=exchange_name)
@@ -488,13 +500,26 @@ async def win_notice(
     src: str = Query("external", description="入札元エクスチェンジ名"),
     bid: float = Query(0.0, description="入札時のCPM(USD)"),
     price: str = Query("0", description="実落札価格CPM(USD)。${AUCTION_PRICE}マクロ"),
+    sig: str = Query("", description="nurl 改竄防止の HMAC 署名"),
     db: AsyncSession = Depends(get_db),
 ):
-    """外部エクスチェンジが落札時に nurl を呼ぶ。消化・予算ペーシングを記録する。"""
+    """外部エクスチェンジが落札時に nurl を呼ぶ。消化・予算ペーシングを記録する。
+
+    nurl は広告レスポンスに露出するため、第三者による spend 偽装を防ぐ目的で
+    HMAC 署名(sig)を必須とする。署名対象は ct/cid/src/bid。price は
+    ${AUCTION_PRICE} マクロのため署名できないので、bid を上限としてクランプする。
+    """
+    if not verify_win_notice(sig, ct=ct, cid=cid, src=src, bid=bid):
+        logger.warning(f"win_notice: invalid signature (cid={cid} src={src})")
+        raise HTTPException(status_code=403, detail="invalid win notice signature")
+
     try:
         cleared_usd = float(price)
     except (TypeError, ValueError):
         cleared_usd = 0.0  # マクロ未置換などは 0 として扱う
+    # price は署名対象外。改竄による spend 水増しを防ぐため bid を上限にクランプ。
+    if bid > 0:
+        cleared_usd = min(cleared_usd, bid)
 
     try:
         await record_dsp_win(
