@@ -10,7 +10,7 @@
 
 実行: cd ssp_platform && pytest tests/test_dsp_reporting.py -v
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -237,8 +237,7 @@ async def test_run_report_by_publisher(db):
                          publisher_id="pub-2", spend_jpy=30.0))
     await db.commit()
 
-    rows = await run_report(db, date_from=datetime.now(timezone.utc).date(),
-                            date_to=datetime.now(timezone.utc).date(),
+    rows = await run_report(db, date_from=date.today(), date_to=date.today(),
                             dimensions=["publisher"])
     by_pub = {r["publisher"]: r for r in rows}
     assert by_pub["pub-1"]["impressions"] == 2
@@ -255,8 +254,34 @@ async def test_run_report_campaign_dim_still_works(db):
     db.add(DspSpendLogDB(campaign_id="camp-old", click_token="o1", spend_jpy=200.0))
     await db.commit()
 
-    rows = await run_report(db, date_from=datetime.now(timezone.utc).date(),
-                            date_to=datetime.now(timezone.utc).date(),
+    rows = await run_report(db, date_from=date.today(), date_to=date.today(),
                             dimensions=["campaign"])
     assert rows[0]["campaign"] == "camp-old"
     assert rows[0]["spend_jpy"] == 200.0
+
+
+@pytest.mark.asyncio
+async def test_run_report_uses_jst_day_boundary(db):
+    """レポートの「1日」は JST 暦日。UTC 17:00（= 翌 JST 02:00）の消化は
+    JST 翌日のレポートに計上され、JST 当日のレポートには出ない。"""
+    from dsp_engine.reporting import run_report
+
+    db.add(make_campaign(id="camp-tz"))
+    # 2026-05-22 17:00 UTC = 2026-05-23 02:00 JST
+    db.add(DspSpendLogDB(
+        campaign_id="camp-tz", click_token="tz1", spend_jpy=500.0,
+        logged_at=datetime(2026, 5, 22, 17, 0, 0, tzinfo=timezone.utc),
+    ))
+    await db.commit()
+
+    # JST 5/23 のレポートに計上される
+    rows_23 = await run_report(db, date_from=date(2026, 5, 23),
+                               date_to=date(2026, 5, 23), dimensions=["campaign"])
+    assert len(rows_23) == 1
+    assert rows_23[0]["campaign"] == "camp-tz"
+    assert rows_23[0]["spend_jpy"] == 500.0
+
+    # JST 5/22 のレポートには出ない（UTC では 5/22 でも JST では 5/23）
+    rows_22 = await run_report(db, date_from=date(2026, 5, 22),
+                               date_to=date(2026, 5, 22), dimensions=["campaign"])
+    assert rows_22 == []
