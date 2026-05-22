@@ -83,8 +83,16 @@ async def record_conversion(
             # naive datetime を aware UTC に正規化して比較
             if log_dt.tzinfo is None:
                 log_dt = log_dt.replace(tzinfo=timezone.utc)
-            # campaign_id は窓内外問わず解決する（CV の記録自体は必須）
-            campaign_id = campaign_id or spend_log.campaign_id
+            # click_token が解決できたら spend log の campaign_id を無条件採用する。
+            # リクエスト側 campaign_id を優先すると、本物の click_token と別キャンペーン
+            # ID を同時に渡して売上を別キャンペーンへ付け替えられる（セキュリティ指摘）。
+            if campaign_id and campaign_id != spend_log.campaign_id:
+                logger.warning(
+                    f"dsp-engine conversion: campaign_id mismatch — "
+                    f"request={campaign_id}, click_token resolves to "
+                    f"{spend_log.campaign_id}; using {spend_log.campaign_id}"
+                )
+            campaign_id = spend_log.campaign_id
             if log_dt >= cutoff:  # 窓内 (境界値含む)
                 impression_id = spend_log.impression_id
                 if platform == "unknown":
