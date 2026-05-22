@@ -37,7 +37,7 @@ from dsp_engine.attribution import (
     get_campaign_roas, normalize_conversion_payload, record_click, record_conversion,
 )
 from dsp_engine.bidder import (
-    click_through_url,
+    click_destination_url,
     get_bid_log_summary,
     handle_bid_request,
     record_dsp_win,
@@ -140,7 +140,12 @@ async def click_redirect(
     if log is None:
         return RedirectResponse(url="/", status_code=302)  # 未知トークンは安全側に
     campaign = await campaign_manager.get_campaign(db, log.campaign_id)
-    target = click_through_url(campaign, ct) if campaign else "/"
+    if campaign is None:
+        return RedirectResponse(url="/", status_code=302)
+    # クリックされたクリエイティブの LP へ（#7。無ければインライン素材へフォールバック）
+    creative = (await campaign_manager.get_creative(db, log.creative_id)
+                if log.creative_id else None)
+    target = click_destination_url(campaign, creative, ct)
     return RedirectResponse(url=target, status_code=302)
 
 
@@ -272,7 +277,15 @@ async def admin_create_campaign(
         fields["login_id"] = login_id
     if password:
         fields["hashed_password"] = hash_password(password)
-    await campaign_manager.create_campaign(db, **fields)
+    campaign = await campaign_manager.create_campaign(db, **fields)
+    # 主クリエイティブを DspCreativeDB として登録（#7。A/B の起点。
+    # id を campaign.creative_id に揃え、creative 軸レポートと整合させる）。
+    await campaign_manager.create_creative(
+        db, id=campaign.creative_id, campaign_id=campaign.id, name="主素材",
+        title=creative_title, body=creative_body or None,
+        image_url=creative_image_url or None, click_url=creative_click_url,
+        weight=100,
+    )
     return RedirectResponse(url="/dsp-engine/admin/campaigns", status_code=303)
 
 
@@ -285,14 +298,148 @@ async def admin_update_campaign(
     daily_budget_jpy: Optional[float] = Form(None),
     margin_rate: Optional[float] = Form(None),
     bid_cap_jpy: Optional[float] = Form(None),
+    holdout_rate: Optional[float] = Form(None),
 ):
     updated = await campaign_manager.update_campaign(
         db, campaign_id, status=status_, daily_budget_jpy=daily_budget_jpy,
-        margin_rate=margin_rate, bid_cap_jpy=bid_cap_jpy,
+        margin_rate=margin_rate, bid_cap_jpy=bid_cap_jpy, holdout_rate=holdout_rate,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="キャンペーンが見つかりません")
     return RedirectResponse(url="/dsp-engine/admin/campaigns", status_code=303)
+
+
+# ── 運用者: クリエイティブ / A/B 実験管理（#7） ─────────────────
+
+def _creative_dict(c) -> dict:
+    return {
+        "id": c.id, "campaign_id": c.campaign_id, "name": c.name,
+        "title": c.title, "body": c.body, "image_url": c.image_url,
+        "click_url": c.click_url, "width": c.width, "height": c.height,
+        "status": c.status, "weight": c.weight,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def _experiment_dict(e) -> dict:
+    return {
+        "id": e.id, "campaign_id": e.campaign_id, "name": e.name,
+        "status": e.status, "winner_creative_id": e.winner_creative_id,
+        "started_at": e.started_at.isoformat() if e.started_at else None,
+        "concluded_at": e.concluded_at.isoformat() if e.concluded_at else None,
+    }
+
+
+@router.get("/admin/campaigns/{campaign_id}/creatives", summary="クリエイティブ/実験一覧(JSON)",
+            dependencies=[Depends(require_admin_ip)])
+async def admin_list_creatives(campaign_id: str, db: AsyncSession = Depends(get_db)):
+    """キャンペーンのクリエイティブと A/B 実験を JSON で返す（#7）。"""
+    campaign = await campaign_manager.get_campaign(db, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="キャンペーンが見つかりません")
+    creatives = await campaign_manager.list_creatives(db, campaign_id)
+    experiments = await campaign_manager.list_experiments(db, campaign_id)
+    return JSONResponse({
+        "campaign_id": campaign_id,
+        "holdout_rate": campaign.holdout_rate,
+        "creatives": [_creative_dict(c) for c in creatives],
+        "experiments": [_experiment_dict(e) for e in experiments],
+    })
+
+
+@router.post("/admin/campaigns/{campaign_id}/creatives", summary="クリエイティブ作成",
+             dependencies=[Depends(require_admin_ip)])
+async def admin_create_creative(
+    campaign_id: str,
+    db: AsyncSession = Depends(get_db),
+    name: str = Form(...),
+    title: str = Form(""),
+    body: str = Form(""),
+    image_url: str = Form(""),
+    click_url: str = Form(...),
+    weight: int = Form(100),
+):
+    campaign = await campaign_manager.get_campaign(db, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="キャンペーンが見つかりません")
+    creative = await campaign_manager.create_creative(
+        db, campaign_id=campaign_id, name=name, title=title,
+        body=body or None, image_url=image_url or None,
+        click_url=click_url, weight=weight,
+    )
+    return JSONResponse({"status": "ok", "creative_id": creative.id})
+
+
+@router.post("/admin/creatives/{creative_id}", summary="クリエイティブ更新",
+             dependencies=[Depends(require_admin_ip)])
+async def admin_update_creative(
+    creative_id: str,
+    db: AsyncSession = Depends(get_db),
+    name: Optional[str] = Form(None),
+    title: Optional[str] = Form(None),
+    body: Optional[str] = Form(None),
+    image_url: Optional[str] = Form(None),
+    click_url: Optional[str] = Form(None),
+    weight: Optional[int] = Form(None),
+    status_: Optional[str] = Form(None, alias="status"),
+):
+    updated = await campaign_manager.update_creative(
+        db, creative_id, name=name, title=title, body=body,
+        image_url=image_url, click_url=click_url, weight=weight, status=status_,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="クリエイティブが見つかりません")
+    return JSONResponse({"status": "ok"})
+
+
+@router.post("/admin/campaigns/{campaign_id}/experiments", summary="A/B実験作成",
+             dependencies=[Depends(require_admin_ip)])
+async def admin_create_experiment(
+    campaign_id: str,
+    db: AsyncSession = Depends(get_db),
+    name: str = Form(...),
+):
+    campaign = await campaign_manager.get_campaign(db, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="キャンペーンが見つかりません")
+    exp = await campaign_manager.create_experiment(db, campaign_id=campaign_id, name=name)
+    return JSONResponse({"status": "ok", "experiment_id": exp.id})
+
+
+@router.post("/admin/experiments/{experiment_id}/conclude", summary="A/B実験を終了(winner宣言)",
+             dependencies=[Depends(require_admin_ip)])
+async def admin_conclude_experiment(
+    experiment_id: str,
+    db: AsyncSession = Depends(get_db),
+    winner_creative_id: str = Form(""),
+):
+    concluded = await campaign_manager.conclude_experiment(
+        db, experiment_id, winner_creative_id=winner_creative_id or None
+    )
+    if concluded is None:
+        raise HTTPException(status_code=404, detail="実験が見つかりません")
+    return JSONResponse({"status": "ok"})
+
+
+@router.get("/admin/campaigns/{campaign_id}/ab-report", summary="A/B実験レポート(JSON)",
+            dependencies=[Depends(require_admin_ip)])
+async def admin_ab_report(
+    campaign_id: str,
+    db: AsyncSession = Depends(get_db),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+):
+    """クリエイティブ別実績 + holdout 件数の A/B 実験レポート（#7）。"""
+    today = date.today()
+    try:
+        d_from = date.fromisoformat(date_from) if date_from else today - timedelta(days=7)
+        d_to = date.fromisoformat(date_to) if date_to else today
+    except ValueError:
+        raise HTTPException(status_code=400, detail="日付形式が不正です (YYYY-MM-DD)")
+    report = await reporting.run_ab_experiment_report(
+        db, campaign_id, date_from=d_from, date_to=d_to
+    )
+    return JSONResponse(report)
 
 
 # ── 運用者: SSP連携・外部IDマッピング ───────────────────────────
@@ -501,6 +648,7 @@ async def win_notice(
     bid: float = Query(0.0, description="入札時のCPM(USD)"),
     price: str = Query("0", description="実落札価格CPM(USD)。${AUCTION_PRICE}マクロ"),
     sig: str = Query("", description="nurl 改竄防止の HMAC 署名"),
+    crid: str = Query("", description="落札クリエイティブID（#7 レポート用ヒント）"),
     db: AsyncSession = Depends(get_db),
 ):
     """外部エクスチェンジが落札時に nurl を呼ぶ。消化・予算ペーシングを記録する。
@@ -525,7 +673,7 @@ async def win_notice(
         await record_dsp_win(
             db, campaign_id=cid, click_token=ct, impression_id=None,
             cleared_price_usd=cleared_usd, bid_price_usd=bid or cleared_usd,
-            platform="external", source=src,
+            platform="external", source=src, creative_id=crid or None,
         )
     except Exception as exc:
         logger.error(f"win_notice failed: {exc}")

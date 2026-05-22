@@ -262,16 +262,22 @@ async def header_bidding(request: Request, db: AsyncSession = Depends(get_db)):
     # dsp-engine が落札した場合は消化・予算ペーシングを記録（ROAS計測ループの起点）
     if result.winner and result.winner.dsp_id == LocalDspEngineDSP.DSP_ID:
         try:
+            # #7: click_token は bid.ext で運ばれる（旧経路の crid 流用は fallback）。
+            # crid は実クリエイティブID（落札クリエイティブ）。
+            winning_bid = result.winner.bid
+            click_token = (winning_bid.ext or {}).get("dsp_click_token") \
+                or winning_bid.crid
             await record_dsp_win(
                 db,
-                campaign_id=result.winner.bid.cid,
-                click_token=result.winner.bid.crid,
+                campaign_id=winning_bid.cid,
+                click_token=click_token,
                 impression_id=result.imp_id,
                 cleared_price_usd=result.clearing_price,
-                bid_price_usd=result.winner.bid.price,
+                bid_price_usd=winning_bid.price,
                 platform="web",
                 source="ssp-node",
                 bid_request=bid_request,
+                creative_id=winning_bid.crid,
             )
         except Exception as e:
             logger.error(f"record_dsp_win failed: {e}")

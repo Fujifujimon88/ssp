@@ -20,6 +20,7 @@ NBR_ALL_BUDGET_PACED = 501      # 候補は居たが全て予算ペース/総予
 NBR_BELOW_FLOOR = 502           # 最高入札がフロアプライス(USD CPM)未達
 NBR_SHADED_BELOW_FLOOR = 503    # bid shading 適用後にフロア未達（first-price）
 NBR_NO_IMPRESSION = 504         # BidRequest に imp が無い
+NBR_HOLDOUT = 505               # A/B テスト holdout バケットのため意図的にノービッド（#7）
 
 # 人間可読ラベル（admin レポート・ログ用）
 NBR_LABELS: dict[int, str] = {
@@ -31,6 +32,7 @@ NBR_LABELS: dict[int, str] = {
     NBR_BELOW_FLOOR: "Best bid below floor price",
     NBR_SHADED_BELOW_FLOOR: "Shaded bid below floor price",
     NBR_NO_IMPRESSION: "No impression in bid request",
+    NBR_HOLDOUT: "A/B test holdout (intentional no-bid)",
 }
 
 

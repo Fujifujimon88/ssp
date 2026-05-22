@@ -232,6 +232,7 @@ class Bid(BaseModel):
     cattax: Optional[int] = None     # カテゴリ分類体系 (1=IAB1.0, 2=IAB2.0)
     w: Optional[int] = None
     h: Optional[int] = None
+    ext: Optional[dict] = None       # 拡張領域（dsp_engine は dsp_click_token をここで運ぶ）
 
 
 class SeatBid(BaseModel):

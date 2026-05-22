@@ -846,14 +846,20 @@ class DspCampaignDB(Base):
     base_ctr: Mapped[float] = mapped_column(Float, default=0.01)          # コールドスタートpCTR
     target_cvr: Mapped[float] = mapped_column(Float, default=0.02)        # コールドスタートpCVR
 
-    # クリエイティブ（MVP: インライン1素材）
-    creative_id: Mapped[str] = mapped_column(String(36), default=_uuid)  # レポート creative 軸（#6。1:N 化は #7）
+    # クリエイティブ（後方互換のインライン1素材。#7 以降は DspCreativeDB が正）。
+    # creative_id は「主クリエイティブ」を指す（#7 マイグレーションで DspCreativeDB へ
+    # backfill 済み）。DspCreativeDB が無い場合のフォールバック表示にインライン列を使う。
+    creative_id: Mapped[str] = mapped_column(String(36), default=_uuid)
     creative_title: Mapped[str] = mapped_column(String(200), default="")
     creative_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     creative_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     creative_click_url: Mapped[str] = mapped_column(String(500), default="")
     creative_width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     creative_height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # A/B テスト holdout（#7）。0.0=holdout 無し / 1.0=全件 holdout。
+    # 入札時に best_campaign 選定後この割合のインプレッションを意図的にノービッドする。
+    holdout_rate: Mapped[float] = mapped_column(Float, default=0.0)
 
     start_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
     end_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
@@ -862,6 +868,63 @@ class DspCampaignDB(Base):
     login_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
     hashed_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class DspCreativeDB(Base):
+    """
+    DSP キャンペーンのクリエイティブ（#7。1キャンペーン : N クリエイティブ）。
+
+    入札時に weight 比例で1つ選択され、選択された creative の id が落札ログ
+    （DspSpendLogDB.creative_id）へ記録される。これにより A/B テスト（複数訴求の
+    比較）と creative 軸レポートが成立する。
+    """
+    __tablename__ = "dsp_creatives"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dsp_campaigns.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), default="")          # 管理用の名前
+    title: Mapped[str] = mapped_column(String(200), default="")
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    click_url: Mapped[str] = mapped_column(String(500), default="")     # 広告主LP
+    width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")   # active / paused
+    weight: Mapped[int] = mapped_column(Integer, default=100)           # 相対トラフィック重み
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class DspAbExperimentDB(Base):
+    """
+    DSP キャンペーンの A/B テスト実験定義（#7）。
+
+    クリエイティブ振り分け（weight）と holdout（campaign.holdout_rate）の運用上の
+    メタデータ。実験の開始・終了・winner クリエイティブの宣言を記録する。
+    入札ロジックはこのテーブルを参照しない（メタデータ管理用）。
+    """
+    __tablename__ = "dsp_ab_experiments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dsp_campaigns.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    # active / paused / concluded
+    winner_creative_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    concluded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

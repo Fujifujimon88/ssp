@@ -6,7 +6,14 @@ from typing import Optional
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_models import DspCampaignDB, DspClickEventDB, DspConversionEventDB, DspSpendLogDB
+from db_models import (
+    DspAbExperimentDB,
+    DspCampaignDB,
+    DspClickEventDB,
+    DspConversionEventDB,
+    DspCreativeDB,
+    DspSpendLogDB,
+)
 from utils import utcnow
 
 
@@ -160,3 +167,100 @@ async def get_all_campaign_stats(
             result[cid]["revenue_jpy"] = float(rev or 0.0)
 
     return result
+
+
+# ── クリエイティブ（#7。1キャンペーン : N クリエイティブ） ──────────
+
+async def list_creatives(db: AsyncSession, campaign_id: str) -> list[DspCreativeDB]:
+    """キャンペーンの全クリエイティブ一覧（管理画面用。status 問わず）。"""
+    rows = await db.execute(
+        select(DspCreativeDB)
+        .where(DspCreativeDB.campaign_id == campaign_id)
+        .order_by(DspCreativeDB.created_at.asc())
+    )
+    return list(rows.scalars().all())
+
+
+async def get_creative(db: AsyncSession, creative_id: str) -> Optional[DspCreativeDB]:
+    return await db.get(DspCreativeDB, creative_id)
+
+
+async def create_creative(db: AsyncSession, **fields) -> DspCreativeDB:
+    creative = DspCreativeDB(**fields)
+    db.add(creative)
+    await db.commit()
+    await db.refresh(creative)
+    return creative
+
+
+async def update_creative(
+    db: AsyncSession, creative_id: str, **fields
+) -> Optional[DspCreativeDB]:
+    creative = await db.get(DspCreativeDB, creative_id)
+    if creative is None:
+        return None
+    for key, value in fields.items():
+        if value is not None and hasattr(creative, key):
+            setattr(creative, key, value)
+    await db.commit()
+    await db.refresh(creative)
+    return creative
+
+
+async def get_active_creatives_by_campaign(
+    db: AsyncSession, campaign_ids: list[str]
+) -> dict[str, list[DspCreativeDB]]:
+    """複数キャンペーンの active クリエイティブを一括取得する（入札パスの N+1 回避）。
+
+    Returns: {campaign_id: [active な DspCreativeDB ...]}。
+    クリエイティブの無いキャンペーンIDも空リストで含む。
+    """
+    result: dict[str, list[DspCreativeDB]] = {cid: [] for cid in campaign_ids}
+    if not campaign_ids:
+        return result
+    rows = await db.execute(
+        select(DspCreativeDB).where(
+            DspCreativeDB.campaign_id.in_(campaign_ids),
+            DspCreativeDB.status == "active",
+        )
+    )
+    for creative in rows.scalars().all():
+        if creative.campaign_id in result:
+            result[creative.campaign_id].append(creative)
+    return result
+
+
+# ── A/B テスト実験（#7。メタデータ管理用。入札ロジックは参照しない） ──
+
+async def list_experiments(db: AsyncSession, campaign_id: str) -> list[DspAbExperimentDB]:
+    rows = await db.execute(
+        select(DspAbExperimentDB)
+        .where(DspAbExperimentDB.campaign_id == campaign_id)
+        .order_by(DspAbExperimentDB.created_at.desc())
+    )
+    return list(rows.scalars().all())
+
+
+async def create_experiment(
+    db: AsyncSession, *, campaign_id: str, name: str
+) -> DspAbExperimentDB:
+    experiment = DspAbExperimentDB(campaign_id=campaign_id, name=name, status="active")
+    db.add(experiment)
+    await db.commit()
+    await db.refresh(experiment)
+    return experiment
+
+
+async def conclude_experiment(
+    db: AsyncSession, experiment_id: str, winner_creative_id: Optional[str] = None
+) -> Optional[DspAbExperimentDB]:
+    """実験を concluded にし、winner クリエイティブと終了時刻を記録する。"""
+    experiment = await db.get(DspAbExperimentDB, experiment_id)
+    if experiment is None:
+        return None
+    experiment.status = "concluded"
+    experiment.winner_creative_id = winner_creative_id
+    experiment.concluded_at = utcnow()
+    await db.commit()
+    await db.refresh(experiment)
+    return experiment

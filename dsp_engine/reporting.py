@@ -20,7 +20,14 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_models import DspClickEventDB, DspConversionEventDB, DspSpendLogDB
+from db_models import (
+    DspBidLogDB,
+    DspClickEventDB,
+    DspConversionEventDB,
+    DspCreativeDB,
+    DspSpendLogDB,
+)
+from dsp_engine.nbr import NBR_HOLDOUT
 
 logger = logging.getLogger(__name__)
 
@@ -207,3 +214,71 @@ async def run_report(
         result.append(row)
     result.sort(key=lambda r: r["spend_jpy"], reverse=True)
     return result
+
+
+async def run_ab_experiment_report(
+    db: AsyncSession,
+    campaign_id: str,
+    *,
+    date_from: date,
+    date_to: date,
+) -> dict:
+    """A/B テスト実験レポート（#7）。
+
+    指定キャンペーンのクリエイティブ別実績（A/B 各 variant の比較）と、
+    同期間に holdout で意図的にノービッドした件数を返す。
+
+    Returns:
+        {
+          "campaign_id": str,
+          "creatives": [ {creative, creative_name, impressions, clicks,
+                          spend_jpy, conversions, revenue_jpy, roas, cpa, ctr}, ... ],
+          "holdout_requests": int,   # DspBidLogDB nbr=NBR_HOLDOUT の件数
+        }
+        実績の無い active クリエイティブもゼロ行で含む。
+    """
+    # creative 軸の集計を campaign で絞り込む（既存 run_report を再利用）
+    rows = await run_report(
+        db, date_from=date_from, date_to=date_to,
+        dimensions=["campaign", "creative"],
+    )
+    creative_rows: list[dict] = []
+    for row in rows:
+        if row.get("campaign") != campaign_id:
+            continue
+        creative_rows.append({k: v for k, v in row.items() if k != "campaign"})
+
+    # active クリエイティブで実績ゼロのものもゼロ行として含める
+    seen = {r.get("creative") for r in creative_rows}
+    creatives = (await db.scalars(
+        select(DspCreativeDB).where(DspCreativeDB.campaign_id == campaign_id)
+    )).all()
+    name_map = {c.id: c.name for c in creatives}
+    for creative in creatives:
+        if creative.id not in seen:
+            creative_rows.append({
+                "creative": creative.id, "impressions": 0, "clicks": 0,
+                "spend_jpy": 0.0, "conversions": 0, "revenue_jpy": 0.0,
+                "roas": 0.0, "cpa": 0.0, "ctr": 0.0,
+            })
+    for row in creative_rows:
+        row["creative_name"] = name_map.get(row.get("creative"), "")
+    creative_rows.sort(key=lambda r: r["spend_jpy"], reverse=True)
+
+    # holdout 件数（期間内・当該キャンペーン）
+    start = datetime(date_from.year, date_from.month, date_from.day)
+    end = datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1)
+    holdout_requests = await db.scalar(
+        select(func.count(DspBidLogDB.id)).where(
+            DspBidLogDB.campaign_id == campaign_id,
+            DspBidLogDB.nbr == NBR_HOLDOUT,
+            DspBidLogDB.logged_at >= start,
+            DspBidLogDB.logged_at < end,
+        )
+    ) or 0
+
+    return {
+        "campaign_id": campaign_id,
+        "creatives": creative_rows,
+        "holdout_requests": int(holdout_requests),
+    }

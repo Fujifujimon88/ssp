@@ -14,6 +14,7 @@ import html
 import logging
 import urllib.parse
 import uuid
+from collections import namedtuple
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -25,11 +26,16 @@ from cache import get_redis
 from config import settings
 from db_models import DspBidLogDB, DspCampaignDB, DspSpendLogDB
 from dsp.base import BaseDSP
-from dsp_engine.campaign_manager import get_all_campaign_stats, list_active_campaigns
+from dsp_engine.campaign_manager import (
+    get_active_creatives_by_campaign,
+    get_all_campaign_stats,
+    list_active_campaigns,
+)
 from dsp_engine.currency import get_jpy_per_usd
 from dsp_engine.nbr import (
     NBR_ALL_BUDGET_PACED,
     NBR_BELOW_FLOOR,
+    NBR_HOLDOUT,
     NBR_NO_ACTIVE_CAMPAIGNS,
     NBR_NO_IMPRESSION,
     NBR_SHADED_BELOW_FLOOR,
@@ -238,16 +244,107 @@ def _domain_of(url: str) -> str:
         return "advertiser.example.com"
 
 
-def click_through_url(campaign, click_token: str) -> str:
+# ── クリエイティブ選択 / holdout（#7。入札パス内・純粋関数） ──────────
+# 入札パスに外部 I/O を入れない原則（教訓6）に従い、選択・holdout 判定は
+# DB 取得済みのクリエイティブリストに対する純粋関数として実装する。
+
+CreativeView = namedtuple(
+    "CreativeView", "id title body image_url click_url width height"
+)
+
+
+def _view_from_creative(creative) -> CreativeView:
+    """DspCreativeDB を ad markup 生成用のビューに変換する。"""
+    return CreativeView(
+        id=creative.id, title=creative.title, body=creative.body,
+        image_url=creative.image_url, click_url=creative.click_url,
+        width=creative.width, height=creative.height,
+    )
+
+
+def _view_from_campaign(campaign) -> CreativeView:
+    """DspCreativeDB を持たないキャンペーンのフォールバックビュー（後方互換）。"""
+    return CreativeView(
+        id=campaign.creative_id, title=campaign.creative_title,
+        body=campaign.creative_body, image_url=campaign.creative_image_url,
+        click_url=campaign.creative_click_url, width=campaign.creative_width,
+        height=campaign.creative_height,
+    )
+
+
+def select_creative(creatives: list, seed: str):
+    """active クリエイティブから weight 比例で1つを決定的に選ぶ（純粋関数）。
+
+    seed のハッシュを weight 合計でマッピングするため、同一 seed では常に
+    同じクリエイティブを返す（A/B 振り分けの再現性・テスト容易性）。
+    選択可能なもの（status=active かつ weight>0）が無ければ None。
+    """
+    active = sorted(
+        (c for c in creatives if c.status == "active" and (c.weight or 0) > 0),
+        key=lambda c: c.id,
+    )
+    if not active:
+        return None
+    total = sum(c.weight for c in active)
+    point = int(hashlib.sha256(f"creative:{seed}".encode()).hexdigest(), 16) % total
+    cumulative = 0
+    for creative in active:
+        cumulative += creative.weight
+        if point < cumulative:
+            return creative
+    return active[-1]
+
+
+def is_holdout(holdout_rate: float, seed: str) -> bool:
+    """holdout バケット判定（純粋関数・決定的）。
+
+    holdout_rate（0.0-1.0）の割合で True を返す。0.0=常に False、
+    1.0=常に True。seed のハッシュを 0-1 に正規化して閾値と比較するため、
+    同一 seed では判定が安定する。
+    """
+    if holdout_rate <= 0.0:
+        return False
+    if holdout_rate >= 1.0:
+        return True
+    bucket = int(hashlib.sha256(f"holdout:{seed}".encode()).hexdigest(), 16) % 10_000
+    return (bucket / 10_000.0) < holdout_rate
+
+
+def resolve_creative(campaign, creatives: list, seed: str) -> CreativeView:
+    """入札に使うクリエイティブを決める。
+
+    DspCreativeDB があれば weight 比例で選択し、無ければキャンペーンの
+    インライン素材にフォールバックする（#7 移行前データ・後方互換）。
+    """
+    selected = select_creative(creatives, seed)
+    if selected is not None:
+        return _view_from_creative(selected)
+    return _view_from_campaign(campaign)
+
+
+def click_through_url(creative, click_token: str) -> str:
     """最終クリック先 URL（広告主 LP）に dsp_ct（click_token）を付与する。
 
     クリックトラッカー /dsp-engine/click がクリック記録後にこの URL へ
     リダイレクトする。広告主は LP 着地後の購入計測（AppsFlyer 等）でこの
     dsp_ct を /dsp-engine/conversion へ送り返すことで ROAS が成立する。
+
+    creative は CreativeView（#7）。クリエイティブ単位で LP を切り替えられる。
     """
-    base = campaign.creative_click_url or "https://advertiser.example.com/lp"
+    base = creative.click_url or "https://advertiser.example.com/lp"
     sep = "&" if "?" in base else "?"
     return f"{base}{sep}dsp_ct={urllib.parse.quote(click_token, safe='')}"
+
+
+def click_destination_url(campaign, creative, click_token: str) -> str:
+    """クリックトラッカーのリダイレクト先を解決する（#7）。
+
+    クリックされたクリエイティブ（DspCreativeDB）があればその click_url を、
+    無ければキャンペーンのインライン素材にフォールバックして LP を決める。
+    """
+    view = _view_from_creative(creative) if creative is not None \
+        else _view_from_campaign(campaign)
+    return click_through_url(view, click_token)
 
 
 def click_tracker_url(click_token: str) -> str:
@@ -259,22 +356,25 @@ def click_tracker_url(click_token: str) -> str:
     return f"{base}/dsp-engine/click?ct={urllib.parse.quote(click_token, safe='')}"
 
 
-def render_adm(campaign, imp, click_token: str) -> str:
-    """OpenRTB ad markup（クリック可能なバナー HTML）を生成する。"""
-    w = (imp.banner.w if imp.banner else None) or campaign.creative_width or 300
-    h = (imp.banner.h if imp.banner else None) or campaign.creative_height or 250
+def render_adm(creative, imp, click_token: str) -> str:
+    """OpenRTB ad markup（クリック可能なバナー HTML）を生成する。
+
+    creative は CreativeView（#7）。入札時に weight 比例で選択された素材。
+    """
+    w = (imp.banner.w if imp.banner else None) or creative.width or 300
+    h = (imp.banner.h if imp.banner else None) or creative.height or 250
     # クリックは計測トラッカー経由（記録 → LP へリダイレクト）
     url = html.escape(click_tracker_url(click_token), quote=True)
-    title = html.escape(campaign.creative_title or "")
+    title = html.escape(creative.title or "")
 
-    if campaign.creative_image_url:
-        img = html.escape(campaign.creative_image_url, quote=True)
+    if creative.image_url:
+        img = html.escape(creative.image_url, quote=True)
         inner = (
             f'<img src="{img}" alt="{title}" '
             f'style="width:{w}px;height:{h}px;object-fit:cover;display:block;">'
         )
     else:
-        body = html.escape(campaign.creative_body or "")
+        body = html.escape(creative.body or "")
         inner = (
             f'<div style="width:{w}px;height:{h}px;background:#0b5cff;color:#fff;'
             f'display:flex;flex-direction:column;align-items:center;justify-content:center;'
@@ -315,21 +415,33 @@ def verify_win_notice(sig: Optional[str], ct: str, cid: str, src: str, bid: floa
     return hmac.compare_digest(sig, expected)
 
 
-def win_notice_url(campaign_id: str, click_token: str, source: str, bid_price_usd: float) -> str:
+def win_notice_url(
+    campaign_id: str,
+    click_token: str,
+    source: str,
+    bid_price_usd: float,
+    creative_id: Optional[str] = None,
+) -> str:
     """OpenRTB 落札通知 URL（nurl）。外部エクスチェンジが落札時に呼ぶ。
 
     ${AUCTION_PRICE} はエクスチェンジが実落札価格(USD CPM)に置換するマクロ。
     第三者による spend 偽装を防ぐため HMAC 署名(sig)を付与する。
+
+    crid は #7 のレポート用ヒント（落札クリエイティブ）。spend には影響しない
+    （改竄されても creative 軸の集計が乱れるだけ）ため署名対象には含めない。
     """
     base = settings.ssp_endpoint.rstrip("/")
     bid = round(bid_price_usd, 6)
-    qs = urllib.parse.urlencode({
+    params = {
         "ct": click_token,
         "cid": campaign_id,
         "src": source,
         "bid": bid,
         "sig": sign_win_notice(click_token, campaign_id, source, bid),
-    })
+    }
+    if creative_id:
+        params["crid"] = creative_id
+    qs = urllib.parse.urlencode(params)
     return f"{base}/dsp-engine/win?{qs}&price=${{AUCTION_PRICE}}"
 
 
@@ -362,8 +474,10 @@ async def handle_bid_request(
         )
         return None
 
-    # 全キャンペーンの実績を一括取得（入札パスの N+1 クエリ回避）
-    all_stats = await get_all_campaign_stats(db, [c.id for c in campaigns])
+    # 全キャンペーンの実績・クリエイティブを一括取得（入札パスの N+1 クエリ回避）
+    campaign_ids = [c.id for c in campaigns]
+    all_stats = await get_all_campaign_stats(db, campaign_ids)
+    all_creatives = await get_active_creatives_by_campaign(db, campaign_ids)
 
     # device セグメント乗数（L1 キャッシュ参照のみ・DB I/O なし）。pCTR を補正する。
     ctr_multiplier = get_segment_multiplier(platform_of(bid_request.device))
@@ -387,6 +501,18 @@ async def handle_bid_request(
         await _log_bid_decision(
             db, bid_request=bid_request, source=source, imp=imp,
             outcome="no_bid", nbr=NBR_ALL_BUDGET_PACED,
+            candidate_count=candidate_count, paced_out_count=paced_out_count,
+        )
+        return None
+
+    # A/B テスト holdout（#7）: 落札候補が確定した後、このキャンペーンの
+    # holdout_rate の割合を意図的にノービッドする（incrementality 計測の対照群）。
+    # request id をシードに使い、同一リクエストでは判定が安定する。
+    request_seed = getattr(bid_request, "id", "") or imp.id or ""
+    if is_holdout(best_campaign.holdout_rate or 0.0, f"{best_campaign.id}:{request_seed}"):
+        await _log_bid_decision(
+            db, bid_request=bid_request, source=source, imp=imp,
+            outcome="no_bid", nbr=NBR_HOLDOUT, campaign_id=best_campaign.id,
             candidate_count=candidate_count, paced_out_count=paced_out_count,
         )
         return None
@@ -422,17 +548,27 @@ async def handle_bid_request(
             )
             return None  # shading 後にフロア未達ならノービッド
 
+    # 落札キャンペーンの active クリエイティブから weight 比例で1つを選ぶ（#7）。
+    # DspCreativeDB を持たないキャンペーンはインライン素材にフォールバック。
+    creative = resolve_creative(
+        best_campaign, all_creatives.get(best_campaign.id, []), request_seed
+    )
+
     click_token = uuid.uuid4().hex
     bid = Bid(
         impid=imp.id,
         price=round(bid_price_usd, 6),
-        adm=render_adm(best_campaign, imp, click_token),
-        nurl=win_notice_url(best_campaign.id, click_token, source, bid_price_usd),
-        cid=best_campaign.id,      # 落札処理で campaign を特定するため
-        crid=click_token,          # 落札処理で click_token を引き継ぐため
-        adomain=[_domain_of(best_campaign.creative_click_url)],
-        w=(imp.banner.w if imp.banner else None) or best_campaign.creative_width,
-        h=(imp.banner.h if imp.banner else None) or best_campaign.creative_height,
+        adm=render_adm(creative, imp, click_token),
+        nurl=win_notice_url(
+            best_campaign.id, click_token, source, bid_price_usd,
+            creative_id=creative.id,
+        ),
+        cid=best_campaign.id,                    # 落札処理で campaign を特定
+        crid=creative.id,                        # 実クリエイティブID（#7 是正）
+        ext={"dsp_click_token": click_token},    # click_token は ext で運ぶ（#7 是正）
+        adomain=[_domain_of(creative.click_url)],
+        w=(imp.banner.w if imp.banner else None) or creative.width,
+        h=(imp.banner.h if imp.banner else None) or creative.height,
     )
     await _log_bid_decision(
         db, bid_request=bid_request, source=source, imp=imp, outcome="bid",
@@ -458,16 +594,19 @@ async def record_dsp_win(
     platform: str = "unknown",
     source: str = "ssp-node",
     bid_request: Optional[BidRequest] = None,
+    creative_id: Optional[str] = None,
 ) -> DspSpendLogDB:
     """SSP オークションで dsp-engine が落札したときに main.py から呼ぶ。
 
     落札価格（USD CPM）を円換算し、DspSpendLogDB を記録して予算消化に反映する。
     1インプレッションの実消化額 = 落札 CPM(円) / 1000。
 
-    bid_request を渡すとレポート多次元軸（#6: creative/publisher/app/placement/
-    geo/deal_id）を spend log に非正規化記録する。BidRequest を持たない経路
-    （外部エクスチェンジ win_notice 等）では None でよく、その場合 publisher 等は
-    null 記録（creative_id は campaign から解決する）。
+    bid_request を渡すとレポート多次元軸（#6: publisher/app/placement/geo/deal_id）
+    を spend log に非正規化記録する。BidRequest を持たない経路（外部エクスチェンジ
+    win_notice 等）では None でよく、その場合 publisher 等は null 記録。
+
+    creative_id（#7）は入札時に選択されたクリエイティブ。指定が無い場合は
+    キャンペーンの主クリエイティブ（campaign.creative_id）にフォールバックする。
 
     冪等性: 同一 click_token の落札が既にあれば再記録・再消化しない
     （外部エクスチェンジの nurl 再送による二重計上を防ぐ）。
@@ -484,10 +623,13 @@ async def record_dsp_win(
     bid_cpm_jpy = bid_price_usd * rate
     spend_jpy = cleared_cpm_jpy / 1000.0
 
-    # レポート多次元軸（#6）: creative_id は campaign から、他は BidRequest から解決。
+    # レポート多次元軸: creative_id は入札時の選択を優先（#7）、無ければ campaign の
+    # 主クリエイティブにフォールバック。publisher 等は BidRequest から解決（#6）。
     dims = extract_report_dims(bid_request)
     campaign = await db.get(DspCampaignDB, campaign_id)
-    creative_id = campaign.creative_id if campaign is not None else None
+    resolved_creative_id = creative_id or (
+        campaign.creative_id if campaign is not None else None
+    )
 
     log = DspSpendLogDB(
         campaign_id=campaign_id,
@@ -498,7 +640,7 @@ async def record_dsp_win(
         bid_price_jpy=bid_cpm_jpy,
         cleared_price_jpy=cleared_cpm_jpy,
         spend_jpy=spend_jpy,
-        creative_id=creative_id,
+        creative_id=resolved_creative_id,
         publisher_id=dims["publisher_id"],
         app_id=dims["app_id"],
         placement=dims["placement"],
