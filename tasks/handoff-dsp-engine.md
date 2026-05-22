@@ -5,7 +5,7 @@ Status: Verified
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#9 + セキュリティ修正3件まで完了・**本番デプロイ済み**（2026-05-23、deployment `dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`）。
+- 優先タスク #1〜#9 + セキュリティ修正3件まで完了・**本番デプロイ済み**（2026-05-23、deployment `dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP`）。
 - 最新は #9 MMP署名検証/PIIサニタイズ/アトリビューション窓 + セキュリティ修正3件（売上付け替え防止 / win notice 署名に crid / daily pacing の DB フォールバック）。
   残タスクは #9-2（SKAN・Privacy Sandbox）/ #10 / #11 + ビジネス側。詳細は本書セクション6。
 
@@ -44,7 +44,7 @@ Status: Verified
 | セキュリティ修正3件 | CV 売上付け替え防止（`record_conversion` で click_token→spend_log の campaign_id を無条件採用・不一致は warning）/ win notice 署名に `crid` を含める（改竄防止）/ daily pacing の DB フォールバック（`can_bid` が Redis 不在時 `daily_spend_jpy` の DB 実績で判定）。スキーマ変更なし | 完了・本番反映済み |
 
 **本番デプロイ状況**: 優先 #1〜#9 + セキュリティ修正3件を **2026-05-23 に本番デプロイ済み**。最新 deployment
-`dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`、`/health` 200）。
+`dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`、`/health` 200）。
 マイグレーション dspengine0003〜0011 は起動時 lifespan の `alembic upgrade head` で本番
 Postgres へ適用済み（セキュリティ修正3件はスキーマ変更なし）。
 Vercel は Git 未連携のため、次回以降の本番反映も `git push` → `vercel --prod` の手動実行が必要。
