@@ -18,6 +18,8 @@ dsp_engine FastAPI ルーター。
   GET  /dsp-engine/admin/report            ← 運用者: 多次元レポート（Combined型）
   GET  /dsp-engine/admin/report/api
 """
+import hashlib
+import hmac
 import logging
 import time
 from datetime import date, datetime, timedelta
@@ -36,6 +38,7 @@ from cache import get_redis
 from dsp_engine import campaign_manager, exchange, fraud, reporting, supply
 from dsp_engine.attribution import (
     get_campaign_roas, normalize_conversion_payload, record_click, record_conversion,
+    sanitize_pii_payload, verify_postback_secret,
 )
 from dsp_engine.fraud import validate_revenue
 from dsp_engine.bidder import (
@@ -108,12 +111,34 @@ async def receive_conversion(request: Request, db: AsyncSession = Depends(get_db
             except Exception:
                 pass
 
-    # 任意のシークレット検証（asp_postback_secret 設定時のみ）
-    if settings.asp_postback_secret:
-        if str(params.get("secret", "")) != settings.asp_postback_secret:
+    # 署名検証: dsp_postback_hmac_secret が設定されていれば HMAC-SHA256 を検証する。
+    # 未設定なら後方互換として静的シークレット (asp_postback_secret) を検証する。
+    if settings.dsp_postback_hmac_secret:
+        sig = str(params.get("signature", ""))
+        if sig:
+            ct_sig = str(params.get("click_token", params.get("dsp_ct", "")))
+            rev_sig = str(params.get("revenue_jpy", ""))
+            dedup_sig = str(params.get("dedup_key", ""))
+            canonical = f"{ct_sig}|{rev_sig}|{dedup_sig}"
+            expected_sig = hmac.new(
+                settings.dsp_postback_hmac_secret.encode("utf-8"),
+                canonical.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(sig, expected_sig):
+                raise HTTPException(status_code=401, detail="invalid hmac signature")
+        else:
+            raise HTTPException(status_code=401, detail="signature required")
+    elif settings.asp_postback_secret:
+        provided = str(params.get("secret", ""))
+        if not verify_postback_secret(provided, settings.asp_postback_secret):
             raise HTTPException(status_code=401, detail="invalid secret")
 
-    norm = normalize_conversion_payload(params)
+    # PII サニタイズ: raw_payload 保存前に PII キーを除去する
+    pii_keys = [k.strip() for k in settings.dsp_pii_strip_keys.split(",") if k.strip()]
+    sanitized_params = sanitize_pii_payload(params, pii_keys=pii_keys)
+
+    norm = normalize_conversion_payload(sanitized_params)
 
     # revenue_jpy の validate_revenue ガード（#8: 不正 revenue を 0 に丸める）
     campaign_for_rev = await campaign_manager.get_campaign(db, norm["campaign_id"])
@@ -139,7 +164,8 @@ async def receive_conversion(request: Request, db: AsyncSession = Depends(get_db
             dedup_key=norm["dedup_key"],
             source=norm["source"],
             platform=norm["platform"],
-            raw_payload=str(params)[:2000],
+            raw_payload=str(sanitized_params)[:2000],
+            window_days=settings.dsp_attribution_window_days,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

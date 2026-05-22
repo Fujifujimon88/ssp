@@ -6,7 +6,10 @@ dsp_engine 購入CVの取り込みと ROAS 計算。
 DspSpendLogDB → campaign_id / impression_id を解決しアトリビューションする。
 dedup_key（appsflyer_event_id 等）で重複ポストバックを冪等に排除する。
 """
+import hashlib
+import hmac
 import logging
+from datetime import timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -21,6 +24,21 @@ from utils import utcnow
 logger = logging.getLogger(__name__)
 
 
+def verify_postback_secret(provided: str, expected: str) -> bool:
+    """静的シークレットの timing-safe 比較 (hmac.compare_digest 使用)。"""
+    return hmac.compare_digest(provided, expected)
+
+
+def sanitize_pii_payload(payload: dict, pii_keys: list = None) -> dict:
+    """PII キーを payload dict から除去して新しい dict を返す (元 dict は変更しない)。"""
+    _DEFAULT_PII_KEYS = [
+        "idfa", "gaid", "device_id", "ip", "user_agent", "ua",
+        "android_id", "appsflyer_id",
+    ]
+    keys_to_strip = set(pii_keys if pii_keys is not None else _DEFAULT_PII_KEYS)
+    return {k: v for k, v in payload.items() if k not in keys_to_strip}
+
+
 async def record_conversion(
     db: AsyncSession,
     *,
@@ -32,6 +50,7 @@ async def record_conversion(
     source: str = "direct",
     platform: str = "unknown",
     raw_payload: Optional[str] = None,
+    window_days: int = 30,
 ) -> tuple[DspConversionEventDB, bool]:
     """購入CVを記録する。
 
@@ -58,10 +77,21 @@ async def record_conversion(
             select(DspSpendLogDB).where(DspSpendLogDB.click_token == click_token)
         )
         if spend_log:
+            from datetime import datetime as _dt
+            now_utc = _dt.now(timezone.utc)
+            cutoff = now_utc - timedelta(days=window_days)
+            log_dt = spend_log.logged_at
+            # naive datetime を aware UTC に正規化して比較
+            if log_dt.tzinfo is None:
+                log_dt = log_dt.replace(tzinfo=timezone.utc)
+            # campaign_id は窓内外問わず解決する（CV の記録自体は必須）
             campaign_id = campaign_id or spend_log.campaign_id
-            impression_id = spend_log.impression_id
-            if platform == "unknown":
-                platform = spend_log.platform
+            if log_dt >= cutoff:  # 窓内 (境界値含む)
+                impression_id = spend_log.impression_id
+                if platform == "unknown":
+                    platform = spend_log.platform
+            else:
+                spend_log = None  # 窓外: impression_id・多次元軸を紐付けない
 
     if not campaign_id:
         raise ValueError("campaign_id を特定できません（click_token も未解決）")

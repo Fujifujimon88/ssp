@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # ASPポストバック認証シークレット（空文字 = 検証スキップ ※開発用）
     asp_postback_secret: str = ""
 
+    # dsp_engine: #9 MMP署名検証 / PIIサニタイズ / アトリビューション窓
+    dsp_postback_hmac_secret: str = ""
+    dsp_attribution_window_days: int = 30
+    dsp_pii_strip_keys: str = "idfa,gaid,device_id,ip,user_agent,ua,android_id,appsflyer_id"
+
     # FCM（Firebase Cloud Messaging）Android Push通知 - HTTP v1 API
     fcm_project_id: str = ""           # Firebase プロジェクトID（例: my-project-12345）
     fcm_service_account_path: str = "" # サービスアカウントJSONファイルのパス
