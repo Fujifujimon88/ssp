@@ -98,7 +98,10 @@ async def get_campaign_stats(db: AsyncSession, campaign_id: str) -> dict:
             select(
                 func.count(DspConversionEventDB.id),
                 func.coalesce(func.sum(DspConversionEventDB.revenue_jpy), 0.0),
-            ).where(DspConversionEventDB.campaign_id == campaign_id)
+            ).where(
+                DspConversionEventDB.campaign_id == campaign_id,
+                DspConversionEventDB.attributed == True,  # noqa: E712
+            )
         )
     ).one()
     return {
@@ -158,7 +161,10 @@ async def get_all_campaign_stats(
             func.count(DspConversionEventDB.id),
             func.coalesce(func.sum(DspConversionEventDB.revenue_jpy), 0.0),
         )
-        .where(DspConversionEventDB.campaign_id.in_(campaign_ids))
+        .where(
+            DspConversionEventDB.campaign_id.in_(campaign_ids),
+            DspConversionEventDB.attributed == True,  # noqa: E712
+        )
         .group_by(DspConversionEventDB.campaign_id)
     )
     for cid, cnt, rev in conv_rows.all():

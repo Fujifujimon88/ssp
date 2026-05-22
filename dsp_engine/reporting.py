@@ -204,7 +204,11 @@ async def run_report(
             func.count(DspConversionEventDB.id).label("conversions"),
             func.coalesce(func.sum(DspConversionEventDB.revenue_jpy), 0.0).label("revenue_jpy"),
         )
-        .where(DspConversionEventDB.received_at >= start, DspConversionEventDB.received_at < end)
+        .where(
+            DspConversionEventDB.received_at >= start,
+            DspConversionEventDB.received_at < end,
+            DspConversionEventDB.attributed == True,  # noqa: E712
+        )
     )
     if campaign_id is not None:
         conv_q = conv_q.where(DspConversionEventDB.campaign_id == campaign_id)

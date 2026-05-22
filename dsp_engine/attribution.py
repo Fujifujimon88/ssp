@@ -6,10 +6,9 @@ dsp_engine 購入CVの取り込みと ROAS 計算。
 DspSpendLogDB → campaign_id / impression_id を解決しアトリビューションする。
 dedup_key（appsflyer_event_id 等）で重複ポストバックを冪等に排除する。
 """
-import hashlib
 import hmac
 import logging
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -70,6 +69,7 @@ async def record_conversion(
 
     impression_id: Optional[str] = None
     spend_log: Optional[DspSpendLogDB] = None
+    attributed: bool = True  # デフォルト: click_token なし等は attributed=True
 
     # click_token から campaign_id / impression_id を解決
     if click_token:
@@ -77,8 +77,7 @@ async def record_conversion(
             select(DspSpendLogDB).where(DspSpendLogDB.click_token == click_token)
         )
         if spend_log:
-            from datetime import datetime as _dt
-            now_utc = _dt.now(timezone.utc)
+            now_utc = datetime.now(timezone.utc)
             cutoff = now_utc - timedelta(days=window_days)
             log_dt = spend_log.logged_at
             # naive datetime を aware UTC に正規化して比較
@@ -90,7 +89,9 @@ async def record_conversion(
                 impression_id = spend_log.impression_id
                 if platform == "unknown":
                     platform = spend_log.platform
+                attributed = True
             else:
+                attributed = False  # 窓外: ROAS非算入
                 spend_log = None  # 窓外: impression_id・多次元軸を紐付けない
 
     if not campaign_id:
@@ -107,6 +108,7 @@ async def record_conversion(
         dedup_key=dedup_key,
         raw_payload=raw_payload,
         attributed_at=utcnow(),
+        attributed=attributed,
         # レポート多次元軸（#6）: click_token 経由で spend log からコピー。
         creative_id=spend_log.creative_id if spend_log else None,
         publisher_id=spend_log.publisher_id if spend_log else None,

@@ -632,6 +632,9 @@ async def test_conversion_outside_window_is_recorded_but_not_attributed(priv_cli
     # 窓外なので spend_log 由来の impression_id は紐付かないべき
     assert event.impression_id is None, \
         "窓外 CV は impression_id が紐付かないべき（未アトリビュート）"
+    # Fix Iteration 1: attributed=False で ROAS 非算入フラグが立っていること
+    assert event.attributed is False, \
+        "窓外 CV は attributed=False であるべき（ROAS集計から除外）"
 
 
 @pytest.mark.asyncio
@@ -678,3 +681,69 @@ async def test_conversion_at_window_boundary_is_attributed(priv_client):
         )
     assert event is not None
     assert event.campaign_id == "camp-win-boundary", "境界値（丁度 window_days）は窓内扱いで紐付くべき"
+
+
+# ── Fix Iteration 1: attributed フィルタによる ROAS 集計除外検証 ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_outside_window_cv_excluded_from_roas_stats(priv_client):
+    """D-1: 窓外 CV は get_campaign_stats / get_campaign_roas の集計に算入されない。
+
+    Fix Iteration 1 (Reviewer HIGH 対応):
+    窓外 CV を記録後、get_campaign_stats の conversions/revenue_jpy が 0 のままであること、
+    窓内 CV では正しく算入されることを対比で確認する。
+    """
+    from dsp_engine.attribution import get_campaign_roas, record_conversion
+
+    client, session_factory = priv_client
+    now_utc = datetime.now(timezone.utc)
+
+    async with session_factory() as db:
+        db.add(make_campaign(id="camp-roas-test"))
+        # 窓内 spend log
+        db.add(make_spend_log("camp-roas-test", "ct-roas-in", logged_at=now_utc - timedelta(days=5)))
+        # 窓外 spend log
+        db.add(make_spend_log("camp-roas-test", "ct-roas-out", logged_at=now_utc - timedelta(days=45)))
+        await db.commit()
+
+    async with session_factory() as db:
+        # 窓外 CV を記録
+        event_out, created_out = await record_conversion(
+            db,
+            click_token="ct-roas-out",
+            revenue_jpy=10000.0,
+            dedup_key="dedup-roas-out",
+            window_days=30,
+        )
+        assert created_out is True
+        assert event_out.attributed is False, "窓外 CV は attributed=False"
+
+    async with session_factory() as db:
+        # 窓外 CV のみ存在する段階: conversions=0, revenue_jpy=0.0
+        from dsp_engine.campaign_manager import get_campaign_stats
+        stats_after_out = await get_campaign_stats(db, "camp-roas-test")
+    assert stats_after_out["conversions"] == 0, \
+        "窓外 CV は conversions に算入されないべき"
+    assert stats_after_out["revenue_jpy"] == 0.0, \
+        "窓外 CV は revenue_jpy に算入されないべき"
+
+    async with session_factory() as db:
+        # 窓内 CV を記録
+        event_in, created_in = await record_conversion(
+            db,
+            click_token="ct-roas-in",
+            revenue_jpy=5000.0,
+            dedup_key="dedup-roas-in",
+            window_days=30,
+        )
+        assert created_in is True
+        assert event_in.attributed is True, "窓内 CV は attributed=True"
+
+    async with session_factory() as db:
+        # 窓内 CV 記録後: conversions=1, revenue_jpy=5000
+        stats_after_in = await get_campaign_stats(db, "camp-roas-test")
+    assert stats_after_in["conversions"] == 1, \
+        "窓内 CV は conversions に算入されるべき"
+    assert stats_after_in["revenue_jpy"] == 5000.0, \
+        "窓内 CV は revenue_jpy に算入されるべき"

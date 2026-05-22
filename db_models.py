@@ -1002,6 +1002,8 @@ class DspConversionEventDB(Base):
     dedup_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
     raw_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     attributed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # アトリビューション窓判定結果（True=窓内・ROAS算入対象, False=窓外・ROAS非算入）
+    attributed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="1", default=True)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
