@@ -90,3 +90,9 @@
 - Root Cause: 別タスク #6 の未コミット WIP migration（`add_dsp_report_dimensions.py` = 0008）が `alembic/versions/` に置かれていた。alembic は untracked ファイルも走査する。`Glob "dspengine*.py"` は revision ID とファイル名が別物（記述的 slug 命名）のため空振りした。
 - Mitigation: migration 作成前に必ず `python -m alembic heads` と `grep -rhn "^revision" alembic/versions/*.py` で実 revision を確認。handoff の記述は信用しない。
 - Detection: `alembic heads` が単一 head か / 期待した revision か。検証時は WIP を巻き込まないよう `upgrade <自分のrevision>` で範囲限定（`upgrade head` にしない）。
+
+### 18. `git add <path>` は並行セッションの未コミット変更も巻き込む
+- Date: 2026-05-22 / Trigger: 別の Claude セッションが #6 を並行作業中、`git add db_models.py` で #6 の未コミット編集を自分の #3 commit に混入。さらに `git reset HEAD~1` を `git log` 未確認で実行し、その間に積まれた並行セッションの #6 commit を branch から外した（reflog で復元）。
+- Root Cause: `git add <path>` はその時点の working tree 全体をステージし、自分が編集した行だけを選ばない。ssp_platform は複数 Claude セッションが並行することがあり working tree は単独占有でない。
+- Mitigation: commit 直前に必ず `git diff --cached` で差分が自分のものだけか確認。`git reset`/`rebase` 前に `git log --oneline -5` と `git reflog -5` で HEAD の実体を確認してから実行。
+- Detection: `git show --stat` の変更行数が想定と乖離 / `git reflog` に身に覚えのない commit が出現。
