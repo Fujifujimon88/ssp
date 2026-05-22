@@ -271,6 +271,7 @@ async def header_bidding(request: Request, db: AsyncSession = Depends(get_db)):
                 bid_price_usd=result.winner.bid.price,
                 platform="web",
                 source="ssp-node",
+                bid_request=bid_request,
             )
         except Exception as e:
             logger.error(f"record_dsp_win failed: {e}")

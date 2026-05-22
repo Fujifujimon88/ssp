@@ -45,9 +45,12 @@
       <label>開始 <input type="date" id="from"></label>
       <label>終了 <input type="date" id="to"></label>
       <div class="dims" id="dims">
+        {% set dim_labels = {"day":"Day","campaign":"Campaign","source":"Source",
+          "platform":"Platform","creative":"Creative","publisher":"Publisher",
+          "app":"App","placement":"Placement","geo":"Geo","deal_id":"Deal ID"} %}
         {% for d in dimensions %}
           <label><input type="checkbox" value="{{ d }}" {{ "checked" if d=="campaign" }}>
-            {{ {"day":"Day","campaign":"Campaign","source":"Source","platform":"Platform"}[d] }}</label>
+            {{ dim_labels.get(d, d) }}</label>
         {% endfor %}
       </div>
       <button id="run">Run Report</button>
@@ -64,7 +67,9 @@
   </div>
 </main>
 <script>
-  const DIM_LABEL = {day:"日付", campaign:"キャンペーン", source:"ソース", platform:"プラットフォーム"};
+  const DIM_LABEL = {day:"日付", campaign:"キャンペーン", source:"ソース", platform:"プラットフォーム",
+    creative:"クリエイティブ", publisher:"パブリッシャー", app:"アプリ",
+    placement:"プレースメント", geo:"地域", deal_id:"ディールID"};
   const fmtYen = n => '¥' + Math.round(n).toLocaleString();
 
   function initDates(){

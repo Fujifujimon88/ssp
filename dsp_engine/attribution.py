@@ -50,17 +50,18 @@ async def record_conversion(
             return existing, False
 
     impression_id: Optional[str] = None
+    spend_log: Optional[DspSpendLogDB] = None
 
     # click_token から campaign_id / impression_id を解決
     if click_token:
-        spend = await db.scalar(
+        spend_log = await db.scalar(
             select(DspSpendLogDB).where(DspSpendLogDB.click_token == click_token)
         )
-        if spend:
-            campaign_id = campaign_id or spend.campaign_id
-            impression_id = spend.impression_id
+        if spend_log:
+            campaign_id = campaign_id or spend_log.campaign_id
+            impression_id = spend_log.impression_id
             if platform == "unknown":
-                platform = spend.platform
+                platform = spend_log.platform
 
     if not campaign_id:
         raise ValueError("campaign_id を特定できません（click_token も未解決）")
@@ -76,6 +77,13 @@ async def record_conversion(
         dedup_key=dedup_key,
         raw_payload=raw_payload,
         attributed_at=utcnow(),
+        # レポート多次元軸（#6）: click_token 経由で spend log からコピー。
+        creative_id=spend_log.creative_id if spend_log else None,
+        publisher_id=spend_log.publisher_id if spend_log else None,
+        app_id=spend_log.app_id if spend_log else None,
+        placement=spend_log.placement if spend_log else None,
+        geo=spend_log.geo if spend_log else None,
+        deal_id=spend_log.deal_id if spend_log else None,
     )
     db.add(event)
     try:
@@ -144,6 +152,13 @@ async def record_click(db: AsyncSession, click_token: str) -> Optional[DspSpendL
         impression_id=log.impression_id,
         platform=log.platform,
         source=log.source,
+        # レポート多次元軸（#6）: spend log からコピー。
+        creative_id=log.creative_id,
+        publisher_id=log.publisher_id,
+        app_id=log.app_id,
+        placement=log.placement,
+        geo=log.geo,
+        deal_id=log.deal_id,
         clicked_at=utcnow(),
     ))
     await db.commit()

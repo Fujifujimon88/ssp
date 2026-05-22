@@ -10,7 +10,9 @@ dsp_engine 多次元レポート（AppLovin「Combined」型）。
 day ディメンションでは各イベントを「そのイベントが起きた日」に計上するため、
 配信日と別日のクリック/CVも正しい日付に出る。
 
-MVP のディメンション: day / campaign / source / platform。
+ディメンション: day / campaign / source / platform に加え、#6 で
+creative / publisher / app / placement / geo / deal_id を追加（落札時に
+BidRequest + campaign から 3 イベントテーブルへ非正規化記録した列を集計する）。
 """
 import logging
 from datetime import date, datetime, timedelta
@@ -54,6 +56,73 @@ _DIM_COLUMNS = {
         lambda: DspClickEventDB.platform,
     ),
 }
+
+# #6 多次元軸（creative/publisher/app/placement/geo/deal_id）。
+# 3 イベントテーブルが同名カラムを持つため (dim名, カラム名) から一括生成する。
+for _dim, _col in [
+    ("creative", "creative_id"),
+    ("publisher", "publisher_id"),
+    ("app", "app_id"),
+    ("placement", "placement"),
+    ("geo", "geo"),
+    ("deal_id", "deal_id"),
+]:
+    _DIM_COLUMNS[_dim] = (
+        (lambda c=_col: getattr(DspSpendLogDB, c)),
+        (lambda c=_col: getattr(DspConversionEventDB, c)),
+        (lambda c=_col: getattr(DspClickEventDB, c)),
+    )
+    AVAILABLE_DIMENSIONS.append(_dim)
+
+
+def extract_report_dims(bid_request) -> dict:
+    """BidRequest からレポート多次元軸を抽出する（#6）。
+
+    publisher / app / placement / geo / deal_id を dict で返す。
+    creative_id は campaign 由来のため本関数では扱わない（落札側で解決）。
+    BidRequest を持たない経路（外部エクスチェンジ win_notice 等）では
+    bid_request=None を渡してよく、その場合は全軸 None を返す。
+    """
+    dims = {
+        "publisher_id": None,
+        "app_id": None,
+        "placement": None,
+        "geo": None,
+        "deal_id": None,
+    }
+    if bid_request is None:
+        return dims
+
+    site = getattr(bid_request, "site", None)
+    app = getattr(bid_request, "app", None)
+
+    # publisher: site.publisher.id を優先、無ければ app.publisher.id
+    publisher = None
+    if site is not None and getattr(site, "publisher", None) is not None:
+        publisher = site.publisher.id
+    if not publisher and app is not None and getattr(app, "publisher", None) is not None:
+        publisher = app.publisher.id
+    dims["publisher_id"] = publisher
+
+    # app: id 優先、無ければ bundle
+    if app is not None:
+        dims["app_id"] = app.id or app.bundle
+
+    # placement: imp[0].tagid / deal_id: imp[0].pmp.deals[0].id
+    imps = getattr(bid_request, "imp", None) or []
+    if imps:
+        imp = imps[0]
+        dims["placement"] = getattr(imp, "tagid", None)
+        pmp = getattr(imp, "pmp", None)
+        if pmp is not None and getattr(pmp, "deals", None):
+            dims["deal_id"] = pmp.deals[0].id
+
+    # geo: device.geo.country
+    device = getattr(bid_request, "device", None)
+    if device is not None and getattr(device, "geo", None) is not None:
+        dims["geo"] = device.geo.country
+
+    return dims
 
 
 def _empty_row(dims: list[str], key: tuple) -> dict:
