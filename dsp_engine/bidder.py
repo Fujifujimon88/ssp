@@ -32,10 +32,13 @@ from dsp_engine.campaign_manager import (
     list_active_campaigns,
 )
 from dsp_engine.currency import get_jpy_per_usd
+from dsp_engine.fraud import is_brand_safety_blocked, is_ivt
 from dsp_engine.nbr import (
     NBR_ALL_BUDGET_PACED,
     NBR_BELOW_FLOOR,
+    NBR_BRAND_SAFETY_BLOCK,
     NBR_HOLDOUT,
+    NBR_IVT_DETECTED,
     NBR_NO_ACTIVE_CAMPAIGNS,
     NBR_NO_IMPRESSION,
     NBR_SHADED_BELOW_FLOOR,
@@ -242,6 +245,13 @@ def _domain_of(url: str) -> str:
         return urllib.parse.urlparse(url).netloc or "advertiser.example.com"
     except Exception:
         return "advertiser.example.com"
+
+
+def _parse_cidrs(cidrs_str: str) -> list[str]:
+    """カンマ区切りの CIDR 文字列をリストに変換する（空文字・空白を除去）。"""
+    if not cidrs_str:
+        return []
+    return [c.strip() for c in cidrs_str.split(",") if c.strip()]
 
 
 # ── クリエイティブ選択 / holdout（#7。入札パス内・純粋関数） ──────────
@@ -466,6 +476,17 @@ async def handle_bid_request(
         return None
     imp = bid_request.imp[0]
 
+    # ── IVT チェック（#8）: dsp_ivt_strict=True のとき bot/datacenter トラフィックをノービッド ──
+    if settings.dsp_ivt_strict and bid_request.device is not None:
+        device = bid_request.device
+        cidrs = _parse_cidrs(settings.dsp_datacenter_cidrs)
+        if is_ivt(device.ip or "", device.ua or "", datacenter_cidrs=cidrs):
+            await _log_bid_decision(
+                db, bid_request=bid_request, source=source, imp=imp,
+                outcome="no_bid", nbr=NBR_IVT_DETECTED,
+            )
+            return None
+
     campaigns = await list_active_campaigns(db)
     if not campaigns:
         await _log_bid_decision(
@@ -485,7 +506,12 @@ async def handle_bid_request(
     best_campaign = None
     best_bid_cpm_jpy = 0.0
     paced_out_count = 0
+    brand_safety_blocked_count = 0
     for campaign in campaigns:
+        # ── brand safety チェック（#8）: bcat/badv でブロックされたキャンペーンをスキップ ──
+        if is_brand_safety_blocked(bid_request, campaign):
+            brand_safety_blocked_count += 1
+            continue
         stats = all_stats[campaign.id]
         bid_cpm_jpy = compute_bid_cpm_jpy(campaign, stats, ctr_multiplier=ctr_multiplier)
         # 日予算ペース + 総予算（lifetime spend）の両方をチェック
@@ -498,6 +524,14 @@ async def handle_bid_request(
     candidate_count = len(campaigns)
 
     if best_campaign is None:
+        # 全キャンペーンが brand safety でブロックされた場合は NBR_BRAND_SAFETY_BLOCK を使う
+        if brand_safety_blocked_count > 0 and paced_out_count == 0:
+            await _log_bid_decision(
+                db, bid_request=bid_request, source=source, imp=imp,
+                outcome="no_bid", nbr=NBR_BRAND_SAFETY_BLOCK,
+                candidate_count=candidate_count, paced_out_count=paced_out_count,
+            )
+            return None
         await _log_bid_decision(
             db, bid_request=bid_request, source=source, imp=imp,
             outcome="no_bid", nbr=NBR_ALL_BUDGET_PACED,

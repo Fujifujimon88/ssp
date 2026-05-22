@@ -131,16 +131,26 @@ async def get_campaign_roas(db: AsyncSession, campaign_id: str) -> dict:
     }
 
 
-async def record_click(db: AsyncSession, click_token: str) -> Optional[DspSpendLogDB]:
+async def record_click(
+    db: AsyncSession,
+    click_token: str,
+    rate_limited: bool = False,
+) -> Optional[DspSpendLogDB]:
     """クリックトラッカー経由のクリックをクリックイベントとして記録する。
 
     click_token に対応する落札ログ（DspSpendLogDB）を引き、DspClickEventDB を
     1件追加する。同一トークンの再クリックも毎回 1 件記録する（= 実クリック数）。
     対応する落札ログが無い場合（未知トークン）は None を返し、記録しない。
 
+    rate_limited=True の場合は DspClickEventDB の挿入をスキップして即 None を返す
+    （#8: クリック連打レート制限）。
+
     Returns:
         対応する DspSpendLogDB（クリックエンドポイントが LP 解決に使う）/ None。
     """
+    if rate_limited:
+        return None
+
     log = await db.scalar(
         select(DspSpendLogDB).where(DspSpendLogDB.click_token == click_token)
     )

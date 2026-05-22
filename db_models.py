@@ -861,6 +861,12 @@ class DspCampaignDB(Base):
     # 入札時に best_campaign 選定後この割合のインプレッションを意図的にノービッドする。
     holdout_rate: Mapped[float] = mapped_column(Float, default=0.0)
 
+    # ブランドセーフティ（#8）。JSON 配列文字列。
+    # bcat_block: ブロックする IAB カテゴリ（例: '["IAB25", "IAB26"]'）
+    # badv_block: ブロックする広告主ドメイン（例: '["rival.example.com"]'）
+    bcat_block: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="[]")
+    badv_block: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="[]")
+
     start_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
     end_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
 

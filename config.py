@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     nanomdm_url: str = "http://localhost:9000"        # NanoMDMのURL（FastAPIと別プロセス）
     nanomdm_api_key: str = "change-me-nanomdm-key"  # NanoMDM APIキー
 
+    # dsp_engine: fraud / IVT / brand safety 設定（#8）
+    dsp_ivt_strict: bool = True                 # True=IVT検出でノービッド
+    dsp_datacenter_cidrs: str = ""              # データセンターCIDRリスト（カンマ区切り）
+    dsp_click_token_limit: int = 10             # token単位クリックレート上限（window内）
+    dsp_click_ip_limit: int = 50                # IP単位クリックレート上限（window内）
+    dsp_click_window_seconds: int = 3600        # クリックレート集計ウィンドウ（秒）
+    dsp_revenue_cap_multiplier: float = 10.0    # revenue検証の上限倍率
+
     # APNs（Apple Push Notification Service）iOS MDM通知
     apns_cert_path: str = ""    # MDMプッシュ証明書 .pem ファイルパス
     apns_key_path: str = ""     # MDMプッシュ秘密鍵 .pem ファイルパス
