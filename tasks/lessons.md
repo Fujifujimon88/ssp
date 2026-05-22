@@ -96,3 +96,9 @@
 - Root Cause: `git add <path>` はその時点の working tree 全体をステージし、自分が編集した行だけを選ばない。ssp_platform は複数 Claude セッションが並行することがあり working tree は単独占有でない。
 - Mitigation: commit 直前に必ず `git diff --cached` で差分が自分のものだけか確認。`git reset`/`rebase` 前に `git log --oneline -5` と `git reflog -5` で HEAD の実体を確認してから実行。
 - Detection: `git show --stat` の変更行数が想定と乖離 / `git reflog` に身に覚えのない commit が出現。
+
+### 19. マイグレーションの inspector は DDL の後に再取得する
+- Date: 2026-05-22 / Trigger: #7 migration（dspengine0009）で `op.create_table("dsp_creatives")` 後の backfill `INSERT...SELECT` が 0 件。`if insp.has_table("dsp_creatives")` が False で skip されていた。
+- Root Cause: `insp = inspect(conn)` を upgrade() 冒頭で1度だけ生成し使い回した。inspector は生成時点のスキーマをキャッシュするため、同一 upgrade 内で作成したテーブル/インデックスを認識しない。has_table/has_index/backfill ガードが全て空振りする。
+- Mitigation: create_table / add_column 等の DDL の後、index 作成や backfill の前に `insp = inspect(conn)` を再取得する。冒頭の inspector は「DDL 前の状態」専用と割り切る。
+- Detection: populated DB コピーで upgrade 後、新テーブルの行数・インデックスを `pragma` で必ず確認（教訓16 と併用）。

@@ -37,3 +37,17 @@ DspCreativeDB(1:N weight 振り分け) / bid.crid 是正 / holdout / dsp_ab_expe
 - 入札パスに外部 I/O 禁止: creative は入札前一括取得→純粋関数で選択（N+1 回避）
 - MDM の既存 `creatives`/`CreativeExperimentDB` には触らない（別系統）
 - migration 検証は本番 Postgres へ upgrade しない（read-only `alembic current` のみ）
+
+## レビュー結果（完了時）
+- code-reviewer: Critical 0 / HIGH 1 / MEDIUM 3 / LOW 2。HIGH（run_ab_experiment_report が
+  全キャンペーン集計後に Python フィルタ）は `run_report` に `campaign_id` フィルタを
+  追加して対応（commit b7c0415）。
+- MEDIUM 残（許容・既知の制約として handoff へ）: 外部 win_notice の `crid` は HMAC 署名外
+  （改竄でレポート creative 軸のみ汚染、spend 影響なし）。`update_*` の `value is not None`
+  パターンはフィールドの NULL クリア不可（#7 スコープ外・既存共通仕様）。
+- 教訓19 を追加（migration の inspector は DDL 後に再取得）。
+
+## 実装結果
+完了。テスト 17 件追加・全 PASS（全体 310 passed、6 failed は既知 MDM 事前不具合）。
+migration dspengine0009 を populated DB コピーで upgrade / 冪等 re-apply / downgrade 検証済み。
+コミット: 35a54e0(Red) / d6911ff(Green) / b7c0415(review fix)。

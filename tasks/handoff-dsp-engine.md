@@ -5,8 +5,9 @@ Status: Verified
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#5 まで完了。全コミット・push 済み（origin/master HEAD `3fa67fb`）、本番デプロイ済み（2026-05-22）。
-- 次は #6（多次元レポート拡張）。残タスクは #6〜#11 + ビジネス側オンボーディング。詳細は本書セクション6。
+- 優先タスク #1〜#7 まで完了・コミット済み（master HEAD `b7c0415`）。#1〜#5 のみ本番デプロイ済み、
+  **#6・#7 は未デプロイ・未 push**（master が origin より先行。`vercel --prod` 手動が必要）。
+- 次は #8（fraud / IVT / brand safety 監視）。残タスクは #8〜#11 + ビジネス側。詳細は本書セクション6。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
 
@@ -35,12 +36,15 @@ Status: Verified
 | 優先 #3 | サプライチェーン検証（schain 構造検証 / sellers.json 突合 / ads.txt・app-ads.txt / 自社 sellers.json）| 完了・本番反映済み |
 | 優先 #4 | 入札ログ完全化（nbr 付き `dsp_bid_logs` + Redis 集計）+ 予算 TOCTOU 対策（総予算超過で `budget_exhausted` 自動切替）| 完了・本番反映済み |
 | 優先 #5 | ベースライン ML（pCTR×pCVR×value の shrinkage 推定 / WARM_THRESHOLD 設定化 / device セグメント乗数バッチ / win-rate 可視化）| 完了・本番反映済み |
+| 優先 #6 | 多次元レポート拡張（creative/publisher/app/placement/geo/deal_id の 6 軸を非正規化記録）| 完了・**未デプロイ** |
+| 優先 #7 | A/B テスト・holdout 基盤（DspCreativeDB で 1:N 化 + weight 振り分け / DspAbExperimentDB / holdout / `bid.crid` 是正 / A/B レポート / admin 管理エンドポイント）| 完了・**未デプロイ** |
 
 **本番デプロイ状況**: Phase 2.6 + 優先 #1〜#5 を **2026-05-22 に本番デプロイ済み**
 （`vercel --prod`、deployment `dpl_CQ2RWhcB1tD37HiM1pWVKNpSkPtx`）。マイグレーション
-dspengine0003〜0006 は起動時 lifespan の `alembic upgrade head` で本番 Postgres へ適用済み
-（`/health` 200 で検証）。コミット #4/#5=`17e869a`、以降 `44c27fc`・`3fa67fb` も push 済み。
-Vercel は Git 未連携のため、次回以降の本番反映も `vercel --prod` の手動実行が必要。
+dspengine0003〜0006 は本番 Postgres へ適用済み。
+**#6・#7 はコミット済みだが未デプロイ**（マイグレーション dspengine0007〜0009 も本番未適用）。
+master HEAD `b7c0415` は origin より先行（未 push）。次回の本番反映は `git push` →
+`vercel --prod` の手動実行が必要（Vercel は Git 未連携）。
 
 **本番は現状 inert**: DSP キャンペーンが未登録のため、稼働はしているが実入札は発生しない。
 
@@ -64,7 +68,7 @@ dsp_engine/
   batch.py           サプライチェーン定期検証バッチ（lifespan タスク）★#3
   nbr.py             no-bid 理由コード（nbr）定義・ラベル ★#4
   segments.py        device セグメント別CTR乗数バッチ + L1キャッシュ ★#5
-  reporting.py       多次元レポート（#6 で拡張予定）
+  reporting.py       多次元レポート（#6 の 6 軸 + #7 run_ab_experiment_report）★#6★#7
   currency.py        円/ドルレート
   supply.py          SSP連携接続のCRUD / 外部IDマッピング / parse_allowed_asi_domains
   router.py          全エンドポイント
@@ -76,11 +80,14 @@ auction/
 主な既存ファイル変更: `db_models.py`、`main.py`（auction登録・lifespan・supply-chain /
 segment バッチ起動）、`config.py`（jpy_per_usd / warm_threshold / ssp_domain 等）。
 
-### DBテーブル（マイグレーション dspengine0001〜0006）
+### DBテーブル（マイグレーション dspengine0001〜0009）
 - `dsp_campaigns` / `dsp_spend_logs` / `dsp_click_events` / `dsp_conversion_events`
 - `dsp_configs`（拡張）— SSP連携 + schain 検証カラム（dspengine0004）
 - `dsp_bid_logs` — 入札判定ログ（nbr 付き全 bid request 記録。dspengine0005）★#4
 - `dsp_segment_perf` — device セグメント別 CTR 乗数（dspengine0006）★#5
+- 3 イベントテーブルへ多次元軸カラム（creative/publisher/app/placement/geo/deal_id）追加（dspengine0007〜0008）★#6
+- `dsp_creatives` — クリエイティブ 1:N（weight 振り分け）/ `dsp_ab_experiments` — A/B 実験管理。
+  `dsp_campaigns.holdout_rate` 追加（dspengine0009）★#7
 
 ### 主要エンドポイント
 - `POST /v1/bid` — SSPヘッダービディング（dsp-engine 参加）
@@ -94,7 +101,7 @@ segment バッチ起動）、`config.py`（jpy_per_usd / warm_threshold / ssp_do
 
 ## 4. 検証状況（Verified の根拠）
 
-- 全体: `pytest tests/` → **271 passed**, 6 failed, 1 skipped。
+- 全体: `pytest tests/` → **310 passed**, 6 failed, 1 skipped。
   6 failed は `test_android_mdm.py` / `test_mdm_profile_resilience.py` の**事前不具合**で
   dsp_engine と無関係（誤って「壊した」と判断しないこと）。
 - dsp_engine 系テスト: test_dsp_engine 40 / test_auction 14 / test_shading 7 /
@@ -127,13 +134,11 @@ DATABASE_URL="sqlite+aiosqlite:///./ssp_local.db" APP_ENV=development \
 
 ## 6. 次やること（残タスク・優先順）
 
-完了: #1〜#5（すべて本番反映済み）。
+完了: #1〜#7（#1〜#5 は本番反映済み / #6・#7 はコミット済み・未デプロイ）。
 
 | # | やること | 優先度 | 関連ファイル |
 |---|---|---|---|
-| 6 | creative / publisher / app / placement / geo / device / deal_id 別レポート | **中（次着手）** | `dsp_engine/reporting.py` |
-| 7 | A/B テスト・holdout 基盤（複数クリエイティブ 1:N 化が前提。`bid.crid` の click_token 流用是正）| 中 | 新規 `DspCreativeDB` 等 |
-| 8 | fraud / IVT / brand safety 監視（クリック連打レート制限を含む）| 中 | `dsp_engine/attribution.py` |
+| 8 | fraud / IVT / brand safety 監視（クリック連打レート制限を含む）| **中（次着手）** | `dsp_engine/attribution.py` |
 | 9 | MMP 署名検証・SKAN・Privacy Sandbox 対応（PII サニタイズ・アトリビューション窓）| 中 | `router.py`, `attribution.py` |
 | 10 | データ基盤・運用堅牢化（複合インデックス・管理画面 N+1 解消・QPS カウンタ Redis 化）| 中〜低 | `db_models.py`, `router.py`, `exchange.py` |
 | 11 | 動的フロア最適化（落札率・bid density ベース。#2 から分離）| 中 | `main.py`, `auction/engine.py`, 新テーブル |
@@ -148,8 +153,9 @@ spend/click ログへの該当カラム記録追加が前提 → #6 または #1
 
 ## 7. 既知の制約・注意点（次セッションへの申し送り）
 
-1. **#1〜#5 は本番デプロイ済み（2026-05-22）**: `vercel --prod` 実行・dspengine0003〜0006
-   適用済み・全コミット push 済み。次の変更も本番反映は `vercel --prod` 手動。
+1. **#1〜#5 は本番デプロイ済み / #6・#7 は未デプロイ・未 push**: master HEAD `b7c0415` が
+   origin より先行。本番反映は `git push` → `vercel --prod` 手動（dspengine0007〜0009 は
+   起動時 lifespan の `alembic upgrade head` で本番 Postgres へ自動適用される）。
 2. **本番 inert**: DSP キャンペーン未登録のため実入札は発生しない。実稼働はビジネス側
    オンボーディング後。
 3. **lifespan の Alembic がローカルSQLiteでデッドロック**: ローカル起動時は
