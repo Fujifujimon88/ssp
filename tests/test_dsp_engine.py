@@ -895,3 +895,72 @@ async def test_can_bid_blocks_on_db_daily_spend_when_counter_lost():
     # record_spend を呼ばない = Redis/メモリカウンタは 0
     # DB 実績 11000 はペース許容 12000 × 0.9 = 10800 を超える
     assert await pacer.can_bid(c, daily_spend_jpy=11000.0, now=now) is False
+
+
+# ── Phase 2: admin/campaigns N+1 再現テスト ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_admin_campaigns_no_n_plus_1(db):
+    """GET /dsp-engine/admin/campaigns が N キャンペーンでも get_campaign_roas を
+    一切呼ばず、get_all_campaign_stats を 1 回だけ呼ぶことを検証する (Red: 現状は N+1)。
+
+    現状の admin_campaigns_page はキャンペーン N 件に対し get_campaign_roas を N 回呼ぶ。
+    このテストはその N+1 を AssertionError で検出し FAIL する (=再現テスト)。
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from fastapi.responses import Response
+    from starlette.requests import Request
+
+    from dsp_engine import campaign_manager as _cm
+    from dsp_engine.router import admin_campaigns_page
+
+    # 3 キャンペーンを seed
+    db.add_all([
+        make_campaign(id="np1-1", status="active", daily_budget_jpy=1000.0),
+        make_campaign(id="np1-2", status="active", daily_budget_jpy=2000.0),
+        make_campaign(id="np1-3", status="active", daily_budget_jpy=3000.0),
+    ])
+    await db.commit()
+
+    # テンプレート描画を回避するためダミーの TemplateResponse を patch
+    mock_template_response = MagicMock(return_value=Response("ok"))
+
+    # get_campaign_roas を側効果 AssertionError で patch
+    # → admin_campaigns_page がこれを 1 回でも呼んだら AssertionError が raise されて test FAIL
+    mock_roas = AsyncMock(
+        side_effect=AssertionError(
+            "N+1: get_campaign_roas should not be called for list view"
+        )
+    )
+
+    # get_all_campaign_stats を wraps で patch して呼び出し回数を検証
+    mock_stats = AsyncMock(wraps=_cm.get_all_campaign_stats)
+
+    with (
+        patch("dsp_engine.router.get_campaign_roas", mock_roas),
+        patch("dsp_engine.campaign_manager.get_all_campaign_stats", mock_stats),
+        patch("dsp_engine.router.templates.TemplateResponse", mock_template_response),
+    ):
+        dummy_request = MagicMock(spec=Request)
+        await admin_campaigns_page(request=dummy_request, db=db)
+
+    # get_campaign_roas は 0 回であること (mock_roas.side_effect で FAIL するが念のため)
+    assert mock_roas.call_count == 0, (
+        f"get_campaign_roas が {mock_roas.call_count} 回呼ばれた (N+1 クエリ)"
+    )
+
+    # get_all_campaign_stats は 1 回だけ呼ばれること
+    assert mock_stats.call_count == 1, (
+        f"get_all_campaign_stats の呼び出し回数が {mock_stats.call_count} 回 (expected 1)"
+    )
+
+    # テンプレートに渡された rows の各要素の roas dict に必須キーが含まれること
+    assert mock_template_response.call_count == 1
+    call_kwargs = mock_template_response.call_args
+    context = call_kwargs[0][1] if call_kwargs[0] else call_kwargs[1]
+    rows = context["rows"]
+    required_keys = {"impressions", "spend_jpy", "conversions", "revenue_jpy", "roas", "ctr", "cpa"}
+    for row in rows:
+        missing = required_keys - set(row["roas"].keys())
+        assert not missing, f"roas dict にキーが不足: {missing}"
