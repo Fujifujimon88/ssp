@@ -286,24 +286,29 @@ async def test_win_then_conversion_closes_roas_loop(db):
 
 # ── Phase 2: 外部エクスチェンジ連携 ─────────────────────────────
 
-def test_check_qps_under_limit():
+@pytest.mark.asyncio
+async def test_check_qps_under_limit():
     """QPS上限内なら入札を受け付ける"""
     from dsp_engine.exchange import check_qps
-    assert all(check_qps("qps-under", 10) for _ in range(5))
+    results = [await check_qps("qps-under", 10) for _ in range(5)]
+    assert all(results)
 
 
-def test_check_qps_blocks_over_limit():
+@pytest.mark.asyncio
+async def test_check_qps_blocks_over_limit():
     """同一秒で QPS 上限を超えたら False を返す"""
     from dsp_engine.exchange import check_qps
-    results = [check_qps("qps-over", 3) for _ in range(5)]
+    results = [await check_qps("qps-over", 3) for _ in range(5)]
     assert results[:3] == [True, True, True]
     assert results[3] is False and results[4] is False
 
 
-def test_check_qps_unlimited():
+@pytest.mark.asyncio
+async def test_check_qps_unlimited():
     """qps_limit=0 は無制限"""
     from dsp_engine.exchange import check_qps
-    assert all(check_qps("qps-unl", 0) for _ in range(50))
+    results = [await check_qps("qps-unl", 0) for _ in range(50)]
+    assert all(results)
 
 
 def test_currency_override_and_validation():
@@ -964,3 +969,69 @@ async def test_admin_campaigns_no_n_plus_1(db):
     for row in rows:
         missing = required_keys - set(row["roas"].keys())
         assert not missing, f"roas dict にキーが不足: {missing}"
+
+
+# ── Phase 3: Redis QPS + NBR カウンター (教訓21: EXPIRE は count==1 のみ) ──
+
+
+class _FakeRedis:
+    """テスト用最小 Redis モック。INCR/EXPIRE 呼び出し履歴を記録する。"""
+    def __init__(self):
+        self._store: dict[str, int] = {}
+        self.incr_calls: list[str] = []
+        self.expire_calls: list[tuple[str, int]] = []
+
+    async def incr(self, key: str) -> int:
+        self.incr_calls.append(key)
+        self._store[key] = self._store.get(key, 0) + 1
+        return self._store[key]
+
+    async def expire(self, key: str, ttl: int) -> None:
+        self.expire_calls.append((key, ttl))
+
+
+@pytest.mark.asyncio
+async def test_check_qps_with_redis_fixed_window():
+    """qps_limit=2 のとき Redis 化で 3 回目以降ブロック。EXPIRE は初回のみ呼ばれる (教訓21)。"""
+    from dsp_engine.exchange import check_qps
+    fake = _FakeRedis()
+    result1 = await check_qps("redis-ex", 2, redis=fake)
+    result2 = await check_qps("redis-ex", 2, redis=fake)
+    result3 = await check_qps("redis-ex", 2, redis=fake)
+    assert (result1, result2, result3) == (True, True, False)
+    # EXPIRE は count==1 のときのみ → 同一秒キーで 1 回だけ呼ばれる
+    expire_calls_for_key = [c for c in fake.expire_calls if c[0].startswith("dsp:qps:redis-ex:")]
+    assert len(expire_calls_for_key) == 1, \
+        f"EXPIRE は count==1 のときのみ呼ぶべき (教訓21), but got {len(expire_calls_for_key)} calls"
+
+
+@pytest.mark.asyncio
+async def test_check_qps_redis_fallback_no_redis():
+    """redis=None のとき in-memory フォールバックが動く。"""
+    from dsp_engine.exchange import check_qps
+    # クリーンな exchange 名で 3 回連続呼び出し
+    result1 = await check_qps("fallback-ex", 2, redis=None)
+    result2 = await check_qps("fallback-ex", 2, redis=None)
+    result3 = await check_qps("fallback-ex", 2, redis=None)
+    assert (result1, result2, result3) == (True, True, False)
+
+
+@pytest.mark.asyncio
+async def test_incr_nbr_counter_expire_only_on_first_incr(monkeypatch):
+    """_incr_nbr_counter は EXPIRE を count==1 のときのみ呼ぶ (教訓21)。"""
+    from dsp_engine import bidder
+    fake = _FakeRedis()
+    async def fake_get_redis():
+        return fake
+    monkeypatch.setattr(bidder, "get_redis", fake_get_redis)
+    # 同じ outcome/nbr で 3 回連続
+    await bidder._incr_nbr_counter("nobid", 500)
+    await bidder._incr_nbr_counter("nobid", 500)
+    await bidder._incr_nbr_counter("nobid", 500)
+    # INCR は 3 回
+    incr_calls_for_nbr = [c for c in fake.incr_calls if "dsp:nbr:" in c]
+    assert len(incr_calls_for_nbr) == 3
+    # EXPIRE は count==1 のときのみ → 1 回
+    expire_calls_for_nbr = [c for c in fake.expire_calls if "dsp:nbr:" in c[0]]
+    assert len(expire_calls_for_nbr) == 1, \
+        f"EXPIRE は count==1 のときのみ呼ぶべき (教訓21), but got {len(expire_calls_for_nbr)} calls"
