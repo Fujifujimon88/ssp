@@ -78,8 +78,9 @@ async def _incr_nbr_counter(outcome: str, nbr_code: Optional[int]) -> None:
     key = f"{_NBR_KEY_PREFIX}:{day}:{code}"
     r = await get_redis()
     if r:
-        await r.incr(key)
-        await r.expire(key, _NBR_TTL_SEC)
+        count = await r.incr(key)
+        if count == 1:                  # 教訓21: EXPIRE は初回のみ
+            await r.expire(key, _NBR_TTL_SEC)
     else:
         _mem_nbr_counts[key] = _mem_nbr_counts.get(key, 0) + 1
 

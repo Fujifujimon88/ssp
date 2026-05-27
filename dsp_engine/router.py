@@ -654,7 +654,12 @@ async def inbound_bid(
         return Response(status_code=204)  # 未登録/停止中 → ノービッド
     if not exchange.verify_exchange_secret(exch, request.headers.get("X-DSP-Secret")):
         return Response(status_code=401)  # 認証失敗（共有シークレット不一致）
-    if not exchange.check_qps(exchange_name, exch.qps_limit):
+    try:
+        redis = await get_redis()
+    except Exception as exc:
+        logger.warning(f"inbound_bid: get_redis failed — qps redis skipped: {exc}")
+        redis = None
+    if not await exchange.check_qps(exchange_name, exch.qps_limit, redis=redis):
         return Response(status_code=429)  # QPS 上限超過
 
     try:

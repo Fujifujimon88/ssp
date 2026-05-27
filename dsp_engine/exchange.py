@@ -21,10 +21,20 @@ logger = logging.getLogger(__name__)
 _qps_window: dict[str, tuple[int, int]] = {}  # {exchange: (window_epoch_sec, count)}
 
 
-def check_qps(exchange_name: str, qps_limit: int) -> bool:
-    """現在の1秒で受信数が qps_limit 以内なら True。qps_limit<=0 は無制限。"""
+async def check_qps(exchange_name: str, qps_limit: int, redis=None) -> bool:
+    """現在の1秒で受信数が qps_limit 以内なら True。qps_limit<=0 は無制限。
+
+    redis=None なら _qps_window in-memory フォールバック。
+    redis non-None なら Redis INCR + EXPIRE 固定ウィンドウ (教訓21: EXPIRE は count==1 のみ)。
+    """
     if qps_limit <= 0:
         return True
+    if redis is not None:
+        key = f"dsp:qps:{exchange_name}:{int(time.time())}"
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, 2)
+        return count <= qps_limit
     now = int(time.time())
     win, count = _qps_window.get(exchange_name, (now, 0))
     if win != now:
