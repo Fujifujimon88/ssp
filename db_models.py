@@ -3,7 +3,7 @@ import uuid
 from datetime import date as date_type, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, SmallInteger, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -968,6 +968,9 @@ class DspSpendLogDB(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
     # クリックは別テーブル DspClickEventDB に記録する（実クリック数・クリック日基準集計のため）
+    __table_args__ = (
+        Index("ix_dsp_spend_logs_campaign_logged", "campaign_id", "logged_at"),
+    )
 
 
 class DspConversionEventDB(Base):
@@ -1007,6 +1010,9 @@ class DspConversionEventDB(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+    __table_args__ = (
+        Index("ix_dsp_conv_events_campaign_attributed_received", "campaign_id", "attributed", "received_at"),
+    )
 
 
 class DspClickEventDB(Base):
@@ -1036,6 +1042,9 @@ class DspClickEventDB(Base):
     deal_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     clicked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    __table_args__ = (
+        Index("ix_dsp_click_events_campaign_clicked", "campaign_id", "clicked_at"),
     )
 
 
@@ -1067,6 +1076,10 @@ class DspBidLogDB(Base):
     paced_out_count: Mapped[int] = mapped_column(Integer, default=0)   # 予算で除外された数
     logged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    __table_args__ = (
+        Index("ix_dsp_bid_logs_outcome_campaign", "outcome", "campaign_id"),
+        Index("ix_dsp_bid_logs_campaign_nbr_logged", "campaign_id", "nbr", "logged_at"),
     )
 
 
