@@ -181,6 +181,31 @@ async def get_all_campaign_stats(
     return result
 
 
+def compute_roas_from_stats(stats: dict) -> dict:
+    """stats dict から ROAS/CPA/CTR を計算して返す（純粋関数、DB アクセスなし）。
+
+    Args:
+        stats: get_campaign_stats / get_all_campaign_stats の 1 件分 dict
+               {impressions, spend_jpy, daily_spend_jpy, clicks, conversions, revenue_jpy}
+    Returns:
+        stats の全キー + {roas, cpa, ctr} を含む dict
+    """
+    spend = stats["spend_jpy"]
+    revenue = stats["revenue_jpy"]
+    conversions = stats["conversions"]
+    impressions = stats["impressions"]
+    clicks = stats["clicks"]
+    roas = (revenue / spend * 100.0) if spend > 0 else 0.0
+    cpa = (spend / conversions) if conversions > 0 else 0.0
+    ctr = (clicks / impressions * 100.0) if impressions > 0 else 0.0
+    return {
+        **stats,
+        "roas": round(roas, 2),
+        "cpa": round(cpa, 2),
+        "ctr": round(ctr, 2),
+    }
+
+
 # ── クリエイティブ（#7。1キャンペーン : N クリエイティブ） ──────────
 
 async def list_creatives(db: AsyncSession, campaign_id: str) -> list[DspCreativeDB]:

@@ -36,6 +36,7 @@ from config import settings
 from database import get_db
 from cache import get_redis
 from dsp_engine import campaign_manager, exchange, fraud, reporting, supply
+from dsp_engine.campaign_manager import compute_roas_from_stats
 from dsp_engine.attribution import (
     get_campaign_roas, normalize_conversion_payload, record_click, record_conversion,
     sanitize_pii_payload, verify_postback_secret,
@@ -292,10 +293,12 @@ async def advertiser_stats(
             summary="DSPキャンペーン管理", dependencies=[Depends(require_admin_ip)])
 async def admin_campaigns_page(request: Request, db: AsyncSession = Depends(get_db)):
     campaigns = await campaign_manager.list_campaigns(db)
-    rows = []
-    for c in campaigns:
-        roas = await get_campaign_roas(db, c.id)
-        rows.append({"c": c, "roas": roas})
+    campaign_ids = [c.id for c in campaigns]
+    all_stats = await campaign_manager.get_all_campaign_stats(db, campaign_ids)
+    rows = [
+        {"c": c, "roas": compute_roas_from_stats(all_stats[c.id])}
+        for c in campaigns
+    ]
     return templates.TemplateResponse(
         "campaigns.html", {"request": request, "rows": rows}
     )
