@@ -1,13 +1,13 @@
 # 進捗管理表: dsp_engine（広告主向けパフォーマンス DSP）
 
-最終更新: 2026-05-22
+最終更新: 2026-05-28
 関連: `tasks/handoff-dsp-engine.md`（引き継ぎ詳細） / `tasks/todo.md`（作業ログ） / `tasks/lessons.md`（教訓）
 
 ## 0. サマリー（3行）
 
 - DSP MVP の骨格は実装済み。dsp-engine が自社 SSP オークションに参加し、キャンペーン管理・入札・クリック計測・CV ポストバック・ROAS/CPA/CTR 集計・外部 SSP OpenRTB 受信口まで稼働。
-- DSP 関連テストは通過済み（dsp_engine 系 + supply_chain / sjcache / adstxt 等、2026-05-22 時点。全体 310 passed、6 failed は既知の MDM 系事前不具合）。
-- #1〜#9 + セキュリティ修正3件（CV 売上付け替え防止 / win notice 署名に crid / daily pacing の DB フォールバック）は完了・本番デプロイ済み（2026-05-23、deployment `dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`）。次フェーズは #10（データ基盤・運用堅牢化）。#9-2（SKAN/Privacy Sandbox）は優先度低。優先タスク表（セクション3）参照。
+- #1〜#10 + セキュリティ修正3件まで実装完了。dsp_engine 系テスト 54 passed (master `6720e0d`)。
+- #1〜#9 は本番デプロイ済み (2026-05-23、deployment `dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP`)。**#10 は本番未反映** (`vercel --prod` 手動実行待ち)。次フェーズは #11（動的フロア最適化）。#9-2（SKAN/Privacy Sandbox）は優先度低。
 
 ## 1. 現状（実装済み・稼働中）
 
@@ -54,7 +54,7 @@
 | 8-2 | #8 エンドツーエンド配線 | 中 | 完了・本番反映済み | 本セッション分割 | `router.py`, `fraud.py`, `bidder.py` | router.py /click にレート制限配線（実 Redis カウンタ `incr_click_counters`・固定ウィンドウ）/ /conversion に revenue ガード（異常値は revenue_jpy=0 に丸め）/ bidder.py LOW-2 是正。batch.py ループは不要と確定 |
 | 9 | MMP 署名検証 / PII サニタイズ / アトリビューション窓 | 中 | 完了・本番反映済み | Fuji + handoff #10・#17 | `config.py`, `dsp_engine/attribution.py`, `router.py`, `campaign_manager.py`, `reporting.py`, `db_models.py`, migration | HMAC-SHA256 署名検証 + timing-safe 化 / raw_payload の PII キー除去 / `attributed` カラム(dspengine0011)で窓外 CV を ROAS 集計から除外。SKAN・Privacy Sandbox は #9-2 へ |
 | 9-2 | SKAN / Privacy Sandbox 対応 | 低 | 未着手 | #9 から分離 | `router.py`, `auction/openrtb.py` | SKAdNetwork ポストバック・Apple ECDSA 検証 / Attribution Reporting API・PAAPI。iOS 実入札・Web 枠展開が具体化してから |
-| 10 | データ基盤・運用堅牢化 | 中〜低 | 未着手（次着手）| handoff #11・#12・#15 | `db_models.py`, `dsp_engine/router.py`, `dsp_engine/exchange.py` | 複合インデックス追加、管理画面 N+1 解消、QPS カウンタの Redis 化（マルチプロセス対応） |
+| 10 | データ基盤・運用堅牢化 | 中〜低 | 完了・master 反映済み (本番未) | handoff #11・#12・#15 | `db_models.py`, `dsp_engine/router.py`, `dsp_engine/exchange.py`, `dsp_engine/bidder.py`, `dsp_engine/campaign_manager.py`, migration `dspengine0012` | Phase 1: 複合インデックス 5 本 + migration / Phase 2: admin/campaigns N+1 解消 (`compute_roas_from_stats`) / Phase 3: QPS Redis 化 (async + redis 引数) + bidder.py `_incr_nbr_counter` の教訓21違反修正 |
 | 11 | 動的フロア最適化 | 中 | 未着手 | #2 から分離 | `main.py`, `auction/engine.py`, （新テーブル） | 落札率・bid density・過去 clearing_price の分位点ベースで動的にフロアを調整。floor_price_history テーブル + 更新バッチ。#2 のスコープから分離 |
 
 ビジネス側（コード外）: 実広告主 1〜2 社のオンボーディング / 外部エクスチェンジの実提携・QPS 審査 / 本番初回 DSP キャンペーン登録（未登録のため本番は現状 inert）。
@@ -69,6 +69,7 @@
 
 | 日付 | 内容 |
 |---|---|
+| 2026-05-28 | #10 データ基盤・運用堅牢化を完了 (3 Phase、test-first-implement パイプライン × 3 回、全 Reviewer Approve、master `6720e0d`)。Phase 1: 複合インデックス 5 本 (spend/click/conv/bid×2) + migration `dspengine0012` (`CREATE INDEX IF NOT EXISTS` 冪等)。Phase 2: `admin_campaigns_page` の N+1 (3N クエリ) を `get_all_campaign_stats` + 純粋関数 `compute_roas_from_stats` で 1+3 クエリ固定に解消。`get_campaign_roas` は advertiser API で温存。Phase 3: `exchange.check_qps` を `async def check_qps(name, limit, redis=None)` に変更し Redis INCR+EXPIRE 固定ウィンドウ対応 (教訓21準拠: EXPIRE は count==1 のみ)。`router.inbound_bid` を `await get_redis()` (try/except フォールバック) + `await check_qps(..., redis=redis)` に対応。あわせて `bidder._incr_nbr_counter` の教訓21違反 (`incr` 後に毎回 `expire`) を `if count == 1:` ガード付きに修正。既存 `test_check_qps_*` 3 件を async/await 化。dsp_engine 系テスト 50 → 54 件、全 PASS、regression なし。本番デプロイは `vercel --prod` 手動待ち。教訓20 (worktree base がセッション初期 commit になる) は Phase 2/3 ともに発動したが、Red commit 後に `git rebase master` で対応 (Phase 3 は test_dsp_engine.py の末尾追加で conflict、両 Phase のテストを残す形で resolve)。 |
 | 2026-05-23 | dsp_engine セキュリティ修正3件を完了・本番デプロイ（deployment `dpl_E7tFfmCaG15kZBXWoTi1rpWQYTNf`）。Fix 1: `record_conversion` で click_token→spend_log の campaign_id を無条件採用（リクエスト指定との不一致は warning・400 にしない）— CV 売上付け替え攻撃を防ぐ。Fix 2: win notice 署名対象に `crid` を追加（`ct\|cid\|src\|bid\|crid`）— creative 軸の改竄を検知。Fix 3: `BudgetPacer.can_bid` が `daily_spend_jpy`（当日 UTC の DB 実績）でフォールバック判定 — Redis flush/再起動でも日予算超過を検知。スキーマ変更なし。あわせて reporting テストの日付フレーク（`date.today()` ローカル日付 vs UTC `logged_at`）を UTC 統一で修正。dsp 系 126 passed。注: 本修正は並行 Claude セッションが先行実装・master へマージ済み（重複作業。教訓23）。 |
 | 2026-05-22 | 進捗管理表を新規作成。現状・重要な不足7点・優先タスク10項目を整理。 |
 | 2026-05-22 | #1 OpenRTB 2.6 スキーマ拡張を完了。`auction/openrtb.py` を 2.6 相当へ拡張（App/Source/Regs/Pmp/Deal/eids/burl・lurl/Video 詳細/Device 拡張）。`tests/test_openrtb_26.py` 13件 PASS、既存 38件非破壊。 |

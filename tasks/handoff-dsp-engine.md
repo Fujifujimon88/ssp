@@ -1,13 +1,12 @@
 # 引き継ぎ: dsp_engine（広告主向けパフォーマンス DSP）
 
 Status: Verified
-最終更新: 2026-05-23
+最終更新: 2026-05-28
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#9 + セキュリティ修正3件まで完了・**本番デプロイ済み**（2026-05-23、deployment `dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP`）。
-- 最新は #9 MMP署名検証/PIIサニタイズ/アトリビューション窓 + セキュリティ修正3件（売上付け替え防止 / win notice 署名に crid / daily pacing の DB フォールバック）。
-  残タスクは #9-2（SKAN・Privacy Sandbox）/ #10 / #11 + ビジネス側。詳細は本書セクション6。
+- 優先タスク #1〜#10 + セキュリティ修正3件まで実装完了・push 済み (master `6720e0d`)。本番反映は `vercel --prod` の手動実行が必要。直前の本番 deployment は `dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP` (2026-05-23、#9 まで)。
+- 最新は #10 データ基盤・運用堅牢化 3 Phase (複合インデックス 5 本 + migration `dspengine0012` / 管理画面 N+1 解消 / QPS Redis 化 + bidder.py 教訓21違反修正)。残タスクは #9-2 (SKAN・Privacy Sandbox) / #11 (動的フロア最適化) + ビジネス側。詳細は本書セクション6。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
 
@@ -42,11 +41,13 @@ Status: Verified
 | 優先 #8-2 | fraud 監視のエンドツーエンド配線（router.py /click にレート制限配線・実 Redis カウンタ `incr_click_counters` / router.py /conversion に revenue ガード / bidder.py LOW-2 是正）| 完了・本番反映済み |
 | 優先 #9 | MMP 署名検証（HMAC-SHA256 + timing-safe）/ PII サニタイズ（raw_payload）/ アトリビューション窓（`attributed` カラム + migration dspengine0011 で窓外 CV を ROAS 集計から除外）| 完了・本番反映済み |
 | セキュリティ修正3件 | CV 売上付け替え防止（`record_conversion` で click_token→spend_log の campaign_id を無条件採用・不一致は warning）/ win notice 署名に `crid` を含める（改竄防止）/ daily pacing の DB フォールバック（`can_bid` が Redis 不在時 `daily_spend_jpy` の DB 実績で判定）。スキーマ変更なし | 完了・本番反映済み |
+| 優先 #10 | データ基盤・運用堅牢化 3 Phase: 複合インデックス 5 本 + migration `dspengine0012` (Phase 1) / 管理画面 N+1 解消 `compute_roas_from_stats` (Phase 2) / QPS Redis 化 + bidder.py `_incr_nbr_counter` の教訓21違反修正 (Phase 3) | 完了・master 反映済み (本番デプロイは未) |
 
-**本番デプロイ状況**: 優先 #1〜#9 + セキュリティ修正3件を **2026-05-23 に本番デプロイ済み**。最新 deployment
-`dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP`（`vercel --prod`、READY、`https://ssp-platform.vercel.app`、`/health` 200）。
-マイグレーション dspengine0003〜0011 は起動時 lifespan の `alembic upgrade head` で本番
-Postgres へ適用済み（セキュリティ修正3件はスキーマ変更なし）。
+**本番デプロイ状況**: 優先 #1〜#9 + セキュリティ修正3件は **2026-05-23 に本番デプロイ済み**
+（deployment `dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP`、`/health` 200）。**#10 は master `6720e0d` まで実装完了
+だが本番未反映** — `vercel --prod` の手動実行が必要。マイグレーション `dspengine0012`
+(複合インデックス 5 本) は起動時 lifespan の `alembic upgrade head` で本番 Postgres へ自動適用される。
+QPS Redis 化はフォールバック付き実装のため本番 Redis 未接続でも稼働するが、実効化には Upstash 等の接続が別途必要。
 Vercel は Git 未連携のため、次回以降の本番反映も `git push` → `vercel --prod` の手動実行が必要。
 
 **本番 Redis 未接続の注意**: `/health` の `redis:false`。#8-2 のクリック連打レート制限
@@ -113,7 +114,7 @@ segment バッチ起動）、`config.py`（jpy_per_usd / warm_threshold / ssp_do
 - 全体: `pytest tests/` → **310 passed**, 6 failed, 1 skipped。
   6 failed は `test_android_mdm.py` / `test_mdm_profile_resilience.py` の**事前不具合**で
   dsp_engine と無関係（誤って「壊した」と判断しないこと）。
-- dsp_engine 系テスト: test_dsp_engine 40 / test_auction 14 / test_shading 7 /
+- dsp_engine 系テスト: test_dsp_engine 54 (Phase 1+2+3 で +4) / test_auction 14 / test_shading 7 /
   test_openrtb_26 13 / test_supply_chain 10 / test_sjcache 9 / test_adstxt 10 /
   test_dsp_bid_log 12 / test_ml_scoring 13。
 - 各優先タスクは TDD（Red 先行）で実装。後方互換も明示テストで担保。
@@ -143,21 +144,21 @@ DATABASE_URL="sqlite+aiosqlite:///./ssp_local.db" APP_ENV=development \
 
 ## 6. 次やること（残タスク・優先順）
 
-**完了済み（#1〜#9・すべて本番デプロイ済み 2026-05-22）**: OpenRTB 2.6 拡張 / first-price +
-bid shading / サプライチェーン検証 / 入札ログ + TOCTOU 対策 / ベースライン ML / 多次元レポート /
-A/B テスト・holdout 基盤 / fraud・IVT・brand safety 監視（#8 + #8-2 配線）/ MMP 署名検証・PII
-サニタイズ・アトリビューション窓（#9）。すべて test-first-implement パイプライン（最終 Reviewer
-Approve）で実装。dsp 系テスト 123 passed。
+**完了済み（#1〜#10）**: OpenRTB 2.6 拡張 / first-price + bid shading / サプライチェーン検証 /
+入札ログ + TOCTOU 対策 / ベースライン ML / 多次元レポート / A/B テスト・holdout 基盤 /
+fraud・IVT・brand safety 監視（#8 + #8-2 配線）/ MMP 署名検証・PII サニタイズ・
+アトリビューション窓（#9）/ データ基盤・運用堅牢化（#10）。すべて test-first-implement
+パイプライン（最終 Reviewer Approve）で実装。**dsp 系テスト 54 passed**（master `6720e0d`）。
+#1〜#9 は本番デプロイ済み (2026-05-23)、**#10 は本番未反映** (`vercel --prod` 手動実行待ち)。
 
 **残タスク（優先順）**:
 
 | # | やること | 優先度 | 状態 | 関連ファイル |
 |---|---|---|---|---|
-| 9-2 | SKAN（SKAdNetwork ポストバック・Apple ECDSA 検証）/ Privacy Sandbox（Attribution Reporting・PAAPI）対応。#9 でスコープ外にした分。iOS 実入札・Web 枠展開が具体化してから着手 | 低 | 未着手 | `router.py`, `auction/openrtb.py`, 新テーブル |
-| 10 | データ基盤・運用堅牢化（複合インデックス・管理画面 N+1 解消・QPS カウンタ Redis 化）| 中〜低 | 未着手 | `db_models.py`, `router.py`, `exchange.py` |
 | 11 | 動的フロア最適化（落札率・bid density ベース。#2 から分離）| 中 | 未着手 | `main.py`, `auction/engine.py`, 新テーブル |
+| 9-2 | SKAN（SKAdNetwork ポストバック・Apple ECDSA 検証）/ Privacy Sandbox（Attribution Reporting・PAAPI）対応。#9 でスコープ外にした分。iOS 実入札・Web 枠展開が具体化してから着手 | 低 | 未着手 | `router.py`, `auction/openrtb.py`, 新テーブル |
 
-**次セッションの着手対象 = #10**（データ基盤・運用堅牢化）。#9-2（SKAN/Privacy Sandbox）は
+**次セッションの着手対象 = #11**（動的フロア最適化）。#9-2（SKAN/Privacy Sandbox）は
 DSP が iOS 実トラフィック・Web 枠を扱うまで実価値が薄く優先度低。
 **インフラ申し送り**: 本番 Redis 未接続（`/health` redis:false）。#8-2 のクリック連打レート制限を
 実効化するには本番 Redis 接続が必須（#10 の QPS Redis 化と併せて検討）。
