@@ -676,6 +676,51 @@ async def test_handle_bid_request_at1_applies_shading(db):
     assert price_first < price_second
 
 
+# ── dsp #10 phase 1: 複合インデックス存在検証 (Red) ──────────────
+
+@pytest.mark.asyncio
+async def test_composite_indexes_exist(db):
+    """
+    5 本の複合インデックスが DB に存在し、かつカラム構成が正しいことを検証する。
+
+    期待するインデックス:
+      1. dsp_spend_logs        : ix_dsp_spend_logs_campaign_logged         (campaign_id, logged_at)
+      2. dsp_click_events      : ix_dsp_click_events_campaign_clicked       (campaign_id, clicked_at)
+      3. dsp_conversion_events : ix_dsp_conv_events_campaign_attributed_received
+                                   (campaign_id, attributed, received_at)
+      4. dsp_bid_logs          : ix_dsp_bid_logs_outcome_campaign           (outcome, campaign_id)
+      5. dsp_bid_logs          : ix_dsp_bid_logs_campaign_nbr_logged        (campaign_id, nbr, logged_at)
+
+    これらはまだ db_models.py に定義されていないため FAIL する (Red)。
+    """
+    from sqlalchemy import text
+
+    expected = [
+        ("dsp_spend_logs",        "ix_dsp_spend_logs_campaign_logged",               ["campaign_id", "logged_at"]),
+        ("dsp_click_events",      "ix_dsp_click_events_campaign_clicked",             ["campaign_id", "clicked_at"]),
+        ("dsp_conversion_events", "ix_dsp_conv_events_campaign_attributed_received",  ["campaign_id", "attributed", "received_at"]),
+        ("dsp_bid_logs",          "ix_dsp_bid_logs_outcome_campaign",                 ["outcome", "campaign_id"]),
+        ("dsp_bid_logs",          "ix_dsp_bid_logs_campaign_nbr_logged",              ["campaign_id", "nbr", "logged_at"]),
+    ]
+
+    for table, index_name, expected_cols in expected:
+        # PRAGMA index_list('<table>') でインデックス一覧を取得
+        rows = (await db.execute(text(f"PRAGMA index_list('{table}')"))).fetchall()
+        index_names = [r[1] for r in rows]  # col 1 = index name
+        assert index_name in index_names, (
+            f"インデックス '{index_name}' が '{table}' に存在しない。"
+            f"現在の index_list: {index_names}"
+        )
+
+        # PRAGMA index_info('<index>') でカラム構成を確認 (col 2 = column name)
+        info_rows = (await db.execute(text(f"PRAGMA index_info('{index_name}')"))).fetchall()
+        actual_cols = [r[2] for r in info_rows]  # seqno 順 (= index_rank 順)
+        assert actual_cols == expected_cols, (
+            f"インデックス '{index_name}' のカラム構成が不一致。"
+            f"expected={expected_cols}, actual={actual_cols}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_handle_bid_request_at2_no_shading(db):
     """at=2 (second-price): 過去落札が多くても shading されずフルプライス入札"""
