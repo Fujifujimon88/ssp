@@ -157,3 +157,166 @@ def test_compute_dynamic_floor_clamp_upper():
     # floor_jpy = 100 * 2.0 * 1.5 = 300 → USD = 300/150 = 2.0
     result = compute_dynamic_floor(prices, win_rate=10.0, bid_density=100.0, jpy_per_usd=150.0)
     assert result == pytest.approx(2.0)
+
+
+# ── dsp #11 phase 3: バッチ + lifespan テスト (Red) ──
+
+import uuid as _uuid_mod
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
+
+from db_models import DspBidLogDB, DspFloorPriceHistoryDB, DspSpendLogDB
+from dsp_engine.floor_batch import (
+    _floor_cache,
+    get_dynamic_floor,
+    prime_floor_cache,
+    recompute_floor_prices,
+)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_floor_cache():
+    """各テスト前後で module-level cache をクリアして test isolation を保証"""
+    _floor_cache.clear()
+    yield
+    _floor_cache.clear()
+
+
+def _make_spend(campaign_id: str, publisher_id: str, cleared_price_jpy: float) -> DspSpendLogDB:
+    return DspSpendLogDB(
+        campaign_id=campaign_id,
+        click_token=_uuid_mod.uuid4().hex,
+        cleared_price_jpy=cleared_price_jpy,
+        publisher_id=publisher_id,
+    )
+
+
+def _make_bid_log(outcome: str = "bid", candidate_count: int = 2) -> DspBidLogDB:
+    return DspBidLogDB(outcome=outcome, candidate_count=candidate_count)
+
+
+@pytest.mark.asyncio
+async def test_recompute_floor_writes_history(db):
+    """spend_log 10 件 seed → recompute → DspFloorPriceHistoryDB に 1 行 INSERT"""
+    pub_id = "pub_test_phase3_1"
+    camp_id = "camp_phase3_1"
+    for i in range(10):
+        db.add(_make_spend(camp_id, pub_id, cleared_price_jpy=float(100 + i * 10)))
+    for _ in range(5):
+        db.add(_make_bid_log(outcome="bid", candidate_count=3))
+    await db.commit()
+
+    result = await recompute_floor_prices(db)
+
+    assert pub_id in result
+    assert result[pub_id] > 0
+
+    rows = (
+        await db.execute(
+            select(DspFloorPriceHistoryDB).where(
+                DspFloorPriceHistoryDB.publisher_id == pub_id
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].floor_usd > 0
+    assert rows[0].floor_jpy > 0
+
+
+@pytest.mark.asyncio
+async def test_recompute_floor_cache_updated(db):
+    """recompute 後 get_dynamic_floor が float を返す"""
+    pub_id = "pub_test_phase3_2"
+    camp_id = "camp_phase3_2"
+    for i in range(10):
+        db.add(_make_spend(camp_id, pub_id, cleared_price_jpy=float(80 + i * 5)))
+    for _ in range(3):
+        db.add(_make_bid_log(outcome="bid", candidate_count=2))
+    await db.commit()
+
+    await recompute_floor_prices(db)
+
+    floor = get_dynamic_floor(pub_id)
+    assert floor is not None
+    assert isinstance(floor, float)
+    assert floor > 0
+
+
+@pytest.mark.asyncio
+async def test_prime_floor_cache_from_db(db):
+    """DspFloorPriceHistoryDB に 1 行 seed → prime_floor_cache → cache に反映"""
+    pub_id = "pub_test_phase3_3"
+    db.add(DspFloorPriceHistoryDB(
+        publisher_id=pub_id,
+        floor_usd=0.5,
+        floor_jpy=75.0,
+        win_rate=0.3,
+        bid_density=1.0,
+        sample_count=10,
+        computed_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+
+    await prime_floor_cache(db)
+
+    assert get_dynamic_floor(pub_id) == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_recompute_floor_cold_start_no_write(db):
+    """spend_log 5 件のみ (< FLOOR_COLD_START_MIN=10) → DB INSERT なし、cache 空"""
+    pub_id = "pub_test_phase3_4"
+    camp_id = "camp_phase3_4"
+    for i in range(5):
+        db.add(_make_spend(camp_id, pub_id, cleared_price_jpy=float(100 + i * 10)))
+    await db.commit()
+
+    result = await recompute_floor_prices(db)
+
+    assert pub_id not in result
+
+    rows = (
+        await db.execute(
+            select(DspFloorPriceHistoryDB).where(
+                DspFloorPriceHistoryDB.publisher_id == pub_id
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 0
+    assert get_dynamic_floor(pub_id) is None
+
+
+@pytest.mark.asyncio
+async def test_old_records_deleted(db):
+    """31 日前の DspFloorPriceHistoryDB は recompute で DELETE、1 日前は残る"""
+    now = datetime.now(timezone.utc)
+
+    db.add(DspFloorPriceHistoryDB(
+        publisher_id="pub_old_phase3",
+        floor_usd=0.1,
+        floor_jpy=15.0,
+        win_rate=0.3,
+        bid_density=1.0,
+        sample_count=10,
+        computed_at=now - timedelta(days=31),
+    ))
+    db.add(DspFloorPriceHistoryDB(
+        publisher_id="pub_recent_phase3",
+        floor_usd=0.2,
+        floor_jpy=30.0,
+        win_rate=0.3,
+        bid_density=1.0,
+        sample_count=10,
+        computed_at=now - timedelta(days=1),
+    ))
+    await db.commit()
+
+    # spend_log 0 件 → new INSERT なし、retention だけ実行される
+    await recompute_floor_prices(db)
+
+    remaining = (
+        await db.execute(select(DspFloorPriceHistoryDB.publisher_id))
+    ).scalars().all()
+    assert "pub_old_phase3" not in remaining
+    assert "pub_recent_phase3" in remaining
