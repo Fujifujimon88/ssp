@@ -329,7 +329,7 @@ async def test_dynamic_floor_applied_no_bid(monkeypatch, db):
     db.add(make_campaign(
         id="camp-dynfloor-nobid",
         base_ctr=0.1, target_cvr=0.1, avg_purchase_value_jpy=10_000.0,
-        bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
+        bid_floor_jpy=100.0, bid_cap_jpy=50.0,
     ))
     await db.commit()
 
