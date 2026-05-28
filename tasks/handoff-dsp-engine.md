@@ -5,8 +5,8 @@ Status: Verified
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#10 + セキュリティ修正3件まで実装完了・**本番デプロイ済み** (2026-05-28、deployment `dpl_9AWGD7yVUSgaY6J9gZtvb4BYdSYv`、`/health` 200・version 0.2.4)。
-- 最新は #10 データ基盤・運用堅牢化 3 Phase (複合インデックス 5 本 + migration `dspengine0012` / 管理画面 N+1 解消 / QPS Redis 化 + bidder.py 教訓21違反修正)。残タスクは #9-2 (SKAN・Privacy Sandbox) / #11 (動的フロア最適化) + ビジネス側。詳細は本書セクション6。
+- 優先タスク #1〜#10 + セキュリティ修正3件まで本番デプロイ済み (2026-05-28、deployment `dpl_9AWGD7yVUSgaY6J9gZtvb4BYdSYv`)。#11 動的フロア最適化は **Phase 1 のみ完了 / 未 push / 未デプロイ** (master local `c1bc0f6`)。
+- #11 は 4 Phase 構成 (テーブル → 計算関数 → バッチ → 入札パス統合)。Phase 1 (テーブル `dsp_floor_price_history` + migration `dspengine0013`) のみ完了。Phase 2-4 は次セッション着手予定。`tasks/plan-dsp-engine-11.md` 参照。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
 
@@ -144,22 +144,29 @@ DATABASE_URL="sqlite+aiosqlite:///./ssp_local.db" APP_ENV=development \
 
 ## 6. 次やること（残タスク・優先順）
 
-**完了済み（#1〜#10）**: OpenRTB 2.6 拡張 / first-price + bid shading / サプライチェーン検証 /
-入札ログ + TOCTOU 対策 / ベースライン ML / 多次元レポート / A/B テスト・holdout 基盤 /
+**完了済み（#1〜#10 本番デプロイ済み・#11 Phase 1 まで local master）**: OpenRTB 2.6 拡張 / first-price + bid shading /
+サプライチェーン検証 / 入札ログ + TOCTOU 対策 / ベースライン ML / 多次元レポート / A/B テスト・holdout 基盤 /
 fraud・IVT・brand safety 監視（#8 + #8-2 配線）/ MMP 署名検証・PII サニタイズ・
-アトリビューション窓（#9）/ データ基盤・運用堅牢化（#10）。すべて test-first-implement
-パイプライン（最終 Reviewer Approve）で実装。**dsp 系テスト 54 passed**（master `6720e0d`）。
-#1〜#9 は本番デプロイ済み (2026-05-23)、**#10 は本番未反映** (`vercel --prod` 手動実行待ち)。
+アトリビューション窓（#9）/ データ基盤・運用堅牢化（#10）/ 動的フロア最適化テーブル（#11 Phase 1）。
+すべて test-first-implement パイプライン（最終 Reviewer Approve）で実装。
+**dsp 系テスト 55 passed**（master local `c1bc0f6`、未 push）。
+#1〜#10 は本番デプロイ済み (2026-05-28、deployment `dpl_9AWGD7yVUSgaY6J9gZtvb4BYdSYv`)。
+**#11 は Phase 1 のみ完了 / 未 push / 未デプロイ**。
 
 **残タスク（優先順）**:
 
 | # | やること | 優先度 | 状態 | 関連ファイル |
 |---|---|---|---|---|
-| 11 | 動的フロア最適化（落札率・bid density ベース。#2 から分離）| 中 | 未着手 | `main.py`, `auction/engine.py`, 新テーブル |
-| 9-2 | SKAN（SKAdNetwork ポストバック・Apple ECDSA 検証）/ Privacy Sandbox（Attribution Reporting・PAAPI）対応。#9 でスコープ外にした分。iOS 実入札・Web 枠展開が具体化してから着手 | 低 | 未着手 | `router.py`, `auction/openrtb.py`, 新テーブル |
+| 11 Phase 2 | 純粋関数 `compute_dynamic_floor()` (分位点 + 落札率 + bid density 合成) | 中 | 未着手 | `dsp_engine/floor.py` (新規), `tests/test_dsp_floor.py` 拡張 |
+| 11 Phase 3 | バッチ `floor_batch.py` + main.py lifespan 登録 + retention (30日) | 中 | 未着手 | `dsp_engine/floor_batch.py` (新規), `main.py` |
+| 11 Phase 4 | 入札パス統合 (`bidder.py` の effective_floor) | 中 | 未着手 | `dsp_engine/bidder.py`, `tests/test_dsp_bid_log.py` 拡張 |
+| 9-2 | SKAN（SKAdNetwork ポストバック・Apple ECDSA 検証）/ Privacy Sandbox（Attribution Reporting・PAAPI）対応 | 低 | 未着手 | `router.py`, `auction/openrtb.py`, 新テーブル |
 
-**次セッションの着手対象 = #11**（動的フロア最適化）。#9-2（SKAN/Privacy Sandbox）は
-DSP が iOS 実トラフィック・Web 枠を扱うまで実価値が薄く優先度低。
+**次セッションの着手対象 = #11 Phase 2**（純粋関数）。詳細は `tasks/plan-dsp-engine-11.md` の section 4 参照。
+Phase 1 で `DspFloorPriceHistoryDB` モデルと migration `dspengine0013` を実装済み (`db_models.py:1108`)。
+Phase 2 は DB I/O ゼロの純粋関数で、Phase 3 (バッチ) と Phase 4 (入札パス) からこの関数を呼ぶ設計。
+**Phase 2-4 完了後にまとめて push + `vercel --prod` 手動実行 → 本番反映** の流れ。
+#9-2（SKAN/Privacy Sandbox）は DSP が iOS 実トラフィック・Web 枠を扱うまで実価値が薄く優先度低。
 **インフラ申し送り**: 本番 Redis 未接続（`/health` redis:false）。#8-2 のクリック連打レート制限を
 実効化するには本番 Redis 接続が必須（#10 の QPS Redis 化と併せて検討）。
 `check_click_rate_limit` の `redis is not None` 分岐は #8 由来の dead code（#8-2 配線では常に
