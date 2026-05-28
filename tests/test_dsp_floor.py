@@ -149,6 +149,21 @@ def test_compute_dynamic_floor_returns_usd():
     assert result2 == pytest.approx(1.5)
 
 
+def test_compute_dynamic_floor_uses_percentile_config():
+    """FLOOR_PERCENTILE を変えると price_anchor が変わる (WARN2 再現)。
+
+    現状は statistics.median 固定で config を無視するため FAIL する (Red)。
+    線形補間 percentile: prices=[10..100], P90 → k=9*0.9=8.1 →
+    90 + (100-90)*0.1 = 91。factor は全て 1.0 なので floor_jpy=91 → USD=91/150。
+    """
+    prices = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+    cfg_p90 = FloorConfig(FLOOR_PERCENTILE=90)
+    result = compute_dynamic_floor(
+        prices, win_rate=0.3, bid_density=1.0, jpy_per_usd=150.0, config=cfg_p90
+    )
+    assert result == pytest.approx(91.0 / 150.0)
+
+
 def test_compute_dynamic_floor_clamp_upper():
     """win_rate_factor の上限 2.0 と density_factor の上限 1.5 が効く"""
     prices = [100.0] * 10  # P50 = 100

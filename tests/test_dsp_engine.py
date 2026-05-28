@@ -1005,6 +1005,30 @@ async def test_check_qps_with_redis_fixed_window():
         f"EXPIRE は count==1 のときのみ呼ぶべき (教訓21), but got {len(expire_calls_for_key)} calls"
 
 
+class _RaisingRedis:
+    """incr が必ず例外を投げる Redis モック (障害シミュレーション)。"""
+    async def incr(self, key: str) -> int:
+        raise RuntimeError("redis connection lost")
+
+    async def expire(self, key: str, ttl: int) -> None:
+        raise RuntimeError("redis connection lost")
+
+
+@pytest.mark.asyncio
+async def test_check_qps_redis_failure_falls_back_to_in_memory():
+    """redis.incr が raise しても例外を伝播させず in-memory にフォールバック (WARN1 再現)。
+
+    現状は incr の例外がそのまま伝播し inbound_bid が 500 化するため FAIL (Red)。
+    """
+    from dsp_engine.exchange import check_qps
+    raising = _RaisingRedis()
+    # 例外を出さず、in-memory フォールバックで qps_limit=2 が効くこと
+    result1 = await check_qps("redis-fail-ex", 2, redis=raising)
+    result2 = await check_qps("redis-fail-ex", 2, redis=raising)
+    result3 = await check_qps("redis-fail-ex", 2, redis=raising)
+    assert (result1, result2, result3) == (True, True, False)
+
+
 @pytest.mark.asyncio
 async def test_check_qps_redis_fallback_no_redis():
     """redis=None のとき in-memory フォールバックが動く。"""

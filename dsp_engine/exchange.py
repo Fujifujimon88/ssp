@@ -30,11 +30,16 @@ async def check_qps(exchange_name: str, qps_limit: int, redis=None) -> bool:
     if qps_limit <= 0:
         return True
     if redis is not None:
-        key = f"dsp:qps:{exchange_name}:{int(time.time())}"
-        count = await redis.incr(key)
-        if count == 1:
-            await redis.expire(key, 2)
-        return count <= qps_limit
+        try:
+            key = f"dsp:qps:{exchange_name}:{int(time.time())}"
+            count = await redis.incr(key)
+            if count == 1:
+                await redis.expire(key, 2)
+            return count <= qps_limit
+        except Exception as exc:
+            # Redis 障害時は制限機能を落とさず in-memory フォールバック。
+            # ここで例外を伝播させると inbound_bid 全体が 500 化する。
+            logger.warning(f"check_qps: redis failed — in-memory fallback: {exc}")
     now = int(time.time())
     win, count = _qps_window.get(exchange_name, (now, 0))
     if win != now:
