@@ -48,6 +48,8 @@ from dsp_engine.pacing import BudgetPacer
 from dsp_engine.reporting import extract_report_dims
 from dsp_engine.scoring import compute_bid_cpm_jpy
 from dsp_engine.segments import get_segment_multiplier, platform_of
+from dsp_engine.floor import _extract_publisher_id
+from dsp_engine.floor_batch import get_dynamic_floor
 from dsp_engine.shading import compute_shaded_bid, fetch_past_cleared_prices
 from utils import utcnow
 
@@ -478,6 +480,9 @@ async def handle_bid_request(
         return None
     imp = bid_request.imp[0]
 
+    publisher_id = _extract_publisher_id(bid_request)
+    dynamic_floor = get_dynamic_floor(publisher_id)
+
     # ── IVT チェック（#8）: dsp_ivt_strict=True のとき bot/datacenter トラフィックをノービッド ──
     if settings.dsp_ivt_strict and bid_request.device is not None:
         device = bid_request.device
@@ -554,7 +559,8 @@ async def handle_bid_request(
         return None
 
     bid_price_usd = best_bid_cpm_jpy / get_jpy_per_usd()
-    if bid_price_usd < imp.bidfloor:
+    effective_floor_usd = max(dynamic_floor, imp.bidfloor) if dynamic_floor is not None else imp.bidfloor
+    if bid_price_usd < effective_floor_usd:
         await _log_bid_decision(
             db, bid_request=bid_request, source=source, imp=imp,
             outcome="no_bid", nbr=NBR_BELOW_FLOOR, campaign_id=best_campaign.id,
@@ -570,11 +576,11 @@ async def handle_bid_request(
         rate = get_jpy_per_usd()
         past_cleared_jpy = await fetch_past_cleared_prices(db, best_campaign.id)
         best_bid_cpm_jpy = compute_shaded_bid(
-            best_bid_cpm_jpy, past_cleared_jpy, imp.bidfloor * rate
+            best_bid_cpm_jpy, past_cleared_jpy, effective_floor_usd * rate
         )
         shaded = True
         bid_price_usd = best_bid_cpm_jpy / rate
-        if bid_price_usd < imp.bidfloor:
+        if bid_price_usd < effective_floor_usd:
             await _log_bid_decision(
                 db, bid_request=bid_request, source=source, imp=imp,
                 outcome="no_bid", nbr=NBR_SHADED_BELOW_FLOOR,

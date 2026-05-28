@@ -50,3 +50,26 @@ def compute_dynamic_floor(
     )
     floor_jpy = price_anchor_jpy * win_rate_factor * density_factor
     return floor_jpy / jpy_per_usd
+
+
+def _extract_publisher_id(bid_request) -> str | None:
+    """OpenRTB BidRequest から publisher_id を解決する純粋関数。
+
+    優先順: site.publisher.id → app.publisher.id → None。
+    site / app / publisher のいずれかが None でも AttributeError を出さない。
+    """
+    site = getattr(bid_request, "site", None)
+    if site is not None:
+        publisher = getattr(site, "publisher", None)
+        if publisher is not None:
+            pub_id = getattr(publisher, "id", None)
+            if pub_id is not None:
+                return pub_id
+    app = getattr(bid_request, "app", None)
+    if app is not None:
+        publisher = getattr(app, "publisher", None)
+        if publisher is not None:
+            pub_id = getattr(publisher, "id", None)
+            if pub_id is not None:
+                return pub_id
+    return None
