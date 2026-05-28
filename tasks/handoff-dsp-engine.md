@@ -1,7 +1,7 @@
 # 引き継ぎ: dsp_engine（広告主向けパフォーマンス DSP）
 
 Status: Verified
-最終更新: 2026-05-28
+最終更新: 2026-05-29
 
 ## 🎯 ゴールと次アクション (TL;DR — 次セッションはここから)
 
@@ -9,13 +9,16 @@ Status: Verified
 過去落札 (clearing_price) の分位点 + 落札率 + bid density から **publisher 別の最適フロア CPM** を事前計算 → 入札パスは L1 キャッシュ参照のみで動的フロアを適用。SSP 側の静的 `imp.bidfloor` は温存しフォールバック。本番 RTB が動き始めた時に過剰落札 (overbid) と過小落札 (underbid) を機械的に抑える。
 
 ### Phase 進捗
-- **Phase 1 (テーブル)** ✅ 完了 (master local `e109df3`、未 push) — `dsp_floor_price_history` + migration `dspengine0013`
-- **Phase 2 (計算関数)** ⏳ 次やる
-- **Phase 3 (バッチ)** ⏳ 未着手
-- **Phase 4 (入札パス統合)** ⏳ 未着手
+- **Phase 1 (テーブル)** ✅ 完了 (master local `c1bc0f6`、未 push) — `dsp_floor_price_history` + migration `dspengine0013`
+- **Phase 2 (計算関数)** ✅ 完了 (master local `bc03fb3`、未 push) — `dsp_engine/floor.py` の純粋関数 `compute_dynamic_floor` + 7 テスト Green (test-first-implement Approve)
+- **Phase 3 (バッチ)** ✅ 完了 (master local `d3bd6b6`、未 push) — `dsp_engine/floor_batch.py` 新規 (`recompute_floor_prices` / `get_dynamic_floor` / `prime_floor_cache` / `schedule_floor_tasks`) + `main.py` lifespan に `floor_task` 追加。Red 5 件 Green、dsp 系 79 件全 Pass、retention 30 日
+- **Phase 4 (入札パス統合)** ✅ 完了 (master local `e3c9b10`、未 push) — `dsp_engine/floor.py` に `_extract_publisher_id` 追加 + `dsp_engine/bidder.py` に `from dsp_engine.floor_batch import get_dynamic_floor` import + `handle_bid_request` 冒頭で publisher_id/dynamic_floor を 1 度計算 + `imp.bidfloor` 参照 3 箇所 (L557/L573/L577) を `effective_floor_usd = max(dynamic_floor, imp.bidfloor) if dynamic_floor is not None else imp.bidfloor` に置換。Red 4 件 Green、dsp 系 83 件全 Pass、`imp.bidfloor` 代入なし (OpenRTB ミュート禁止守られた)、`_log_bid_decision` の `bidfloor_usd` 引数は `imp.bidfloor` のまま (静的値ログ保持)
 
 ### 次アクション (1 つだけ)
-**Phase 2 を test-first-implement で起動** — `dsp_engine/floor.py` 新規 + 純粋関数 `compute_dynamic_floor(cleared_prices_jpy, win_rate, bid_density, jpy_per_usd) -> float | None` を実装。Red テスト 7 件 (cold_start / p50 / win_rate 上下 / density / USD 返却 / clamp)。詳細は `tasks/plan-dsp-engine-11.md` section 4。Phase 2-4 完了後にまとめて `git push` + `vercel --prod` で本番反映。
+**`git push origin master` + `vercel --prod` 手動** — Phase 1-4 で計 9 commits 未 push (Red/Green 各 4 + Red-fix 1)。push 後、Fujiさん が `vercel --prod` を手動実行 (`--yes` フラグなし、確認ステップを残す)。本番反映後の確認: (1) `/health` 200、(2) deployment id を handoff に記録、(3) 起動時 lifespan で `alembic upgrade head` が `dspengine0013` (`dsp_floor_price_history`) を本番 Postgres に自動適用、(4) lifespan で `schedule_floor_tasks` が走るが本番は inert (DSP campaign 未登録) のため実 INSERT は発生しない、(5) cache 未 prime 状態で `get_dynamic_floor` は None を返し、bidder は既存 `imp.bidfloor` フォールバックで安全。
+
+### 完了後の handoff 更新
+deployment id を本セクションに記録 → section 2 の表に Phase 4 行追加 → section 6 の残タスク表から #11 を除外。
 
 ---
 
