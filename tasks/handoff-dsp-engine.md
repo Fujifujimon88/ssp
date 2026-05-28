@@ -5,7 +5,7 @@ Status: Verified
 
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
-- 優先タスク #1〜#10 + セキュリティ修正3件まで実装完了・push 済み (master `6720e0d`)。本番反映は `vercel --prod` の手動実行が必要。直前の本番 deployment は `dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP` (2026-05-23、#9 まで)。
+- 優先タスク #1〜#10 + セキュリティ修正3件まで実装完了・**本番デプロイ済み** (2026-05-28、deployment `dpl_9AWGD7yVUSgaY6J9gZtvb4BYdSYv`、`/health` 200・version 0.2.4)。
 - 最新は #10 データ基盤・運用堅牢化 3 Phase (複合インデックス 5 本 + migration `dspengine0012` / 管理画面 N+1 解消 / QPS Redis 化 + bidder.py 教訓21違反修正)。残タスクは #9-2 (SKAN・Privacy Sandbox) / #11 (動的フロア最適化) + ビジネス側。詳細は本書セクション6。
 
 進捗管理表は `tasks/progress-dsp-engine.md`、作業ログは `tasks/todo.md`、教訓は `tasks/lessons.md`。
@@ -41,14 +41,14 @@ Status: Verified
 | 優先 #8-2 | fraud 監視のエンドツーエンド配線（router.py /click にレート制限配線・実 Redis カウンタ `incr_click_counters` / router.py /conversion に revenue ガード / bidder.py LOW-2 是正）| 完了・本番反映済み |
 | 優先 #9 | MMP 署名検証（HMAC-SHA256 + timing-safe）/ PII サニタイズ（raw_payload）/ アトリビューション窓（`attributed` カラム + migration dspengine0011 で窓外 CV を ROAS 集計から除外）| 完了・本番反映済み |
 | セキュリティ修正3件 | CV 売上付け替え防止（`record_conversion` で click_token→spend_log の campaign_id を無条件採用・不一致は warning）/ win notice 署名に `crid` を含める（改竄防止）/ daily pacing の DB フォールバック（`can_bid` が Redis 不在時 `daily_spend_jpy` の DB 実績で判定）。スキーマ変更なし | 完了・本番反映済み |
-| 優先 #10 | データ基盤・運用堅牢化 3 Phase: 複合インデックス 5 本 + migration `dspengine0012` (Phase 1) / 管理画面 N+1 解消 `compute_roas_from_stats` (Phase 2) / QPS Redis 化 + bidder.py `_incr_nbr_counter` の教訓21違反修正 (Phase 3) | 完了・master 反映済み (本番デプロイは未) |
+| 優先 #10 | データ基盤・運用堅牢化 3 Phase: 複合インデックス 5 本 + migration `dspengine0012` (Phase 1) / 管理画面 N+1 解消 `compute_roas_from_stats` (Phase 2) / QPS Redis 化 + bidder.py `_incr_nbr_counter` の教訓21違反修正 (Phase 3) | 完了・本番反映済み |
 
-**本番デプロイ状況**: 優先 #1〜#9 + セキュリティ修正3件は **2026-05-23 に本番デプロイ済み**
-（deployment `dpl_BiBA4yh8dB5tyjRARZKzRkTkv1GP`、`/health` 200）。**#10 は master `6720e0d` まで実装完了
-だが本番未反映** — `vercel --prod` の手動実行が必要。マイグレーション `dspengine0012`
-(複合インデックス 5 本) は起動時 lifespan の `alembic upgrade head` で本番 Postgres へ自動適用される。
-QPS Redis 化はフォールバック付き実装のため本番 Redis 未接続でも稼働するが、実効化には Upstash 等の接続が別途必要。
-Vercel は Git 未連携のため、次回以降の本番反映も `git push` → `vercel --prod` の手動実行が必要。
+**本番デプロイ状況**: 優先 #1〜#10 + セキュリティ修正3件を **2026-05-28 に本番デプロイ済み**
+（deployment `dpl_9AWGD7yVUSgaY6J9gZtvb4BYdSYv`、`/health` 200・version 0.2.4）。マイグレーション
+`dspengine0012` (複合インデックス 5 本) は起動時 lifespan の `alembic upgrade head` で本番 Postgres
+へ自動適用済み。QPS Redis 化はフォールバック付き実装のため本番 Redis 未接続でも稼働するが、
+実効化には Upstash 等の接続が別途必要。Vercel は Git 未連携のため、次回以降の本番反映も
+`git push` → `vercel --prod` の手動実行が必要。
 
 **本番 Redis 未接続の注意**: `/health` の `redis:false`。#8-2 のクリック連打レート制限
 （`incr_click_counters`）と #4 の QPS カウンタは Redis 不在時メモリ/フォールバック動作になる。
