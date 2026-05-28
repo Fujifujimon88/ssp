@@ -1103,3 +1103,24 @@ class DspSegmentPerfDB(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class DspFloorPriceHistoryDB(Base):
+    __tablename__ = "dsp_floor_price_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    publisher_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    floor_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    floor_jpy: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    win_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    bid_density: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        Index("ix_dsp_floor_hist_pub_computed", "publisher_id", "computed_at"),
+    )
