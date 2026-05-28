@@ -15,10 +15,11 @@ Status: Verified
 - **Phase 4 (入札パス統合)** ✅ 完了 (master local `e3c9b10`、未 push) — `dsp_engine/floor.py` に `_extract_publisher_id` 追加 + `dsp_engine/bidder.py` に `from dsp_engine.floor_batch import get_dynamic_floor` import + `handle_bid_request` 冒頭で publisher_id/dynamic_floor を 1 度計算 + `imp.bidfloor` 参照 3 箇所 (L557/L573/L577) を `effective_floor_usd = max(dynamic_floor, imp.bidfloor) if dynamic_floor is not None else imp.bidfloor` に置換。Red 4 件 Green、dsp 系 83 件全 Pass、`imp.bidfloor` 代入なし (OpenRTB ミュート禁止守られた)、`_log_bid_decision` の `bidfloor_usd` 引数は `imp.bidfloor` のまま (静的値ログ保持)
 
 ### 次アクション (1 つだけ)
-**`git push origin master` + `vercel --prod` 手動** — Phase 1-4 で計 9 commits 未 push (Red/Green 各 4 + Red-fix 1)。push 後、Fujiさん が `vercel --prod` を手動実行 (`--yes` フラグなし、確認ステップを残す)。本番反映後の確認: (1) `/health` 200、(2) deployment id を handoff に記録、(3) 起動時 lifespan で `alembic upgrade head` が `dspengine0013` (`dsp_floor_price_history`) を本番 Postgres に自動適用、(4) lifespan で `schedule_floor_tasks` が走るが本番は inert (DSP campaign 未登録) のため実 INSERT は発生しない、(5) cache 未 prime 状態で `get_dynamic_floor` は None を返し、bidder は既存 `imp.bidfloor` フォールバックで安全。
+**ビジネス側の DSP キャンペーン登録待ち** — #11 全 Phase 本番反映済み (2026-05-29、deployment `dpl_3H8i3mQkdEjEAAvybWbipSS4zQQa`、master `f2c9f59`、`/health` 200・version 0.2.4・env=production・dsp-engine 在籍)。`dspengine0013` (`dsp_floor_price_history`) は lifespan の `alembic upgrade head` で本番 Postgres へ自動適用済み (`/health` 200 が証拠)。`schedule_floor_tasks` は lifespan で稼働中だが本番 inert (DSP campaign 未登録) のため実 INSERT は発生しない。cache 未 prime 状態で `get_dynamic_floor` は None を返し、bidder は `imp.bidfloor` フォールバックで安全。
 
-### 完了後の handoff 更新
-deployment id を本セクションに記録 → section 2 の表に Phase 4 行追加 → section 6 の残タスク表から #11 を除外。
+実広告主オンボーディング後の確認項目: (1) 1 時間後に `dsp_floor_price_history` への INSERT を Postgres で目視、(2) `bid_logs` の no-bid 理由内訳で `NBR_BELOW_FLOOR` 増減を観測、(3) campaign の `served_at >= now - 7d` 件数 ≥ 10 で publisher 別 floor が立ち上がる。
+
+**version bump 漏れ (小タスク)**: 本番 `/health` の `version` が `0.2.4` のまま (Phase 1-4 で `config.py` の bump し忘れ)。次の deploy 時に `0.2.5` へ更新を検討。稼働には影響なし。
 
 ---
 
