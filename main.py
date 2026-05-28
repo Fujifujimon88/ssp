@@ -113,15 +113,22 @@ async def lifespan(app: FastAPI):
 
     from dsp_engine.batch import schedule_supply_chain_tasks
     from dsp_engine.segments import schedule_segment_tasks
+    from dsp_engine.floor_batch import schedule_floor_tasks
     hc_task = asyncio.create_task(_schedule_health_check())
     sc_task = asyncio.create_task(schedule_supply_chain_tasks())
     seg_task = asyncio.create_task(schedule_segment_tasks())
+    floor_task = asyncio.create_task(schedule_floor_tasks())
     logger.info(f"SSP Platform started | env={settings.app_env} | dsps={auction_engine.registered_dsp_ids()}")
     yield
 
     hc_task.cancel()
     sc_task.cancel()
     seg_task.cancel()
+    floor_task.cancel()
+    try:
+        await floor_task
+    except asyncio.CancelledError:
+        pass
 
     for dsp in auction_engine._dsps.values():
         if hasattr(dsp, "close"):
