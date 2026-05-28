@@ -320,3 +320,27 @@ async def test_old_records_deleted(db):
     ).scalars().all()
     assert "pub_old_phase3" not in remaining
     assert "pub_recent_phase3" in remaining
+
+
+# ── dsp #11 phase 4: _extract_publisher_id テスト (Red) ──
+
+
+def test_extract_publisher_id_from_site():
+    """site.publisher.id="pub_x" → "pub_x" を返す"""
+    from dsp_engine.floor import _extract_publisher_id  # noqa: PLC0415
+    from auction.openrtb import BidRequest, Site, Publisher
+
+    bid_request = BidRequest(
+        imp=[],
+        site=Site(publisher=Publisher(id="pub_x")),
+    )
+    assert _extract_publisher_id(bid_request) == "pub_x"
+
+
+def test_extract_publisher_id_none():
+    """site/app/publisher 全て None or 欠落 → None"""
+    from dsp_engine.floor import _extract_publisher_id  # noqa: PLC0415
+    from auction.openrtb import BidRequest
+
+    bid_request = BidRequest(imp=[])
+    assert _extract_publisher_id(bid_request) is None

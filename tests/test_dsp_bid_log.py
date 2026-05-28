@@ -314,3 +314,56 @@ async def test_bid_log_summary(db):
     assert len(summary["recent"]) == 2
     assert summary["nbr_breakdown"].get("bid") == 1
     assert summary["nbr_breakdown"].get(str(nbr.NBR_NO_ACTIVE_CAMPAIGNS)) == 1
+
+
+# ── dsp #11 phase 4: 入札パス統合 dynamic floor テスト (Red) ──
+
+@pytest.mark.asyncio
+async def test_dynamic_floor_applied_no_bid(monkeypatch, db):
+    """get_dynamic_floor mock で 100.0 USD → NBR_BELOW_FLOOR no-bid"""
+    from dsp_engine import bidder as bidder_module
+    from auction.openrtb import BidRequest, Site, Publisher
+
+    monkeypatch.setattr(bidder_module, "get_dynamic_floor", lambda pub_id: 100.0)
+
+    db.add(make_campaign(
+        id="camp-dynfloor-nobid",
+        base_ctr=0.1, target_cvr=0.1, avg_purchase_value_jpy=10_000.0,
+        bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
+    ))
+    await db.commit()
+
+    bid_request = BidRequest(
+        imp=[_imp(bidfloor=0.5)],
+        site=Site(publisher=Publisher(id="pub_test_floor")),
+    )
+    response = await bidder_module.handle_bid_request(bid_request, db)
+    assert response is None
+    log = await db.scalar(select(DspBidLogDB))
+    assert log is not None
+    assert log.outcome == "no_bid"
+    assert log.nbr == nbr.NBR_BELOW_FLOOR
+
+
+@pytest.mark.asyncio
+async def test_dynamic_floor_applied_bid(monkeypatch, db):
+    """get_dynamic_floor mock で 0.01 USD → imp.bidfloor (5.0) フォールバック採用 → 入札成立"""
+    from dsp_engine import bidder as bidder_module
+    from auction.openrtb import BidRequest, Site, Publisher
+
+    monkeypatch.setattr(bidder_module, "get_dynamic_floor", lambda pub_id: 0.01)
+
+    db.add(make_campaign(
+        id="camp-dynfloor-bid",
+        base_ctr=0.1, target_cvr=0.1, avg_purchase_value_jpy=10_000.0,
+        bid_floor_jpy=100.0, bid_cap_jpy=100_000.0,
+    ))
+    await db.commit()
+
+    bid_request = BidRequest(
+        imp=[_imp(bidfloor=5.0)],
+        site=Site(publisher=Publisher(id="pub_test_floor2")),
+    )
+    response = await bidder_module.handle_bid_request(bid_request, db)
+    assert response is not None
+    assert response.seatbid is not None and len(response.seatbid) > 0
