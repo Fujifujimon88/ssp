@@ -3,6 +3,22 @@
 Status: Verified
 最終更新: 2026-05-28
 
+## 🎯 ゴールと次アクション (TL;DR — 次セッションはここから)
+
+### #11 全体ゴール
+過去落札 (clearing_price) の分位点 + 落札率 + bid density から **publisher 別の最適フロア CPM** を事前計算 → 入札パスは L1 キャッシュ参照のみで動的フロアを適用。SSP 側の静的 `imp.bidfloor` は温存しフォールバック。本番 RTB が動き始めた時に過剰落札 (overbid) と過小落札 (underbid) を機械的に抑える。
+
+### Phase 進捗
+- **Phase 1 (テーブル)** ✅ 完了 (master local `e109df3`、未 push) — `dsp_floor_price_history` + migration `dspengine0013`
+- **Phase 2 (計算関数)** ⏳ 次やる
+- **Phase 3 (バッチ)** ⏳ 未着手
+- **Phase 4 (入札パス統合)** ⏳ 未着手
+
+### 次アクション (1 つだけ)
+**Phase 2 を test-first-implement で起動** — `dsp_engine/floor.py` 新規 + 純粋関数 `compute_dynamic_floor(cleared_prices_jpy, win_rate, bid_density, jpy_per_usd) -> float | None` を実装。Red テスト 7 件 (cold_start / p50 / win_rate 上下 / density / USD 返却 / clamp)。詳細は `tasks/plan-dsp-engine-11.md` section 4。Phase 2-4 完了後にまとめて `git push` + `vercel --prod` で本番反映。
+
+---
+
 ## 3行サマリー
 - AppLovin / Moloco 型の ROAS 最適化 DSP を既存リポ内 `dsp_engine/` モジュールとして構築。
 - 優先タスク #1〜#10 + セキュリティ修正3件まで本番デプロイ済み (2026-05-28、deployment `dpl_9AWGD7yVUSgaY6J9gZtvb4BYdSYv`)。#11 動的フロア最適化は **Phase 1 のみ完了 / 未 push / 未デプロイ** (master local `c1bc0f6`)。
